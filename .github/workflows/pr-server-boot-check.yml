@@ -1,0 +1,56 @@
+name: PR server boot check
+
+on:
+  pull_request:
+    branches:
+      - staging
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify-server-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target environment
+        run: |
+          if [ "${{ github.base_ref }}" = "staging" ]; then
+            echo "ENV=stg" >> "$GITHUB_ENV"
+            echo "ENV_FILE=env/.env.staging" >> "$GITHUB_ENV"
+            echo "PORT=11000" >> "$GITHUB_ENV"
+          elif [ "${{ github.base_ref }}" = "main" ]; then
+            echo "ENV=prod" >> "$GITHUB_ENV"
+            echo "ENV_FILE=env/.env.production" >> "$GITHUB_ENV"
+            echo "PORT=12000" >> "$GITHUB_ENV"
+          else
+            echo "Unsupported base branch: ${{ github.base_ref }}"
+            exit 1
+          fi
+
+      - name: Create empty env file
+        run: mkdir -p env && touch "$ENV_FILE"
+
+      - name: Install dependencies
+        run: sh script/setup.sh
+
+      - name: Boot server and verify it starts
+        run: |
+          sh script/run_server.sh --env "$ENV" &
+          SERVER_PID=$!
+          sleep 5
+
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "Server process exited unexpectedly"
+            exit 1
+          fi
+
+          if ! curl -sf "http://127.0.0.1:$PORT/" > /dev/null; then
+            echo "Server is not responding on port $PORT"
+            kill "$SERVER_PID" 2>/dev/null
+            exit 1
+          fi
+
+          kill "$SERVER_PID"

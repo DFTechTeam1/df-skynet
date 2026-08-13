@@ -81,6 +81,10 @@ export $(grep -v '^#' "$ENV_FILE" | xargs)
 echo "Checking OS Environment"
 if uname | grep -qiE "linux|darwin"; then
     echo "Unix-based OS detected"
+    if [ ! -f "$PROJECT_DIR/.venv/bin/activate" ]; then
+        echo "No virtual environment found. Please run: sh script/setup.sh"
+        exit 1
+    fi
     . "$PROJECT_DIR/.venv/bin/activate"
 else
     echo "Unsupported OS. Please run tests manually."
@@ -89,3 +93,11 @@ fi
 
 echo "Running $TEST_TYPE tests with environment variables from $ENV_FILE..."
 PYTHONPATH="$PROJECT_DIR" python -m pytest "$PROJECT_DIR/tests/$TEST_TYPE" -v
+STATUS=$?
+
+if [ "$STATUS" -eq 5 ]; then
+    echo "No $TEST_TYPE tests found, skipping."
+    exit 0
+fi
+
+exit "$STATUS"
