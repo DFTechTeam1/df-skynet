@@ -13,3 +13,26 @@ repos:
   rev: v0.16.1
   hooks:
     - id: ruff-format
+- repo: local
+  hooks:
+    - id: unit-tests
+      name: unit tests (dev env)
+      entry: sh script/run_test.sh --env dev --test unit
+      language: system
+      pass_filenames: false
+      always_run: true
+      stages: [pre-push]
+    - id: api-tests
+      name: api tests (dev env)
+      entry: sh script/run_test.sh --env dev --test api
+      language: system
+      pass_filenames: false
+      always_run: true
+      stages: [pre-push]
+    - id: e2e-tests
+      name: e2e tests (dev env)
+      entry: sh script/run_test.sh --env dev --test e2e
+      language: system
+      pass_filenames: false
+      always_run: true
+      stages: [pre-push]

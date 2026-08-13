@@ -93,3 +93,11 @@ fi
 
 echo "Running $TEST_TYPE tests with environment variables from $ENV_FILE..."
 PYTHONPATH="$PROJECT_DIR" python -m pytest "$PROJECT_DIR/tests/$TEST_TYPE" -v
+STATUS=$?
+
+if [ "$STATUS" -eq 5 ]; then
+    echo "No $TEST_TYPE tests found, skipping."
+    exit 0
+fi
+
+exit "$STATUS"
