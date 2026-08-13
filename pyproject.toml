@@ -1,0 +1,19 @@
+[project]
+name = "df-skynet"
+version = "0.1.0"
+description = "SaaS backend for AI image/video generation via OpenRouter"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "alembic>=1.18.5",
+    "coverage>=7.15.2",
+    "fastapi>=0.141.1",
+    "fastapi-controller>=0.0.8",
+    "fastapi-limiter>=0.2.0",
+    "pre-commit>=4.6.1",
+    "pydantic>=2.13.4",
+    "pytest-asyncio>=1.4.0",
+    "pytz>=2026.3.post1",
+    "scalar-fastapi>=1.8.2",
+    "uvicorn>=0.52.0",
+]

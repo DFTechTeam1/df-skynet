@@ -1,0 +1,499 @@
+Enum task_types {
+    image
+    video
+}
+
+Enum file_statuses {
+    upload
+    generation
+}
+
+Enum interior_styles {
+    interior
+    exterior
+    interior_exterior
+}
+
+Enum shot_sizes {
+    extreme_wide
+    medium_wide
+    wide
+    medium
+    medium_close_up
+    close_up
+    extreme_close_up
+    insert
+}
+
+Enum prompt_statuses {
+    processing
+    completed
+    failed
+}
+
+Enum prompt_types {
+    assistant
+    image
+    image_edit
+    video
+    video_edit
+    enhance
+    keyframe
+    keyframe_edit
+    motion
+    motion_edit
+    element
+    element_edit
+}
+
+Enum motion_types {
+    static
+    pan
+    tilt
+    push_in
+    pull_back
+    track
+    crane
+    handheld
+}
+
+Enum shot_angles {
+  eye_level
+  low
+  high
+  ground_level
+  knee_level
+  hip_level
+  over_the_shoulder
+  overhead
+  top_view
+  aerial
+  dutch
+  pov
+}
+
+Enum focal_lengths {
+  mm_14
+  mm_24
+  mm_35
+  mm_50
+  mm_85
+  mm_135
+}
+
+Enum element_types {
+  environment
+  character
+  object
+  styles
+}
+
+Enum time_of_days {
+  pre_dawn
+  sunrise
+  morning
+  midday
+  afternoon
+  golden_hour
+  dusk
+  blue_hour
+  night
+}
+
+Enum lighting_moods {
+  natural
+  soft_diffused
+  hard_high_contrast
+  warm_practical
+  moody_low_key
+  high_key_bright
+  silhouette_backlit
+  neon
+  overcast_flat
+}
+
+Enum shot_types {
+    keyframe
+    motion
+}
+
+Enum model_usage_types {
+    chat // inputs [text, list of image], outputs [text]
+    storyboard_generation // inputs [text, list of image], outputs [text]
+    image_generation // inputs [text, list of image], outputs [image]
+    video_generation // inputs [text, list of image, list of video], outputs [video]
+}
+
+Table users {
+    id integer [pk, increment]
+}
+
+Table projects {
+    id integer [pk, increment]
+}
+
+Table tasks {
+    id integer [pk, increment]
+    uid varchar(36) [not null, unique]
+    project_id integer [not null]
+}
+
+
+Table model_options {
+    id integer [pk, increment]
+    name varchar(255) [not null, note: "Example: Muse-Spark"]
+    model_id varchar(255) [not null, note: "Example: meta/muse-spark-1.2"]
+    description text [default: null, note: "Example: Qwen3.8 Max is the flagship model in Alibaba's Qwen3.8 series, the general-availability successor to the Qwen3.8 Max Preview. It is a multimodal reasoning model intended for complex reasoning, visual understanding,..."]
+    architecture json [default: null, note: '''Only filled if model is image_generation and chat. Example: 
+     {
+        "modality": "text+image+file+audio+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video",
+          "file",
+          "audio"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+    ''']
+    type model_usage_types [not null, default: "image_generation"]
+    is_main boolean [default: null]
+    is_enabled boolean [not null, default: false]
+    supported_parameters json [default: null, note: '''Only filled if model is image_generation and chat. Example:
+    {
+        "resolution": {
+          "type": "enum",
+          "values": [
+            "1K",
+            "2K"
+          ]
+        },
+        "aspect_ratio": {
+          "type": "enum",
+          "values": [
+            "1:1",
+            "1:2",
+            "1:4",
+            "2:1",
+            "2:3",
+            "3:2",
+            "3:4",
+            "4:1",
+            "4:3",
+            "4:5",
+            "5:4",
+            "9:16",
+            "16:9"
+          ]
+        },
+        "n": {
+          "type": "range",
+          "min": 1,
+          "max": 6
+        },
+        "input_references": {
+          "type": "range",
+          "min": 0,
+          "max": 4
+        },
+        "seed": {
+          "type": "boolean"
+        }
+      }
+    ''']
+    supported_resolutions json [default: null, note: '''Only filled if model is video_generation. Example:
+    [
+        "720p",
+        "1080p"
+    ]
+    ''']
+    supported_aspect_ratios json [default: null, note: '''Only filled if model is video_generation. Example:
+     [
+        "16:9",
+        "9:16",
+        "1:1"
+      ],
+    ''']
+    supported_sizes json [default: null, note: '''Only filled if model is video_generation. Example:
+    [
+        "1280x720",
+        "720x1280",
+        "720x720"
+    ]
+    ''']
+    supported_durations json [default: null, note: '''Only filled if model is video_generation. Example:
+    [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+    ]
+    ''']
+    supported_frame_images json [default: null, note: '''Only filled if model is video_generation. Example:
+    [
+        "first_frame",
+        "last_frame"
+    ]
+    ''']
+    generate_audio boolean [default: null, note: "Only filled if model is video_generation. If true, the model can generate audio for the video."]
+}
+
+Table generation_prompts {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    archieved_at timestamp [default: null, note: "Only allowed to be archieved for assistant prompt types."]
+    uid varchar(36) [not null, unique]
+    task_id bigint [not null]
+    model_id bigint [not null]
+    keyframe_id bigint [default: null, note: "Will be filled if prompt source is from storyboard keyframe."]
+    motion_id bigint [default: null, note: "Will be filled if prompt source is from storyboard keyframe."]
+    element_file_id bigint [default: null, note: "Will be filled if prompt source is from storyboard element."]
+    parent_assistant_id bigint [default: null, note: "The ID of the parent prompt if this prompt is a child of another prompt. Will be chained for assistant API calls."]
+    x_min decimal(10, 2) [default: null, note: "The minimum x coordinate of the bounding box for the prompt. Will be filled if prompt source is from storyboard keyframe."]
+    x_max decimal(10, 2) [default: null, note: "The maximum x coordinate of the bounding box for the prompt. Will be filled if prompt source is from storyboard keyframe."]
+    y_min decimal(10, 2) [default: null, note: "The minimum y coordinate of the bounding box for the prompt. Will be filled if prompt source is from storyboard"]
+    y_max decimal(10, 2) [default: null, note: "The maximum y coordinate of the bounding box for the prompt. Will be filled if prompt source is from storyboard keyframe."]
+    raw text [not null, note: "The raw prompt text provided by the user."]
+    enhanced text [default: null]
+    status prompt_statuses [not null, default: "processing"]
+    type prompt_types [not null, default: "generation", note: "The type of prompt this is. Can be assistant or generation."]
+    model varchar(255) [not null, note: "The model used for this prompt. e.g.: 'gpt-4', 'dalle-2', etc."]
+    parameter json [default: "{}", note: "A JSON object containing the parameters used for this prompt. e.g.: {\"temperature\": 0.7, \"max_tokens\": 100}"]
+    endpoint varchar(255) [not null, note: "External endpoint. e.g.: 'https://openrouter.ai/api/v1/videos'"]
+    response json [default: "{}", note: "A JSON object containing the responses generated for this prompt. e.g.: {\"text\": \"Generated text here\", \"image_url\": \"https://example.com/generated_image.png\"}"]
+    status_code integer [default: null, note: "The HTTP status code returned by the model for this prompt. e.g.: 200 for success, 400 for bad request, etc."]
+    token_usage integer [default: 0, not null, note: '''
+    {
+        "prompt_tokens": 10,
+        "completion_tokens": 1120,
+        "total_tokens": 1130,
+        "cost": 0.067205,
+        "is_byok": false,
+        "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+        },
+        "cost_details": {
+            "upstream_inference_cost": 0.067205,
+            "upstream_inference_prompt_cost": 0.000005,
+            "upstream_inference_completions_cost": 0.0672
+        },
+        "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 1120
+        }
+    }
+    ''']
+    cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
+    created_by integer [not null, note: "The ID of the user who created this prompt."]
+}
+
+Table df_engine_files {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    archieved_at timestamp [default: null, note: "Only allowed to be archieved file_status = generation, and only the owner can archieve it."]
+    uid varchar(36) [not null, unique]
+    task_id bigint [not null]
+    project_id bigint [not null]
+    prompt_id bigint [default: null, note: "The ID of the prompt that generated this file. Can be null if the file was not generated from a prompt."]
+    generation_type task_types [default: null, note: "The type of generation that produced this file. Can be image, video. Will be null if the file was not generated from a prompt."]
+    file_status file_statuses [not null, default: "generation"]
+    upload_status prompt_statuses [not null, default: "processing", note: "When failed then upload to Udin's PC will be retried. When completed then the file will be moved to the final destination."]
+    retry_count integer [default: 0, not null, note: "The number of times the upload has been retried. This is used to limit the number of retries for failed uploads."]
+    size integer [not null, note: "The size of the generated file in bytes."]
+    path varchar(255) [not null, note: "The path to the generated file. e.g.: '/generated/images/image1.png'"]
+    created_by integer [not null, note: "The ID of the user who created this prompt."]
+}
+
+Table generation_references {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    prompt_id bigint [not null]
+    file_id bigint [not null]
+}
+
+Table generation_favorite_files {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    task_id bigint [not null]
+    file_id bigint [not null]
+    favorited_by integer [not null, note: "The ID of the user who favorited this file."]
+}
+
+Table generation_galleries {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null, note: "Will be generated from prompt"]
+    prompt_id bigint [not null, note: "The ID of the initial prompt that generated this gallery."]
+    task_type task_types [not null, default: "image"]
+    task_id bigint [not null]
+    created_by integer [not null]
+}
+
+Table gallery_details {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    prompt_id bigint [not null]
+    gallery_id bigint [not null]
+    file_id bigint [not null]
+    is_main boolean [not null, default: false, note: "A boolean indicating whether this file is the main file for the gallery. True if it is the main file, false otherwise."]
+}
+
+Table project_generation_shares {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    project_id bigint [not null]
+    task_id bigint [not null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null]
+    size integer [not null, note: "The size of the shared asset in bytes."]
+    path varchar(255) [not null, note: "The path to the generated file. e.g.: '/dfactory/project_1/task_1/images/image1.png', '/dfactory/project_1/task_2/images/image2.png'"]
+    created_by integer [not null]
+}
+
+Table elements_presets {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null]
+    description text [default: null]
+    element_type element_types [not null, default: "environment", note: "The type of the element preset. Can be environment, character, object, or styles."]
+    project_id bigint [not null]
+    task_id bigint [not null]
+    created_by integer [not null]
+}
+
+Table element_files {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    preset_id bigint [not null]
+    gallery_id bigint [default: null, note: "Handle image generations relation, from main galllery -> gallery_details.is_main = true"]
+    is_main boolean [not null, default: false, note: "A boolean indicating whether this file is the main file for the gallery. True if it is the main file, false otherwise."]
+}
+
+Table storyboards {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    project_id bigint [not null]
+    task_id bigint [not null]
+    file_id bigint [default: null, note: "Will be used for thumbnail of storyboard folders."]
+    name varchar(255) [not null]
+    description text [default: null]
+    created_by integer [not null]
+}
+
+Table storyboard_scenes {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    storyboard_id bigint [not null]
+    element_id bigint [default: null, note: "The ID of the element used to generate this scene. Can be null if the scene was not generated from a prompt. Should be only allowed to set with element_type = environment."]
+    name varchar(255) [not null, note: "The name of the scene. Can be null if the scene was not generated from a prompt. (e.g.: Scene 1, Scene 2, etc.)"]
+    description text [default: null]
+    location varchar(255) [default: null]
+    duration decimal(10, 2) [default: 0, note: "The total duration of the storyboard in seconds. Will be calculated from the sum of all shots durations."]
+    interior_style interior_styles [default: null, note: "The interior style of the scene. Can be null if the scene was not generated from a prompt."]
+    time_of_day time_of_days [default: null]
+    lighting_mood lighting_moods [default: null]
+}
+
+Table storyboard_shots {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    scene_id bigint [not null]
+    name varchar(255) [not null, note: "The name of the scene. Can be null if the scene was not generated from a prompt. (e.g.: Scene 1, Scene 2, etc.)"]
+    description text [default: null]
+}
+
+Table storyboard_keyframes {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    shot_id bigint [not null]
+    gallery_id bigint [default: null]
+    prompt text [default: null, note: "Placeholder prompt triggered by user if HIT storyboard generation."]
+    vo text [default: null]
+    shot_size shot_sizes [default: "medium", note: "The size of the shot for the scene. Can be null if the scene was not generated from a prompt."]
+    shot_angels shot_angles [default: "eye_level", note: "The angle of the shot for the scene. Can be null if the scene was not generated from a prompt."]
+    focal_length focal_lengths [default: "mm_50", note: "The focal length of the shot for the scene. Can be null if the scene was not generated from a prompt."]
+}
+
+Table storyboard_motions {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    shot_id bigint [not null]
+    gallery_id bigint [default: null]
+    prompt text [default: null, note: "Placeholder prompt triggered by user if HIT storyboard generation."]
+    duration decimal(10, 2) [default: 0, note: "The duration of the scene in seconds"]
+    motion motion_types [default: "static", note: "The type of motion for the scene. Can be null if the scene was not generated from a prompt."]
+}
+
+Ref: users.id < df_engine_files.created_by
+Ref: users.id < generation_galleries.created_by
+Ref: users.id < generation_favorite_files.favorited_by
+Ref: users.id < generation_prompts.created_by
+Ref: users.id < project_generation_shares.created_by
+Ref: users.id < storyboards.created_by
+Ref: tasks.id < df_engine_files.task_id
+Ref: tasks.id < generation_galleries.task_id
+Ref: tasks.id < generation_favorite_files.task_id
+Ref: tasks.id < generation_prompts.task_id
+Ref: tasks.id < project_generation_shares.task_id
+Ref: tasks.id < storyboards.task_id
+Ref: df_engine_files.id < generation_references.file_id
+Ref: df_engine_files.id < generation_favorite_files.file_id
+Ref: df_engine_files.id < gallery_details.file_id
+Ref: df_engine_files.id < storyboards.file_id
+Ref: generation_prompts.id < generation_references.prompt_id
+Ref: generation_prompts.id < generation_prompts.parent_assistant_id
+Ref: generation_prompts.id < gallery_details.prompt_id
+Ref: generation_prompts.id - generation_galleries.prompt_id
+Ref: generation_prompts.id - df_engine_files.prompt_id
+Ref: projects.id < tasks.project_id
+Ref: projects.id < storyboards.project_id
+Ref: projects.id < df_engine_files.project_id
+Ref: projects.id < project_generation_shares.project_id
+Ref: generation_galleries.id < gallery_details.gallery_id
+Ref: model_options.id < generation_prompts.model_id
+
+// Element relationships
+Ref: projects.id < elements_presets.project_id
+Ref: tasks.id < elements_presets.task_id
+Ref: elements_presets.id < element_files.preset_id
+Ref: generation_galleries.id < element_files.gallery_id
+Ref: element_files.id < generation_prompts.element_file_id
+
+// Storyboard relationships
+Ref: elements_presets.id < storyboard_scenes.element_id
+Ref: storyboards.id < storyboard_scenes.storyboard_id
+Ref: storyboard_scenes.id < storyboard_shots.scene_id
+Ref: storyboard_shots.id < storyboard_keyframes.shot_id
+Ref: storyboard_shots.id < storyboard_motions.shot_id
+Ref: storyboard_motions.id < generation_prompts.motion_id
+Ref: storyboard_keyframes.id < generation_prompts.keyframe_id
+Ref: generation_galleries.id < storyboard_keyframes.gallery_id
+Ref: generation_galleries.id < storyboard_motions.gallery_id
