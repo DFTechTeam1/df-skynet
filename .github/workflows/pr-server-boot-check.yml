@@ -31,6 +31,9 @@ jobs:
           fi
 
       - name: Create empty env file
+        run: mkdir -p env && touch "$ENV_FILE"
+
+      - name: Create empty env file
         run: touch "$ENV_FILE"
 
       - name: Install dependencies
