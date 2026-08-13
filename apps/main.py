@@ -11,7 +11,7 @@ from middlewares.language import LanguageMiddleware
 from utils import get_project_root
 
 app = FastAPI(
-    title="ERP-LAX-Python",
+    title="DF-Skynet",
     version="1.0",
     docs_url=None,
 )
