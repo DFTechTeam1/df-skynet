@@ -124,6 +124,74 @@ Enum model_usage_types {
     video_generation // inputs [text, list of image, list of video], outputs [video]
 }
 
+
+Enum limit_reset_types {
+    daily
+    monthly
+    weekly
+}
+
+Table df_engine_api_keys {
+    id integer [pk, increment]
+    expired_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
+    limit_usage decimal(10, 2) [default: null]
+    limit_reset limit_resets [default: null]
+    uid varchar(36) [not null, unique]
+    key varchar(255) [not null, unique]
+    name varchar(255) [not null, unique]
+    employee_id integer [not null]
+    is_active boolean [not null, default: true]
+    description text [default: null]
+}
+
+
+Table df_engine_pages {
+    id integer [pk, increment]
+    uid varchar(36) [not null, unique]
+    icon varchar(255) [default: null]
+    name varchar(255) [not null, unique]
+    slug varchar(255) [not null, unique]
+    description text [default: null]
+}
+
+Table df_engine_actions {
+    id integer [pk, increment]
+    uid varchar(36) [not null, unique]
+    page_id integer [not null]
+    is_active boolean [not null, default: true]
+    name varchar(255) [not null, unique]
+    description text [default: null]
+}
+
+Table df_engine_action_mappings {
+    id integer [pk, increment]
+    uid varchar(36) [not null, unique]
+    action_id integer [not null]
+    mapping_id integer [not null]
+}
+
+Ref: df_engine_actions.id < df_engine_action_mappings.action_id
+Ref: df_engine_prompt_mappings.id < df_engine_action_mappings.mapping_id
+
+Table df_engine_prompt_mappings {
+    id integer [pk, increment]
+    uid varchar(36) [not null, unique]
+    is_active boolean [not null, default: true]
+    name varchar(255) [not null, unique]
+    prompt text [not null, unique]
+    description text [default: null]
+}
+
+Table settings {
+    id integer [pk, increment]
+    key varchar(255) [not null, unique]
+    value json [not null]
+}
+
+Table employees {
+    id integer [pk, increment]
+}
+
 Table users {
     id integer [pk, increment]
 }
@@ -257,6 +325,7 @@ Table generation_prompts {
     created_at timestamp [default: `now()`]
     archieved_at timestamp [default: null, note: "Only allowed to be archieved for assistant prompt types."]
     uid varchar(36) [not null, unique]
+    key_id bigint [not null]
     task_id bigint [not null]
     model_id bigint [not null]
     keyframe_id bigint [default: null, note: "Will be filled if prompt source is from storyboard keyframe."]
@@ -315,6 +384,7 @@ Table df_engine_files {
     generation_type task_types [default: null, note: "The type of generation that produced this file. Can be image, video. Will be null if the file was not generated from a prompt."]
     file_status file_statuses [not null, default: "generation"]
     upload_status prompt_statuses [not null, default: "processing", note: "When failed then upload to Udin's PC will be retried. When completed then the file will be moved to the final destination."]
+    shared_global boolean [not null, default: false, note: "A boolean indicating whether this file is shared globally under projects radar. True if it is shared globally, false otherwise."]
     retry_count integer [default: 0, not null, note: "The number of times the upload has been retried. This is used to limit the number of retries for failed uploads."]
     size integer [not null, note: "The size of the generated file in bytes."]
     path varchar(255) [not null, note: "The path to the generated file. e.g.: '/generated/images/image1.png'"]
@@ -497,3 +567,10 @@ Ref: storyboard_motions.id < generation_prompts.motion_id
 Ref: storyboard_keyframes.id < generation_prompts.keyframe_id
 Ref: generation_galleries.id < storyboard_keyframes.gallery_id
 Ref: generation_galleries.id < storyboard_motions.gallery_id
+
+
+
+Ref: df_engine_pages.id < df_engine_actions.page_id
+// Ref: df_engine_actions.id < df_engine_prompt_mappings.action_id
+Ref: employees.id < df_engine_api_keys.employee_id
+Ref: df_engine_api_keys.id < generation_prompts.key_id
