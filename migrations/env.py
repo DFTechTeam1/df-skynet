@@ -19,7 +19,11 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 target_metadata = None
 
-config.set_main_option(name="sqlalchemy.url", value=DB_SYNC_URL)
+# `set_main_option` writes through to a `configparser.ConfigParser`, which
+# treats `%` as its interpolation escape char — a raw `%` (e.g. from a
+# URL-encoded password like `%21`) would otherwise raise
+# "invalid interpolation syntax", so it has to be doubled here.
+config.set_main_option(name="sqlalchemy.url", value=DB_SYNC_URL.replace("%", "%%"))
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
