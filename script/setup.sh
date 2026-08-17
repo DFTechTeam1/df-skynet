@@ -20,4 +20,7 @@ fi
 echo "Syncing dependencies with uv..."
 uv sync
 
+echo "Installing git hooks..."
+uv run pre-commit install
+
 echo "Setup complete."

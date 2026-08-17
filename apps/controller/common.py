@@ -2,11 +2,11 @@ from fastapi import status
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi_controller import controller
 from scalar_fastapi import get_scalar_api_reference
-from apps.controller.core import CoreController
+from apps.controller.core import PlainDependencies
 from utils import get_project_root
 
 
-class CommonController(CoreController):
+class CommonController(PlainDependencies):
     @controller.get(
         "/",
         summary="Root.",
