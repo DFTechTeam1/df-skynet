@@ -147,40 +147,53 @@ Table df_engine_api_keys {
 
 Table df_engine_pages {
     id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
-    icon varchar(255) [default: null]
     name varchar(255) [not null, unique]
-    slug varchar(255) [not null, unique]
     description text [default: null]
+    is_active boolean [not null, default: true]
+    created_by integer [not null]
+    updated_by integer [default: null]
 }
+
 
 Table df_engine_actions {
     id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
     page_id integer [not null]
-    is_active boolean [not null, default: true]
     name varchar(255) [not null, unique]
     description text [default: null]
+    is_active boolean [not null, default: true]
+    created_by integer [not null]
+    updated_by integer [default: null]
 }
+
 
 Table df_engine_action_mappings {
     id integer [pk, increment]
+    created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     action_id integer [not null]
-    mapping_id integer [not null]
+    template_id integer [not null]
 }
 
-Ref: df_engine_actions.id < df_engine_action_mappings.action_id
-Ref: df_engine_prompt_mappings.id < df_engine_action_mappings.mapping_id
 
-Table df_engine_prompt_mappings {
+Table df_engine_prompt_templates {
     id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
     is_active boolean [not null, default: true]
     name varchar(255) [not null, unique]
     prompt text [not null, unique]
     description text [default: null]
+    created_by integer [not null]
+    updated_by integer [default: null]
 }
+
 
 Table settings {
     id integer [pk, increment]
@@ -528,6 +541,12 @@ Ref: users.id < generation_favorite_files.favorited_by
 Ref: users.id < generation_prompts.created_by
 Ref: users.id < project_generation_shares.created_by
 Ref: users.id < storyboards.created_by
+Ref: users.id < df_engine_pages.created_by
+Ref: users.id < df_engine_pages.updated_by
+Ref: users.id < df_engine_actions.created_by
+Ref: users.id < df_engine_actions.updated_by
+Ref: users.id < df_engine_prompt_templates.created_by
+Ref: users.id < df_engine_prompt_templates.updated_by
 Ref: tasks.id < df_engine_files.task_id
 Ref: tasks.id < generation_galleries.task_id
 Ref: tasks.id < generation_favorite_files.task_id
@@ -569,8 +588,8 @@ Ref: generation_galleries.id < storyboard_keyframes.gallery_id
 Ref: generation_galleries.id < storyboard_motions.gallery_id
 
 
-
 Ref: df_engine_pages.id < df_engine_actions.page_id
-// Ref: df_engine_actions.id < df_engine_prompt_mappings.action_id
 Ref: employees.id < df_engine_api_keys.employee_id
 Ref: df_engine_api_keys.id < generation_prompts.key_id
+Ref: df_engine_actions.id < df_engine_action_mappings.action_id
+Ref: df_engine_prompt_templates.id < df_engine_action_mappings.template_id

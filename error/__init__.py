@@ -43,3 +43,23 @@ class DataNotFoundError(BaseError):
         error: dict[str, Any] | None = None,
     ):
         super().__init__(status_code, message, error)
+
+
+class DataConflictError(BaseError):
+    def __init__(
+        self,
+        status_code: int = status.HTTP_409_CONFLICT,
+        message: str = "data_conflict_error",
+        error: dict[str, Any] | None = None,
+    ):
+        super().__init__(status_code, message, error)
+
+
+class AuthenticationError(BaseError):
+    def __init__(
+        self,
+        status_code: int = status.HTTP_401_UNAUTHORIZED,
+        message: str = "invalid_credential",
+        error: dict[str, Any] | None = None,
+    ):
+        super().__init__(status_code, message, error)
