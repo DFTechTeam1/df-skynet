@@ -1,12 +1,36 @@
 from fastapi import Request, Response, status
-from pyrate_limiter import Duration, Limiter, Rate
-
 from error import BaseError
+from pyrate_limiter import (
+    AbstractBucket,
+    BucketFactory,
+    Duration,
+    InMemoryBucket,
+    Limiter,
+    MonotonicClock,
+    Rate,
+    RateItem,
+)
+
+
+class KeyedBucketFactory(BucketFactory):
+    _clock = MonotonicClock()
+
+    def __init__(self, rates: list[Rate]):
+        self.rates = rates
+        self.buckets: dict[str, AbstractBucket] = {}
+
+    def wrap_item(self, name: str, weight: int = 1) -> RateItem:
+        return RateItem(name, self._clock.now(), weight=weight)
+
+    def get(self, item: RateItem) -> AbstractBucket:
+        bucket = self.buckets.get(item.name)
+        if bucket is None:
+            bucket = self.create(InMemoryBucket, self.rates)
+            self.buckets[item.name] = bucket
+        return bucket
 
 
 class RateLimiter:
-    """Per-endpoint rate limiter keyed on client IP + method + path."""
-
     def __init__(self, limiter: Limiter):
         self.limiter = limiter
 
@@ -20,4 +44,6 @@ class RateLimiter:
 
 
 def rate_limit(times: int = 15, seconds: int = 1):
-    return RateLimiter(limiter=Limiter(Rate(times, Duration.SECOND * seconds)))
+    return RateLimiter(
+        limiter=Limiter(KeyedBucketFactory([Rate(times, Duration.SECOND * seconds)]))
+    )

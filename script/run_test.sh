@@ -3,14 +3,15 @@
 show_help() {
     echo "Usage: sh scripts/run_test.sh --env <environment> --test <type> | [ --help ]"
     echo ""
-    echo "--env       Set environment: dev | stg | prod"
-    echo "--test      Set test type: unit | api | e2e"
+    echo "--env       Set environment: dev | stg"
+    echo "--test      Set test type: unit | api | e2e | all"
     echo "--help, -h  Show this help message."
     exit 1
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+COVERAGE_BASE="$PROJECT_DIR/coverage"
 
 ENV=""
 ENV_FILE=""
@@ -28,9 +29,6 @@ while [ $# -gt 0 ]; do
         stg)
             ENV_FILE="$PROJECT_DIR/env/.env.staging"
             ;;
-        prod)
-            ENV_FILE="$PROJECT_DIR/env/.env.production"
-            ;;
         *)
             echo "Error: Invalid environment '$ENV'"
             show_help
@@ -41,7 +39,7 @@ while [ $# -gt 0 ]; do
         shift
         TEST_TYPE="$1"
         case "$TEST_TYPE" in
-        unit | api | e2e) ;;
+        unit | api | e2e | all) ;;
         *)
             echo "Error: Invalid test type '$TEST_TYPE'"
             show_help
@@ -91,13 +89,29 @@ else
     exit 1
 fi
 
+if [ "$TEST_TYPE" = "all" ]; then
+    TEST_PATH="$PROJECT_DIR/tests"
+else
+    TEST_PATH="$PROJECT_DIR/tests/$TEST_TYPE"
+fi
+
+TIMESTAMP="$(date '+%Y%m%d%H%M%S')"
+ENV_LABEL="$(echo "$ENV" | tr '[:lower:]' '[:upper:]')"
+COVERAGE_DIR="$COVERAGE_BASE/${ENV_LABEL}-${TIMESTAMP}"
+mkdir -p "$COVERAGE_DIR"
+
 echo "Running $TEST_TYPE tests with environment variables from $ENV_FILE..."
-PYTHONPATH="$PROJECT_DIR" python -m pytest "$PROJECT_DIR/tests/$TEST_TYPE" -v
+PYTHONPATH="$PROJECT_DIR" coverage run --data-file="$COVERAGE_DIR/.coverage" --source="$TEST_PATH" -m pytest "$TEST_PATH" -v
 STATUS=$?
 
 if [ "$STATUS" -eq 5 ]; then
     echo "No $TEST_TYPE tests found, skipping."
     exit 0
 fi
+
+echo "Generating coverage report"
+coverage report -m --skip-empty --data-file="$COVERAGE_DIR/.coverage"
+coverage html -d "$COVERAGE_DIR" --data-file="$COVERAGE_DIR/.coverage"
+echo "HTML coverage report generated at $COVERAGE_DIR/index.html"
 
 exit "$STATUS"
