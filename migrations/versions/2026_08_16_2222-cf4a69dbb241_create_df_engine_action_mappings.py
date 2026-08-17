@@ -5,6 +5,7 @@ Revises: 95bd21923c75
 Create Date: 2026-08-16 22:22:11.664791
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -13,8 +14,8 @@ from sqlalchemy.dialects.mysql import BIGINT
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'cf4a69dbb241'
-down_revision: Union[str, Sequence[str], None] = '95bd21923c75'
+revision: str = "cf4a69dbb241"
+down_revision: Union[str, Sequence[str], None] = "95bd21923c75"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -28,7 +29,12 @@ def upgrade() -> None:
         sa.Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
         sa.Column("uid", sa.CHAR(36), nullable=False, unique=True),
-        sa.Column("action_id", BIGINT(unsigned=True), sa.ForeignKey("df_engine_actions.id"), nullable=False),
+        sa.Column(
+            "action_id",
+            BIGINT(unsigned=True),
+            sa.ForeignKey("df_engine_actions.id"),
+            nullable=False,
+        ),
         sa.Column("template_id", BIGINT(unsigned=True), nullable=False),
     )
 

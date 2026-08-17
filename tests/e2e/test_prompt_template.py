@@ -1,6 +1,11 @@
 import pytest
 from uuid import uuid4
-from services.mysql.model import DfEngineActionMappings, DfEngineActions, DfEnginePages, DfEnginePromptTemplates
+from services.mysql.model import (
+    DfEngineActionMappings,
+    DfEngineActions,
+    DfEnginePages,
+    DfEnginePromptTemplates,
+)
 from tests.helpers import create_record, response_names
 
 
@@ -12,7 +17,9 @@ async def test_full_crud_lifecycle(authed_client):
     name = f"Journey {uuid4().hex[:8]}"
 
     # 1. create
-    create_resp = await authed_client.call("POST", URL, json={"name": name, "prompt": "v1 prompt"})
+    create_resp = await authed_client.call(
+        "POST", URL, json={"name": name, "prompt": "v1 prompt"}
+    )
     assert create_resp.status_code == 200
     assert name in response_names(create_resp.json())
     created = next(t for t in create_resp.json()["data"] if t["name"] == name)
@@ -26,7 +33,9 @@ async def test_full_crud_lifecycle(authed_client):
     # journey after the create above
     renamed = f"{name}-v2"
     update_resp = await authed_client.call(
-        "PATCH", f"{URL}/{uid}", json={"name": renamed, "prompt": "v2 prompt", "is_active": True}
+        "PATCH",
+        f"{URL}/{uid}",
+        json={"name": renamed, "prompt": "v2 prompt", "is_active": True},
     )
     assert update_resp.status_code == 200
     assert renamed in response_names(update_resp.json())
@@ -62,16 +71,25 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
     alpha_name = f"Alpha-{suffix}"
     beta_name = f"Beta-{suffix}"
 
-    alpha_resp = await authed_client.call("POST", URL, json={"name": alpha_name, "prompt": "p"})
+    alpha_resp = await authed_client.call(
+        "POST", URL, json={"name": alpha_name, "prompt": "p"}
+    )
     assert alpha_resp.status_code == 200
 
-    beta_resp = await authed_client.call("POST", URL, json={"name": beta_name, "prompt": "p"})
+    beta_resp = await authed_client.call(
+        "POST", URL, json={"name": beta_name, "prompt": "p"}
+    )
     assert beta_resp.status_code == 200
-    beta_uid = next(t for t in beta_resp.json()["data"] if t["name"] == beta_name)["uid"]
+    beta_uid = next(t for t in beta_resp.json()["data"] if t["name"] == beta_name)[
+        "uid"
+    ]
 
     # renaming beta to alpha's name conflicts
     rename_conflict = await authed_client.call(
-        "PATCH", f"{URL}/{beta_uid}", json={"name": alpha_name, "prompt": "p"}, raise_for_status=False
+        "PATCH",
+        f"{URL}/{beta_uid}",
+        json={"name": alpha_name, "prompt": "p"},
+        raise_for_status=False,
     )
     assert rename_conflict.status_code == 409
 
@@ -87,26 +105,44 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_delete_blocked_then_succeeds_after_unmapping(authed_client, db_session, user_id):
+async def test_delete_blocked_then_succeeds_after_unmapping(
+    authed_client, db_session, user_id
+):
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"Journey {uuid4().hex[:8]}", prompt="a prompt", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"Journey {uuid4().hex[:8]}",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
     )
 
     page = await create_record(
-        db_session, DfEnginePages, dict(uid=str(uuid4()), name=f"Page {uuid4().hex[:8]}", created_by=int(user_id))
+        db_session,
+        DfEnginePages,
+        dict(uid=str(uuid4()), name=f"Page {uuid4().hex[:8]}", created_by=int(user_id)),
     )
     action = await create_record(
         db_session,
         DfEngineActions,
-        dict(uid=str(uuid4()), page_id=page.id, name=f"Action {uuid4().hex[:8]}", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            page_id=page.id,
+            name=f"Action {uuid4().hex[:8]}",
+            created_by=int(user_id),
+        ),
     )
     mapping = await create_record(
-        db_session, DfEngineActionMappings, dict(uid=str(uuid4()), action_id=action.id, template_id=row.id)
+        db_session,
+        DfEngineActionMappings,
+        dict(uid=str(uuid4()), action_id=action.id, template_id=row.id),
     )
 
-    blocked = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
+    blocked = await authed_client.call(
+        "DELETE", f"{URL}/{row.uid}", raise_for_status=False
+    )
     assert blocked.status_code == 409
     # error responses go through URL_handler's {message, error} shape, not
     # the Response {message, data} envelope — no "data" key to inspect here.
@@ -132,9 +168,15 @@ async def test_search_and_active_filter_compose_correctly(authed_client):
     active_b = f"{prefix}-B"
     inactive_c = f"{prefix}-C"
 
-    await authed_client.call("POST", URL, json={"name": active_a, "prompt": "p", "is_active": True})
-    await authed_client.call("POST", URL, json={"name": active_b, "prompt": "p", "is_active": True})
-    await authed_client.call("POST", URL, json={"name": inactive_c, "prompt": "p", "is_active": False})
+    await authed_client.call(
+        "POST", URL, json={"name": active_a, "prompt": "p", "is_active": True}
+    )
+    await authed_client.call(
+        "POST", URL, json={"name": active_b, "prompt": "p", "is_active": True}
+    )
+    await authed_client.call(
+        "POST", URL, json={"name": inactive_c, "prompt": "p", "is_active": False}
+    )
 
     search_resp = await authed_client.call("GET", URL, params={"name": prefix})
     found = response_names(search_resp.json())
@@ -151,11 +193,18 @@ async def test_clone_template_under_a_new_name(authed_client, db_session, user_i
     original = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"Original {uuid4().hex[:8]}", prompt="shared body", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"Original {uuid4().hex[:8]}",
+            prompt="shared body",
+            created_by=int(user_id),
+        ),
     )
     clone_name = f"{original.name}-clone"
 
-    clone_resp = await authed_client.call("POST", URL, json={"name": clone_name, "prompt": original.prompt})
+    clone_resp = await authed_client.call(
+        "POST", URL, json={"name": clone_name, "prompt": original.prompt}
+    )
     assert clone_resp.status_code == 200
     found = response_names(clone_resp.json())
     assert original.name in found

@@ -10,6 +10,7 @@ from services.mysql import make_session
 @pytest.fixture(scope="session")
 def app():
     from apps.main import app
+
     return app
 
 
@@ -43,7 +44,9 @@ def user_id(access_token: str) -> str:
 
 @pytest_asyncio.fixture
 async def client(app):
-    async with APICaller(transport=ASGITransport(app=app), base_url="http://test") as caller:
+    async with APICaller(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as caller:
         yield caller
 
 

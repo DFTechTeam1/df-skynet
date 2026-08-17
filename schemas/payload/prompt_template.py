@@ -22,7 +22,9 @@ class CreatePromptTemplatePayload(BaseModel):
         default=None,
         min_length=1,
         description="Free-text explanation of what this template is for and when it should be used.",
-        examples=["Used to fine-tune the assistant's tone for onboarding conversations."],
+        examples=[
+            "Used to fine-tune the assistant's tone for onboarding conversations."
+        ],
     )
     is_active: bool = Field(
         default=True,

@@ -11,7 +11,11 @@ from error import (
 
 DEFAULTS = [
     (ServiceError, status.HTTP_500_INTERNAL_SERVER_ERROR, "internal_server_error"),
-    (DataValidationError, status.HTTP_422_UNPROCESSABLE_CONTENT, "data_validation_error"),
+    (
+        DataValidationError,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "data_validation_error",
+    ),
     (DataNotFoundError, status.HTTP_404_NOT_FOUND, "data_not_found_error"),
     (DataConflictError, status.HTTP_409_CONFLICT, "data_conflict_error"),
     (AuthenticationError, status.HTTP_401_UNAUTHORIZED, "invalid_credential"),

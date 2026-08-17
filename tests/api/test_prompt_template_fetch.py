@@ -7,6 +7,7 @@ from tests.helpers import create_record, expected_user, find_by_name, response_n
 
 URL = "/api/prompt-management"
 
+
 @pytest.mark.asyncio
 async def test_fetch_all_prompt_templates(authed_client):
     resp = await authed_client.call("GET", URL)
@@ -17,7 +18,9 @@ async def test_fetch_all_prompt_templates(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_prompt_templates_inactive_row_is_excluded(authed_client, db_session, user_id):
+async def test_fetch_prompt_templates_inactive_row_is_excluded(
+    authed_client, db_session, user_id
+):
     inactive = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -76,13 +79,23 @@ async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id)
     matching = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"{prefix}-one", prompt="a prompt", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"{prefix}-one",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
     )
     # prefix appears mid-string, shouldn't match
     await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"other-{prefix}", prompt="a prompt", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"other-{prefix}",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
     )
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
@@ -97,12 +110,24 @@ async def test_name_search_excludes_inactive_rows(authed_client, db_session, use
     active = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"{prefix}-active", prompt="a prompt", is_active=True, created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"{prefix}-active",
+            prompt="a prompt",
+            is_active=True,
+            created_by=int(user_id),
+        ),
     )
     inactive = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"{prefix}-inactive", prompt="a prompt", is_active=False, created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"{prefix}-inactive",
+            prompt="a prompt",
+            is_active=False,
+            created_by=int(user_id),
+        ),
     )
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
@@ -121,16 +146,25 @@ async def test_name_search_with_no_match_returns_empty_list(authed_client):
 
 @pytest.mark.asyncio
 async def test_name_search_empty_string_is_a_validation_error(authed_client):
-    resp = await authed_client.call("GET", URL, params={"name": ""}, raise_for_status=False)
+    resp = await authed_client.call(
+        "GET", URL, params={"name": ""}, raise_for_status=False
+    )
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
+async def test_response_shape_has_creater_not_created_by_user(
+    authed_client, db_session, user_id
+):
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"Prompt {uuid4().hex[:8]}", prompt="a prompt", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"Prompt {uuid4().hex[:8]}",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
     )
     creater = await expected_user(db_session, user_id)
 
@@ -152,7 +186,12 @@ async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id)
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"Prompt {uuid4().hex[:8]}", prompt="a prompt", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"Prompt {uuid4().hex[:8]}",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
     )
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
@@ -162,11 +201,18 @@ async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_action_flags_reflect_current_users_real_permissions(authed_client, db_session, user_id):
+async def test_action_flags_reflect_current_users_real_permissions(
+    authed_client, db_session, user_id
+):
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
-        dict(uid=str(uuid4()), name=f"Prompt {uuid4().hex[:8]}", prompt="a prompt", created_by=int(user_id)),
+        dict(
+            uid=str(uuid4()),
+            name=f"Prompt {uuid4().hex[:8]}",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
     )
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)

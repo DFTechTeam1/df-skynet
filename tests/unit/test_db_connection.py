@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from services.mysql import engine, get_db, make_session
 
+
 def test_engine_is_cached_per_url():
     first = engine("mysql+aiomysql://a:a@localhost:3306/db_a")
     second = engine("mysql+aiomysql://a:a@localhost:3306/db_a")

@@ -1,5 +1,6 @@
 import pytest
 
+
 @pytest.mark.asyncio
 async def test_root_returns_the_restricted_page(client):
     resp = await client.call("GET", "/", raise_for_status=False)

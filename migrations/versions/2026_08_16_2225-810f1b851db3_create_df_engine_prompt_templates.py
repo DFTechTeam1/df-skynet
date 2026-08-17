@@ -5,6 +5,7 @@ Revises: cf4a69dbb241
 Create Date: 2026-08-16 22:25:13.860235
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -13,8 +14,8 @@ from sqlalchemy.dialects.mysql import BIGINT
 
 
 # revision identifiers, used by Alembic.
-revision: str = '810f1b851db3'
-down_revision: Union[str, Sequence[str], None] = 'cf4a69dbb241'
+revision: str = "810f1b851db3"
+down_revision: Union[str, Sequence[str], None] = "cf4a69dbb241"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -31,8 +32,18 @@ def upgrade() -> None:
         sa.Column("name", sa.String(255), nullable=False, unique=True),
         sa.Column("prompt", sa.Text, nullable=False),
         sa.Column("description", sa.Text, nullable=True),
-        sa.Column("created_by", BIGINT(unsigned=True), sa.ForeignKey("users.id"), nullable=False),
-        sa.Column("updated_by", BIGINT(unsigned=True), sa.ForeignKey("users.id"), nullable=True),
+        sa.Column(
+            "created_by",
+            BIGINT(unsigned=True),
+            sa.ForeignKey("users.id"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_by",
+            BIGINT(unsigned=True),
+            sa.ForeignKey("users.id"),
+            nullable=True,
+        ),
     )
 
     # Deferred FK: df_engine_action_mappings.template_id was created (previous migration)
