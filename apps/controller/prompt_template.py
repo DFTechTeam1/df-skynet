@@ -284,7 +284,6 @@ class PromptTemplateController(CoreDependencies):
             try:
                 await self.db.flush()
             except IntegrityError:
-                # See create's comment — no manual rollback, get_db() handles it once.
                 raise DataConflictError(message="prompt_template_in_use")
 
             response.data = await self.prompt_templates()

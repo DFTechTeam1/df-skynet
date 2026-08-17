@@ -2,103 +2,107 @@
   "version": 1,
   "positions": {
     "table-df_engine_api_keys": {
-      "x": 21.5,
+      "x": 251.5,
       "y": 1411
     },
     "table-df_engine_pages": {
-      "x": -1029.2396289123326,
-      "y": 3310.869247434464
+      "x": 532,
+      "y": 3378
     },
     "table-df_engine_actions": {
-      "x": -78.57609482850435,
-      "y": 2830.603183584178
+      "x": 282,
+      "y": 3378
     },
     "table-df_engine_action_mappings": {
-      "x": 110.25,
-      "y": 2447
+      "x": 4,
+      "y": 2920
+    },
+    "table-df_engine_feature_mappings": {
+      "x": 265.7448972009883,
+      "y": 2825.3265820978686
     },
     "table-df_engine_prompt_templates": {
       "x": 0,
-      "y": 3393
+      "y": 3363
     },
     "table-settings": {
-      "x": 1537.75,
+      "x": 1767.75,
       "y": 60
     },
     "table-employees": {
-      "x": 36,
+      "x": 266,
       "y": 2049
     },
     "table-users": {
-      "x": 339,
-      "y": 3956
-    },
-    "table-projects": {
-      "x": 918.75,
-      "y": 4174
-    },
-    "table-tasks": {
-      "x": 2426.5,
+      "x": 569,
       "y": 3926
     },
+    "table-projects": {
+      "x": 1042.5,
+      "y": 4144
+    },
+    "table-tasks": {
+      "x": 2575.25,
+      "y": 3896
+    },
     "table-model_options": {
-      "x": 300.5,
+      "x": 530.5,
       "y": 1336
     },
     "table-generation_prompts": {
-      "x": 1011.75,
+      "x": 1241.75,
       "y": 368
     },
     "table-df_engine_files": {
-      "x": 1974.75,
-      "y": 3318
+      "x": 2143.75,
+      "y": 3288
     },
     "table-generation_references": {
-      "x": 2174.5,
+      "x": 2379.25,
       "y": 30
     },
     "table-generation_favorite_files": {
-      "x": 2182.5,
-      "y": 2920
+      "x": 2306.25,
+      "y": 2905
     },
     "table-generation_galleries": {
-      "x": 1625.75,
+      "x": 1797.75,
       "y": 1944
     },
     "table-gallery_details": {
-      "x": 1787.75,
+      "x": 2017.75,
       "y": 0
     },
     "table-project_generation_shares": {
-      "x": 709.5,
-      "y": 3408
+      "x": 939.5,
+      "y": 3378
     },
     "table-elements_presets": {
-      "x": 1360.25,
-      "y": 2875
+      "x": 1536.5,
+      "y": 2860
     },
     "table-element_files": {
-      "x": 1881.75,
+      "x": 2005.5,
       "y": 1471
     },
     "table-storyboards": {
-      "x": 1110.25,
-      "y": 2875
+      "x": 1286.5,
+      "y": 2860
     },
     "table-storyboard_scenes": {
-      "x": 1094.75,
+      "x": 1271,
       "y": 2342
     },
     "table-storyboard_shots": {
-      "x": 1125.75,
+      "x": 1302,
       "y": 1974
     },
     "table-storyboard_keyframes": {
-      "x": 1595.75,
+      "x": 1719.5,
       "y": 1411
     },
     "table-storyboard_motions": {
-      "x": 1108.25,
+      "x": 1284.5,
       "y": 1441
     }
   }

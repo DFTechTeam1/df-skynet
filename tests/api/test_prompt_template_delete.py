@@ -4,7 +4,6 @@ from middlewares.lang import resolve_message
 from services.mysql.model import (
     DfEngineActionMappings,
     DfEngineActions,
-    DfEnginePages,
     DfEnginePromptTemplates,
 )
 from tests.helpers import create_record, response_names
@@ -77,17 +76,11 @@ async def test_delete_blocked_while_mapped_to_an_action(
             created_by=int(user_id),
         ),
     )
-    page = await create_record(
-        db_session,
-        DfEnginePages,
-        dict(uid=str(uuid4()), name=f"Page {uuid4().hex[:8]}", created_by=int(user_id)),
-    )
     action = await create_record(
         db_session,
         DfEngineActions,
         dict(
             uid=str(uuid4()),
-            page_id=page.id,
             name=f"Action {uuid4().hex[:8]}",
             created_by=int(user_id),
         ),
