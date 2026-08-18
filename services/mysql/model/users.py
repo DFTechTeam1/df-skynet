@@ -29,3 +29,6 @@ class Users(SQLModel, table=True):
     deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
 
     employees: Optional["Employees"] = Relationship(back_populates="users", sa_relationship_kwargs={"uselist": False})  # type: ignore
+    df_engine_preferences: Optional["DfEnginePreferences"] = Relationship(  # type: ignore
+        back_populates="users", sa_relationship_kwargs={"uselist": False}
+    )

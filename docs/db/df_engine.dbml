@@ -131,6 +131,22 @@ Enum limit_reset_types {
     weekly
 }
 
+Enum theme_types {
+    dark
+    light
+}
+
+Enum accent_types {
+    signal
+    violet
+    teal
+}
+
+Enum language_types {
+    indonesia
+    english
+}
+
 Table df_engine_api_keys {
     id integer [pk, increment]
     expired_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
@@ -211,6 +227,19 @@ Table settings {
     id integer [pk, increment]
     key varchar(255) [not null, unique]
     value json [not null]
+}
+
+Table df_engine_preferences {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    user_id bigint [not null, unique]
+    theme theme_types [not null, default: "dark"]
+    accent accent_types [not null, default: "teal"]
+    language language_types [not null, default: "english"]
+    default_aspect_ratio varchar(20) [not null, default: "16:9", note: "One of: 16:9, 1:1, 9:16, 4:3, 3:4"]
+    default_size varchar(20) [not null, default: "4K", note: "One of: 1K, 2K, 4K"]
+    confirm_before_spending decimal(10, 2) [not null, default: 0.50, note: "Ask before any generation that costs more than this. No upper bound."]
 }
 
 Table employees {
@@ -559,6 +588,7 @@ Ref: users.id < df_engine_actions.created_by
 Ref: users.id < df_engine_actions.updated_by
 Ref: users.id < df_engine_prompt_templates.created_by
 Ref: users.id < df_engine_prompt_templates.updated_by
+Ref: users.id < df_engine_preferences.user_id
 Ref: tasks.id < df_engine_files.task_id
 Ref: tasks.id < generation_galleries.task_id
 Ref: tasks.id < generation_favorite_files.task_id

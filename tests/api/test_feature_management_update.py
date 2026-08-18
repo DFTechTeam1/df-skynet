@@ -107,14 +107,9 @@ async def test_update_preserves_mapping_uid_for_unchanged_template(authed_client
     item = find_by_name(resp.json()["data"], feature.name)
     assert len(item["templates"]) == 1
     assert item["templates"][0]["template_uid"] == template.uid
-
-    # Update left the linked template unchanged, so the join row itself
-    # should never have been deleted and recreated — same query pattern as
-    # the delete tests' cascade check, opening a fresh snapshot after the
-    # HTTP call's own connection has committed.
     await db_session.commit()
     still_present = (
-        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.uid == mapping.uid))
+        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.uid == mapping.uid))  # type: ignore
     ).scalar_one_or_none()
     assert still_present is not None
 

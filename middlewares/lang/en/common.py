@@ -1,8 +1,8 @@
 class CommonMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
-            "data_not_found_error": "Data not found.",
-            "data_validation_error": "Data validation error.",
-            "data_conflict_error": "This data conflicts with an existing record.",
-            "internal_server_error": "Internal Server Error.",
+            "data_not_found_error": "We couldn't find what you're looking for.",
+            "data_validation_error": "Some of the information you entered isn't valid. Please check and try again.",
+            "data_conflict_error": "This conflicts with something that already exists. Please review and try again.",
+            "internal_server_error": "Something went wrong on our end. Please try again in a moment.",
         }
