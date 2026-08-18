@@ -40,6 +40,6 @@ class DfEnginePromptTemplates(SQLModel, table=True):
     updated_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEnginePromptTemplates.updated_by]"}
     )
-    df_engine_action_mappings: list["DfEngineActionMappings"] = Relationship(
+    df_engine_action_mappings: list["DfEngineActionMappings"] = Relationship(  # type: ignore
         back_populates="df_engine_prompt_templates"
-    )  # type: ignore
+    )

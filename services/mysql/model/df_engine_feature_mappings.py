@@ -6,8 +6,8 @@ from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
-class DfEngineActionMappings(SQLModel, table=True):
-    __tablename__ = "df_engine_action_mappings"  # type: ignore
+class DfEngineFeatureMappings(SQLModel, table=True):
+    __tablename__ = "df_engine_feature_mappings"  # type: ignore
 
     id: int = Field(
         sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
@@ -21,17 +21,15 @@ class DfEngineActionMappings(SQLModel, table=True):
             BIGINT(unsigned=True), ForeignKey("df_engine_actions.id"), nullable=False
         )
     )
-    template_id: int = Field(
+    page_id: int = Field(
         sa_column=Column(
-            BIGINT(unsigned=True),
-            ForeignKey("df_engine_prompt_templates.id"),
-            nullable=False,
+            BIGINT(unsigned=True), ForeignKey("df_engine_pages.id"), nullable=False
         )
     )
 
     df_engine_actions: Optional["DfEngineActions"] = Relationship(  # type: ignore
-        back_populates="df_engine_action_mappings"
+        back_populates="df_engine_feature_mappings"
     )
-    df_engine_prompt_templates: Optional["DfEnginePromptTemplates"] = Relationship(  # type: ignore
-        back_populates="df_engine_action_mappings"
+    df_engine_pages: Optional["DfEnginePages"] = Relationship(  # type: ignore
+        back_populates="df_engine_feature_mappings"
     )

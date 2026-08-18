@@ -163,7 +163,6 @@ Table df_engine_actions {
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
-    page_id integer [not null]
     name varchar(255) [not null, unique]
     description text [default: null]
     is_active boolean [not null, default: true]
@@ -179,6 +178,19 @@ Table df_engine_action_mappings {
     action_id integer [not null]
     template_id integer [not null]
 }
+
+
+Table df_engine_feature_mappings {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    action_id integer [not null]
+    page_id integer [not null]
+}
+
+
+Ref: df_engine_pages.id < df_engine_feature_mappings.page_id
+Ref: df_engine_actions.id < df_engine_feature_mappings.action_id
 
 
 Table df_engine_prompt_templates {
@@ -588,7 +600,6 @@ Ref: generation_galleries.id < storyboard_keyframes.gallery_id
 Ref: generation_galleries.id < storyboard_motions.gallery_id
 
 
-Ref: df_engine_pages.id < df_engine_actions.page_id
 Ref: employees.id < df_engine_api_keys.employee_id
 Ref: df_engine_api_keys.id < generation_prompts.key_id
 Ref: df_engine_actions.id < df_engine_action_mappings.action_id
