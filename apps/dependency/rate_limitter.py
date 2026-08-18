@@ -44,6 +44,4 @@ class RateLimiter:
 
 
 def rate_limit(times: int = 15, seconds: int = 1):
-    return RateLimiter(
-        limiter=Limiter(KeyedBucketFactory([Rate(times, Duration.SECOND * seconds)]))
-    )
+    return RateLimiter(limiter=Limiter(KeyedBucketFactory([Rate(times, Duration.SECOND * seconds)])))

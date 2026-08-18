@@ -13,6 +13,7 @@ URL = "/api/prompt-management"
 
 @pytest.mark.asyncio
 async def test_delete_success(authed_client, db_session, user_id):
+    """200 OK; deleted template no longer appears in the refreshed list."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -29,9 +30,8 @@ async def test_delete_success(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_delete_twice_is_404_on_the_second_call(
-    authed_client, db_session, user_id
-):
+async def test_delete_twice_is_404_on_the_second_call(authed_client, db_session, user_id):
+    """First delete is 200 OK; repeating it is 404 prompt_template_not_found since the row is already gone."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -44,28 +44,22 @@ async def test_delete_twice_is_404_on_the_second_call(
     )
     first = await authed_client.call("DELETE", f"{URL}/{row.uid}")
     assert first.status_code == 200
-    second = await authed_client.call(
-        "DELETE", f"{URL}/{row.uid}", raise_for_status=False
-    )
+    second = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
     assert second.status_code == 404
-    assert second.json()["message"] == resolve_message(
-        "prompt_template_not_found", "en"
-    )
+    assert second.json()["message"] == resolve_message("prompt_template_not_found", "en")
 
 
 @pytest.mark.asyncio
 async def test_delete_unknown_uid_is_404(authed_client):
-    resp = await authed_client.call(
-        "DELETE", f"{URL}/{uuid4()}", raise_for_status=False
-    )
+    """404 prompt_template_not_found when the uid matches no template."""
+    resp = await authed_client.call("DELETE", f"{URL}/{uuid4()}", raise_for_status=False)
     assert resp.status_code == 404
     assert resp.json()["message"] == resolve_message("prompt_template_not_found", "en")
 
 
 @pytest.mark.asyncio
-async def test_delete_blocked_while_mapped_to_an_action(
-    authed_client, db_session, user_id
-):
+async def test_delete_blocked_while_mapped_to_an_action(authed_client, db_session, user_id):
+    """409 prompt_template_in_use when the template is still referenced by a df_engine_action_mappings row; template stays in the list."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -91,9 +85,7 @@ async def test_delete_blocked_while_mapped_to_an_action(
         dict(uid=str(uuid4()), action_id=action.id, template_id=row.id),
     )
 
-    resp = await authed_client.call(
-        "DELETE", f"{URL}/{row.uid}", raise_for_status=False
-    )
+    resp = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
     assert resp.status_code == 409
     assert resp.json()["message"] == resolve_message("prompt_template_in_use", "en")
     assert "data" not in resp.json()
@@ -104,6 +96,7 @@ async def test_delete_blocked_while_mapped_to_an_action(
 
 @pytest.mark.asyncio
 async def test_requires_auth(client, db_session, user_id):
+    """401 when the request carries no bearer token."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -123,6 +116,7 @@ async def test_requires_auth(client, db_session, user_id):
 
 @pytest.mark.asyncio
 async def test_not_found_message_respects_accept_language(authed_client):
+    """404; the not_found message text is localized per the Accept-Language header, differing between en and id."""
     unknown_uid = uuid4()
 
     en_resp = await authed_client.call(
@@ -138,10 +132,6 @@ async def test_not_found_message_respects_accept_language(authed_client):
         raise_for_status=False,
     )
 
-    assert en_resp.json()["message"] == resolve_message(
-        "prompt_template_not_found", "en"
-    )
-    assert id_resp.json()["message"] == resolve_message(
-        "prompt_template_not_found", "id"
-    )
+    assert en_resp.json()["message"] == resolve_message("prompt_template_not_found", "en")
+    assert id_resp.json()["message"] == resolve_message("prompt_template_not_found", "id")
     assert en_resp.json()["message"] != id_resp.json()["message"]

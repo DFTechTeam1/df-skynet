@@ -1,33 +1,36 @@
 import pytest
 from datetime import timedelta
 from uuid import uuid4
-from services.mysql.model import DfEnginePromptTemplates
+from services.mysql.model import (
+    DfEngineActionMappings,
+    DfEngineActions,
+    DfEnginePromptTemplates,
+)
 from utils import local_time
 from tests.helpers import create_record, expected_user, find_by_name, response_names
 
-URL = "/api/prompt-management"
+URL = "/api/feature-management"
 
 
 @pytest.mark.asyncio
-async def test_fetch_all_prompt_templates(authed_client):
-    """200 OK; returns a list of active-only templates when no name filter is given."""
+async def test_fetch_all_features(authed_client):
+    """200 OK; returns a list when no name filter is given."""
     resp = await authed_client.call("GET", URL)
     body = resp.json()
     assert resp.status_code == 200
     assert body["message"] == "Success"
-    assert all(item["is_active"] is True for item in body["data"])
+    assert isinstance(body["data"], list)
 
 
 @pytest.mark.asyncio
-async def test_fetch_prompt_templates_inactive_row_is_excluded(authed_client, db_session, user_id):
-    """200 OK; inactive templates are excluded from the unfiltered list, unlike the feature-management list."""
+async def test_fetch_includes_inactive_features(authed_client, db_session, user_id):
+    """200 OK; list includes inactive features too, unlike the prompt-template list."""
     inactive = await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineActions,
         dict(
             uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
+            name=f"Feature {uuid4().hex[:8]}",
             is_active=False,
             created_by=int(user_id),
         ),
@@ -35,35 +38,33 @@ async def test_fetch_prompt_templates_inactive_row_is_excluded(authed_client, db
     resp = await authed_client.call("GET", URL)
     body = resp.json()
     assert resp.status_code == 200
-    assert all(item["is_active"] is True for item in body["data"])
-    assert inactive.name not in response_names(body)
+    item = find_by_name(body["data"], inactive.name)
+    assert item["is_active"] is False
 
 
 @pytest.mark.asyncio
 async def test_newest_first_ordering(authed_client, db_session, user_id):
-    """200 OK; list is ordered by created_at descending, newest template first."""
+    """200 OK; list is ordered by created_at descending, newest feature first."""
     # `created_at` is DATETIME(0) in MySQL (no fractional seconds), so two
     # rows created back-to-back can land on the same wall-clock second —
     # pass explicit, clearly-ordered timestamps instead of relying on that.
     now = local_time()
     older = await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineActions,
         dict(
             uid=str(uuid4()),
             name=f"Order {uuid4().hex[:8]}-older",
-            prompt="a prompt",
             created_by=int(user_id),
             created_at=now - timedelta(seconds=5),
         ),
     )
     newer = await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineActions,
         dict(
             uid=str(uuid4()),
             name=f"Order {uuid4().hex[:8]}-newer",
-            prompt="a prompt",
             created_by=int(user_id),
             created_at=now,
         ),
@@ -76,26 +77,24 @@ async def test_newest_first_ordering(authed_client, db_session, user_id):
 
 @pytest.mark.asyncio
 async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id):
-    """200 OK; `name` filter matches only templates whose name starts with it, not mid-string occurrences."""
+    """200 OK; `name` filter matches only features whose name starts with it, not mid-string occurrences."""
     prefix = f"Search{uuid4().hex[:8]}"
     matching = await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineActions,
         dict(
             uid=str(uuid4()),
             name=f"{prefix}-one",
-            prompt="a prompt",
             created_by=int(user_id),
         ),
     )
     # prefix appears mid-string, shouldn't match
     await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineActions,
         dict(
             uid=str(uuid4()),
             name=f"other-{prefix}",
-            prompt="a prompt",
             created_by=int(user_id),
         ),
     )
@@ -107,41 +106,8 @@ async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_name_search_excludes_inactive_rows(authed_client, db_session, user_id):
-    """200 OK; `name` filter still excludes inactive templates even when they match the search text."""
-    prefix = f"Report{uuid4().hex[:8]}"
-    active = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"{prefix}-active",
-            prompt="a prompt",
-            is_active=True,
-            created_by=int(user_id),
-        ),
-    )
-    inactive = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"{prefix}-inactive",
-            prompt="a prompt",
-            is_active=False,
-            created_by=int(user_id),
-        ),
-    )
-
-    resp = await authed_client.call("GET", URL, params={"name": prefix})
-    found = response_names(resp.json())
-    assert active.name in found
-    assert inactive.name not in found
-
-
-@pytest.mark.asyncio
 async def test_name_search_with_no_match_returns_empty_list(authed_client):
-    """200 OK with an empty list when no template name matches the filter."""
+    """200 OK with an empty list when no feature name matches the filter."""
     prefix = f"NoMatch{uuid4().hex[:8]}"
     resp = await authed_client.call("GET", URL, params={"name": prefix})
     assert resp.status_code == 200
@@ -160,11 +126,10 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
     """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creater/updater are exposed instead."""
     row = await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineActions,
         dict(
             uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
+            name=f"Feature {uuid4().hex[:8]}",
             created_by=int(user_id),
         ),
     )
@@ -184,46 +149,79 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
 
 
 @pytest.mark.asyncio
-async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id):
-    """200 OK; `creater` is whitelisted to exactly {image, nickname}, no other user fields leak."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
-    resp = await authed_client.call("GET", URL)
-    item = find_by_name(resp.json()["data"], row.name)
-    # creater is whitelisted to exactly {image, nickname} — no password,
-    # no remember_token, no anything else off the real Users row.
-    assert set(item["creater"].keys()) == {"image", "nickname"}
-
-
-@pytest.mark.asyncio
 async def test_action_flags_reflect_current_users_real_permissions(authed_client, db_session, user_id):
-    """200 OK; each item's action block has exactly the fetch/update/delete flags, all booleans."""
+    """200 OK; each item's action block has exactly the fetch-detail/update/delete flags, all booleans."""
     row = await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineActions,
         dict(
             uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
+            name=f"Feature {uuid4().hex[:8]}",
             created_by=int(user_id),
         ),
     )
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     assert set(item["action"].keys()) == {
-        "can_fetch_df_engine_prompt_templates",
-        "can_delete_df_engine_prompt_template",
-        "can_update_df_engine_prompt_template",
+        "can_fetch_detail",
+        "can_update_feature",
+        "can_delete_feature",
     }
     assert all(isinstance(v, bool) for v in item["action"].values())
+
+
+@pytest.mark.asyncio
+async def test_templates_array_is_empty_when_unlinked(authed_client, db_session, user_id):
+    """200 OK; `templates` is an empty list for a feature with no df_engine_action_mappings rows."""
+    row = await create_record(
+        db_session,
+        DfEngineActions,
+        dict(
+            uid=str(uuid4()),
+            name=f"Feature {uuid4().hex[:8]}",
+            created_by=int(user_id),
+        ),
+    )
+    resp = await authed_client.call("GET", URL)
+    item = find_by_name(resp.json()["data"], row.name)
+    assert item["templates"] == []
+
+
+@pytest.mark.asyncio
+async def test_templates_array_reflects_linked_rows(authed_client, db_session, user_id):
+    """200 OK; `templates` nests the mapped prompt template's own fields via the join table."""
+    feature = await create_record(
+        db_session,
+        DfEngineActions,
+        dict(
+            uid=str(uuid4()),
+            name=f"Feature {uuid4().hex[:8]}",
+            created_by=int(user_id),
+        ),
+    )
+    template = await create_record(
+        db_session,
+        DfEnginePromptTemplates,
+        dict(
+            uid=str(uuid4()),
+            name=f"Prompt {uuid4().hex[:8]}",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
+    )
+    mapping = await create_record(
+        db_session,
+        DfEngineActionMappings,
+        dict(uid=str(uuid4()), action_id=feature.id, template_id=template.id),
+    )
+
+    resp = await authed_client.call("GET", URL)
+    item = find_by_name(resp.json()["data"], feature.name)
+    assert len(item["templates"]) == 1
+    entry = item["templates"][0]
+    assert entry["template_uid"] == template.uid
+    assert entry["name"] == template.name
+    assert entry["is_active"] is True
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ DEFAULTS = [
 
 @pytest.mark.parametrize("error_cls,expected_status,expected_message", DEFAULTS)
 def test_default_status_and_message(error_cls, expected_status, expected_message):
+    """Each error class defaults to its documented status code and message with no error payload."""
     exc = error_cls()
     assert exc.status_code == expected_status
     assert exc.message == expected_message
@@ -33,6 +34,7 @@ def test_default_status_and_message(error_cls, expected_status, expected_message
 
 @pytest.mark.parametrize("error_cls,_status,_message", DEFAULTS)
 def test_explicit_overrides_are_respected(error_cls, _status, _message):
+    """Explicit status_code, message, and error kwargs override the class defaults."""
     exc = error_cls(status_code=418, message="custom_message", error={"field": ["bad"]})
     assert exc.status_code == 418
     assert exc.message == "custom_message"
@@ -40,6 +42,7 @@ def test_explicit_overrides_are_respected(error_cls, _status, _message):
 
 
 def test_base_error_defaults():
+    """BaseError defaults to a 500 status code and the "internal_server_error" message."""
     exc = BaseError()
     assert exc.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert exc.message == "internal_server_error"

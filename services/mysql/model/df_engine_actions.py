@@ -9,24 +9,14 @@ from utils import local_time
 class DfEngineActions(SQLModel, table=True):
     __tablename__ = "df_engine_actions"  # type: ignore
 
-    id: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    )
-    created_at: datetime = Field(
-        default_factory=local_time, sa_column=Column(DateTime, nullable=False)
-    )
-    updated_at: Optional[datetime] = Field(
-        default=None, sa_column=Column(DateTime, nullable=True)
-    )
+    id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
+    created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
+    updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     uid: str = Field(sa_column=Column(CHAR(36), nullable=False, unique=True))
     name: str = Field(sa_column=Column(String(255), nullable=False, unique=True))
-    description: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     is_active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
-    created_by: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=False)
-    )
+    created_by: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=False))
     updated_by: Optional[int] = Field(
         default=None,
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True),
