@@ -4,18 +4,21 @@ from services.mysql import engine, get_db, make_session
 
 
 def test_engine_is_cached_per_url():
+    """Calling engine() twice with the same URL returns the identical cached instance."""
     first = engine("mysql+aiomysql://a:a@localhost:3306/db_a")
     second = engine("mysql+aiomysql://a:a@localhost:3306/db_a")
     assert first is second
 
 
 def test_engine_differs_per_url():
+    """Distinct URLs produce distinct, non-identical engine instances."""
     a = engine("mysql+aiomysql://a:a@localhost:3306/db_a")
     b = engine("mysql+aiomysql://b:b@localhost:3306/db_b")
     assert a is not b
 
 
 def test_make_session_is_cached_per_url():
+    """Calling make_session() twice with the same URL returns the identical cached sessionmaker."""
     first = make_session("mysql+aiomysql://a:a@localhost:3306/db_a")
     second = make_session("mysql+aiomysql://a:a@localhost:3306/db_a")
     assert first is second
@@ -32,6 +35,7 @@ def _patch_make_session(monkeypatch) -> AsyncMock:
 
 @pytest.mark.asyncio
 async def test_get_db_commits_on_success(monkeypatch):
+    """Session yielded by get_db() is committed, and never rolled back, when no exception is raised."""
     fake_session = _patch_make_session(monkeypatch)
     gen = get_db()
     session = await gen.__anext__()
@@ -46,6 +50,7 @@ async def test_get_db_commits_on_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_db_rolls_back_on_exception(monkeypatch):
+    """Session yielded by get_db() is rolled back, and never committed, when the generator raises."""
     fake_session = _patch_make_session(monkeypatch)
     gen = get_db()
     session = await gen.__anext__()

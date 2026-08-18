@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
-from schemas.payload.prompt_template import CreatePromptTemplatePayload
+from schemas.payload.prompt_template import PromptTemplatePayload
 from services.mysql.model import DfEnginePromptTemplates, Users, Employees
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError
@@ -17,33 +17,36 @@ from utils.formatter import format_datetime, format_creator
 # from apps.dependency.permission import require_permissions
 
 template_permission = {
-    "create_prompt_template": "create_prompt_template",
-    "fetch_prompt_templates": "fetch_prompt_templates",
-    "update_prompt_template": "update_prompt_template",
-    "delete_prompt_template": "delete_prompt_template",
+    "fetch_df_engine_prompt_templates": "fetch_df_engine_prompt_templates",
+    "update_df_engine_prompt_template": "update_df_engine_prompt_template",
+    "delete_df_engine_prompt_template": "delete_df_engine_prompt_template",
 }
 
 
 class PromptTemplateController(CoreDependencies):
-    def _shape_template(self, template: dict[str, Any]) -> dict[str, Any]:
-        """Apply the shared display shaping (formatted timestamps, resolved
-        `creater`/`updater`, `action` block) to a single serialized template
-        dict, in place. Used by both the list and single-detail endpoints so
-        they stay in sync.
-        """
-        permissions = self.user.get("permissions", [])
+    def query_options(self):
+        return (
+            selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEnginePromptTemplates.updated_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+        )
+
+    def format_response(self, template: dict[str, Any], permissions: list[str]) -> dict[str, Any]:
         template["created_at"] = format_datetime(template["created_at"])
         template["updated_at"] = format_datetime(template["updated_at"])
         template["creater"] = format_creator(template["created_by_user"])
         template["updater"] = format_creator(template["updated_by_user"])
         template["action"] = {
-            "can_fetch_prompt_templates": template_permission["fetch_prompt_templates"]
+            "can_fetch_df_engine_prompt_templates": template_permission["fetch_df_engine_prompt_templates"]
             in permissions,
-            "can_delete_prompt_template": template_permission["delete_prompt_template"]
+            "can_delete_df_engine_prompt_template": template_permission["delete_df_engine_prompt_template"]
             in permissions,
-            "can_update_prompt_template": template_permission["update_prompt_template"]
-            in permissions,
-            "can_create_prompt_template": template_permission["create_prompt_template"]
+            "can_update_df_engine_prompt_template": template_permission["update_df_engine_prompt_template"]
             in permissions,
         }
 
@@ -52,12 +55,9 @@ class PromptTemplateController(CoreDependencies):
         template.pop("updated_by_user", None)
         template.pop("created_by", None)
         template.pop("updated_by", None)
-
         return template
 
-    async def prompt_templates(
-        self, name: Optional[str] = None
-    ) -> list[dict[str, Any]]:
+    async def prompt_templates(self, name: Optional[str] = None) -> list[dict[str, Any]]:
         """Fetch active prompt templates (newest first) shaped for the frontend:
         formatted timestamps, resolved `creater`/`updater`, and an `action`
         block reflecting what the current user is permitted to do. Shared by
@@ -76,24 +76,17 @@ class PromptTemplateController(CoreDependencies):
         records = (
             (
                 await self.db.execute(
-                    query.options(
-                        selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
-                        .load_only(Users.image)  # type: ignore
-                        .selectinload(Users.employees)  # type: ignore
-                        .load_only(Employees.nickname),  # type: ignore
-                        selectinload(DfEnginePromptTemplates.updated_by_user)  # type: ignore
-                        .load_only(Users.image)  # type: ignore
-                        .selectinload(Users.employees)  # type: ignore
-                        .load_only(Employees.nickname),  # type: ignore
-                    ).order_by(DfEnginePromptTemplates.created_at.desc())  # type: ignore
+                    query.options(*self.query_options()).order_by(  # type: ignore
+                        DfEnginePromptTemplates.created_at.desc()  # type: ignore
+                    )
                 )
             )
             .scalars()
             .all()
         )
 
-        templates = [record for record in serialize(records)]
-        return [self._shape_template(template) for template in templates]
+        permissions = self.user.get("permissions", [])
+        return [self.format_response(template, permissions) for template in serialize(records)]
 
     async def get_prompt_template(self, uid: UUID) -> DfEnginePromptTemplates:
         record = (
@@ -118,23 +111,14 @@ class PromptTemplateController(CoreDependencies):
                     DfEnginePromptTemplates.uid == str(uid),  # type: ignore
                     DfEnginePromptTemplates.is_active == True,  # type: ignore
                 )
-                .options(
-                    selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
-                    .load_only(Users.image)  # type: ignore
-                    .selectinload(Users.employees)  # type: ignore
-                    .load_only(Employees.nickname),  # type: ignore
-                    selectinload(DfEnginePromptTemplates.updated_by_user)  # type: ignore
-                    .load_only(Users.image)  # type: ignore
-                    .selectinload(Users.employees)  # type: ignore
-                    .load_only(Employees.nickname),  # type: ignore
-                )
+                .options(*self.query_options())  # type: ignore
             )
         ).scalar_one_or_none()
         if record is None:
             raise DataNotFoundError(message="prompt_template_not_found")
 
-        template = serialize(record)
-        return self._shape_template(template)
+        permissions = self.user.get("permissions", [])
+        return self.format_response(serialize(record), permissions)
 
     @controller.get(
         "/api/prompt-management/{uid}",
@@ -186,7 +170,7 @@ class PromptTemplateController(CoreDependencies):
         tags=["Prompt Template Management"],
         response_model=Response,
         # dependencies=[
-        #     Depends(require_permissions(["fetch_prompt_templates"])) # Will be enabled later
+        #     Depends(require_permissions(["fetch_df_engine_prompt_templates"])) # Will be enabled later
         # ]
     )
     async def prompt_template_to_fetch_templates(
@@ -228,9 +212,7 @@ class PromptTemplateController(CoreDependencies):
         #     Depends(require_permissions(["create_prompt_template"])) # Will be enabled later
         # ]
     )
-    async def prompt_template_to_create_template(
-        self, schema: CreatePromptTemplatePayload
-    ) -> Response:
+    async def prompt_template_to_create_template(self, schema: PromptTemplatePayload) -> Response:
         response = Response()
         try:
             prompt_template = DfEnginePromptTemplates(
@@ -276,12 +258,12 @@ class PromptTemplateController(CoreDependencies):
         tags=["Prompt Template Management"],
         response_model=Response,
         # dependencies=[
-        #     Depends(require_permissions(["update_prompt_template"])) # Will be enabled later
+        #     Depends(require_permissions(["update_df_engine_prompt_template"])) # Will be enabled later
         # ]
     )
     async def prompt_template_to_update_template(
         self,
-        schema: CreatePromptTemplatePayload,
+        schema: PromptTemplatePayload,
         uid: UUID = Path(
             ...,
             description="Template UID.",
@@ -325,7 +307,7 @@ class PromptTemplateController(CoreDependencies):
         tags=["Prompt Template Management"],
         response_model=Response,
         # dependencies=[
-        #     Depends(require_permissions(["delete_prompt_template"])) # Will be enabled later
+        #     Depends(require_permissions(["delete_df_engine_prompt_template"])) # Will be enabled later
         # ]
     )
     async def prompt_template_to_delete_template(

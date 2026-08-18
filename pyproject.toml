@@ -43,3 +43,6 @@ filterwarnings = [
 
 [tool.coverage.run]
 omit = ["conftest.py", "helpers.py"]
+
+[tool.ruff]
+line-length = 120

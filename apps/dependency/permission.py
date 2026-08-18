@@ -4,9 +4,7 @@ from apps.dependency.auth import get_user
 from error import AuthenticationError
 
 
-def require_permissions(
-    permissions: Optional[list[str]] = None, decoder: Callable = get_user
-):
+def require_permissions(permissions: Optional[list[str]] = None, decoder: Callable = get_user):
     async def permission_dependency(current_user: dict[str, Any] = Depends(decoder)):
         user_id = current_user.get("user_id")
         if not user_id:

@@ -55,11 +55,16 @@ class CustomError:
     def base_handler(self, request: Request, exc: Exception) -> JSONResponse:
         if isinstance(exc, BaseError):
             lang = getattr(request.state, "lang", DEFAULT_LANG)
+            error = (
+                {field: [resolve_message(msg, lang) for msg in messages] for field, messages in exc.error.items()}
+                if exc.error
+                else exc.error
+            )
             return JSONResponse(
                 status_code=exc.status_code,
                 content={
                     "message": resolve_message(exc.message, lang),
-                    "error": exc.error,
+                    "error": error,
                 },
             )
 
