@@ -10,6 +10,7 @@ URL = "/api/prompt-management"
 
 @pytest.mark.asyncio
 async def test_fetch_all_prompt_templates(authed_client):
+    """200 OK; returns a list of active-only templates when no name filter is given."""
     resp = await authed_client.call("GET", URL)
     body = resp.json()
     assert resp.status_code == 200
@@ -18,9 +19,8 @@ async def test_fetch_all_prompt_templates(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_prompt_templates_inactive_row_is_excluded(
-    authed_client, db_session, user_id
-):
+async def test_fetch_prompt_templates_inactive_row_is_excluded(authed_client, db_session, user_id):
+    """200 OK; inactive templates are excluded from the unfiltered list, unlike the feature-management list."""
     inactive = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -41,6 +41,7 @@ async def test_fetch_prompt_templates_inactive_row_is_excluded(
 
 @pytest.mark.asyncio
 async def test_newest_first_ordering(authed_client, db_session, user_id):
+    """200 OK; list is ordered by created_at descending, newest template first."""
     # `created_at` is DATETIME(0) in MySQL (no fractional seconds), so two
     # rows created back-to-back can land on the same wall-clock second —
     # pass explicit, clearly-ordered timestamps instead of relying on that.
@@ -75,6 +76,7 @@ async def test_newest_first_ordering(authed_client, db_session, user_id):
 
 @pytest.mark.asyncio
 async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id):
+    """200 OK; `name` filter matches only templates whose name starts with it, not mid-string occurrences."""
     prefix = f"Search{uuid4().hex[:8]}"
     matching = await create_record(
         db_session,
@@ -106,6 +108,7 @@ async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id)
 
 @pytest.mark.asyncio
 async def test_name_search_excludes_inactive_rows(authed_client, db_session, user_id):
+    """200 OK; `name` filter still excludes inactive templates even when they match the search text."""
     prefix = f"Report{uuid4().hex[:8]}"
     active = await create_record(
         db_session,
@@ -138,6 +141,7 @@ async def test_name_search_excludes_inactive_rows(authed_client, db_session, use
 
 @pytest.mark.asyncio
 async def test_name_search_with_no_match_returns_empty_list(authed_client):
+    """200 OK with an empty list when no template name matches the filter."""
     prefix = f"NoMatch{uuid4().hex[:8]}"
     resp = await authed_client.call("GET", URL, params={"name": prefix})
     assert resp.status_code == 200
@@ -146,16 +150,14 @@ async def test_name_search_with_no_match_returns_empty_list(authed_client):
 
 @pytest.mark.asyncio
 async def test_name_search_empty_string_is_a_validation_error(authed_client):
-    resp = await authed_client.call(
-        "GET", URL, params={"name": ""}, raise_for_status=False
-    )
+    """422; empty `name` fails the query param's min_length=1 constraint."""
+    resp = await authed_client.call("GET", URL, params={"name": ""}, raise_for_status=False)
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_response_shape_has_creater_not_created_by_user(
-    authed_client, db_session, user_id
-):
+async def test_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
+    """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creater/updater are exposed instead."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -183,6 +185,7 @@ async def test_response_shape_has_creater_not_created_by_user(
 
 @pytest.mark.asyncio
 async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id):
+    """200 OK; `creater` is whitelisted to exactly {image, nickname}, no other user fields leak."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -201,9 +204,8 @@ async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_action_flags_reflect_current_users_real_permissions(
-    authed_client, db_session, user_id
-):
+async def test_action_flags_reflect_current_users_real_permissions(authed_client, db_session, user_id):
+    """200 OK; each item's action block has exactly the fetch/update/delete flags, all booleans."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -217,15 +219,15 @@ async def test_action_flags_reflect_current_users_real_permissions(
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     assert set(item["action"].keys()) == {
-        "can_fetch_prompt_templates",
-        "can_delete_prompt_template",
-        "can_update_prompt_template",
-        "can_create_prompt_template",
+        "can_fetch_df_engine_prompt_templates",
+        "can_delete_df_engine_prompt_template",
+        "can_update_df_engine_prompt_template",
     }
     assert all(isinstance(v, bool) for v in item["action"].values())
 
 
 @pytest.mark.asyncio
 async def test_requires_auth(client):
+    """401 when the request carries no bearer token."""
     resp = await client.call("GET", URL, raise_for_status=False)
     assert resp.status_code == 401

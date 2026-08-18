@@ -10,17 +10,14 @@ TEMPLATE_URL = "/api/prompt-management"
 
 @pytest.mark.asyncio
 async def test_full_feature_lifecycle(authed_client, db_session):
+    """Walks create -> fetch -> update -> list -> delete for one feature, checking each response and the mapping cascade at the end."""
     template_a_name = f"Journey Template {uuid4().hex[:8]}-A"
     template_b_name = f"Journey Template {uuid4().hex[:8]}-B"
 
     # 1. create the two templates through the existing prompt-management API
-    create_a = await authed_client.call(
-        "POST", TEMPLATE_URL, json={"name": template_a_name, "prompt": "p"}
-    )
+    create_a = await authed_client.call("POST", TEMPLATE_URL, json={"name": template_a_name, "prompt": "p"})
     template_a_uid = find_by_name(create_a.json()["data"], template_a_name)["uid"]
-    create_b = await authed_client.call(
-        "POST", TEMPLATE_URL, json={"name": template_b_name, "prompt": "p"}
-    )
+    create_b = await authed_client.call("POST", TEMPLATE_URL, json={"name": template_b_name, "prompt": "p"})
     template_b_uid = find_by_name(create_b.json()["data"], template_b_name)["uid"]
 
     # 2. create a feature linked to both templates
@@ -37,7 +34,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     assert create_resp.status_code == 200
     created = find_by_name(create_resp.json()["data"], feature_name)
     feature_uid = created["uid"]
-    assert {t["uid"] for t in created["templates"]} == {
+    assert {t["template_uid"] for t in created["templates"]} == {
         template_a_uid,
         template_b_uid,
     }
@@ -45,7 +42,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     # 3. fetch confirms nesting
     fetch_resp = await authed_client.call("GET", URL, params={"name": feature_name})
     fetched = find_by_name(fetch_resp.json()["data"], feature_name)
-    assert {t["uid"] for t in fetched["templates"]} == {
+    assert {t["template_uid"] for t in fetched["templates"]} == {
         template_a_uid,
         template_b_uid,
     }
@@ -66,7 +63,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     updated = find_by_name(update_resp.json()["data"], renamed)
     assert updated["is_active"] is False
     assert updated["description"] == "v2 desc"
-    assert {t["uid"] for t in updated["templates"]} == {template_a_uid}
+    assert {t["template_uid"] for t in updated["templates"]} == {template_a_uid}
     assert feature_name not in response_names(update_resp.json())
 
     # 5. list reflects the latest state (both active and inactive features show up)
@@ -77,9 +74,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     # 6. capture the internal id before deleting, to check cascade below —
     # the API never exposes it, so this is the one place we drop to raw ORM
     feature_row = (
-        await db_session.execute(
-            select(DfEngineActions).where(DfEngineActions.uid == feature_uid)
-        )
+        await db_session.execute(select(DfEngineActions).where(DfEngineActions.uid == feature_uid))
     ).scalar_one()
     feature_id = feature_row.id
     # Close out this transaction's REPEATABLE READ snapshot now, so the
@@ -96,17 +91,14 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     final_list = await authed_client.call("GET", URL)
     assert renamed not in response_names(final_list.json())
     remaining_mappings = (
-        await db_session.execute(
-            select(DfEngineActionMappings).where(
-                DfEngineActionMappings.action_id == feature_id
-            )
-        )
+        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.action_id == feature_id))
     ).scalar_one_or_none()
     assert remaining_mappings is None
 
 
 @pytest.mark.asyncio
 async def test_duplicate_name_conflict_from_create_and_update(authed_client):
+    """409 from both create and rename-via-update when the target name is already taken, and a failed rename leaves the original name intact."""
     suffix = uuid4().hex[:8]
     alpha_name = f"Alpha-{suffix}"
     beta_name = f"Beta-{suffix}"
@@ -128,9 +120,7 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
     assert rename_conflict.status_code == 409
 
     # creating a second "alpha" from scratch conflicts too — same guard, different trigger
-    create_conflict = await authed_client.call(
-        "POST", URL, json={"name": alpha_name}, raise_for_status=False
-    )
+    create_conflict = await authed_client.call("POST", URL, json={"name": alpha_name}, raise_for_status=False)
     assert create_conflict.status_code == 409
 
     # beta was never actually renamed by the failed attempt
@@ -140,13 +130,10 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 
 @pytest.mark.asyncio
 async def test_same_template_linked_to_multiple_features(authed_client):
+    """200 OK; the same prompt template can be mapped to two different features simultaneously."""
     shared_template_name = f"Shared {uuid4().hex[:8]}"
-    template_resp = await authed_client.call(
-        "POST", TEMPLATE_URL, json={"name": shared_template_name, "prompt": "p"}
-    )
-    shared_template_uid = find_by_name(
-        template_resp.json()["data"], shared_template_name
-    )["uid"]
+    template_resp = await authed_client.call("POST", TEMPLATE_URL, json={"name": shared_template_name, "prompt": "p"})
+    shared_template_uid = find_by_name(template_resp.json()["data"], shared_template_name)["uid"]
 
     feature_one_name = f"Feature One {uuid4().hex[:8]}"
     feature_two_name = f"Feature Two {uuid4().hex[:8]}"
@@ -166,5 +153,5 @@ async def test_same_template_linked_to_multiple_features(authed_client):
     data = resp.json()["data"]
     item_one = find_by_name(data, feature_one_name)
     item_two = find_by_name(data, feature_two_name)
-    assert shared_template_uid in [t["uid"] for t in item_one["templates"]]
-    assert shared_template_uid in [t["uid"] for t in item_two["templates"]]
+    assert shared_template_uid in [t["template_uid"] for t in item_one["templates"]]
+    assert shared_template_uid in [t["template_uid"] for t in item_two["templates"]]

@@ -22,9 +22,7 @@ app = FastAPI(
 )
 
 
-def register_controllers_to_app(
-    app: FastAPI, controller_base: Type[ControllerBase]
-) -> None:
+def register_controllers_to_app(app: FastAPI, controller_base: Type[ControllerBase]) -> None:
     # fastapi_controller's own register_controllers_to_app() batches every
     # leaf controller of `controller_base` onto one shared InferringRouter.
     # fastapi_utils.cbv() validates that every entry in that router's

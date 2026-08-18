@@ -36,9 +36,7 @@ def _assert_canonical_jwt(token: str) -> None:
             raise AuthenticationError()
 
 
-CENTRALIZED_PUBLIC_KEY: Optional[str] = (
-    base64.b64decode(JWT_PUBLIC_KEY).decode("utf-8") if JWT_PUBLIC_KEY else None
-)
+CENTRALIZED_PUBLIC_KEY: Optional[str] = base64.b64decode(JWT_PUBLIC_KEY).decode("utf-8") if JWT_PUBLIC_KEY else None
 
 bearer_scheme = HTTPBearer(auto_error=False)
 

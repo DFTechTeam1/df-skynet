@@ -10,9 +10,7 @@ from utils.serializer import serialize
 ModelT = TypeVar("ModelT", bound=SQLModel)
 
 
-async def create_record(
-    db_session: AsyncSession, model: Type[ModelT], data: dict[str, Any]
-) -> ModelT:
+async def create_record(db_session: AsyncSession, model: Type[ModelT], data: dict[str, Any]) -> ModelT:
     record = model(**data)
     db_session.add(record)
     await db_session.commit()
@@ -20,9 +18,7 @@ async def create_record(
     return record
 
 
-async def expected_user(
-    db_session: AsyncSession, user_id: int
-) -> Optional[dict[str, Any]]:
+async def expected_user(db_session: AsyncSession, user_id: int) -> Optional[dict[str, Any]]:
     user = (
         await db_session.execute(
             select(Users)

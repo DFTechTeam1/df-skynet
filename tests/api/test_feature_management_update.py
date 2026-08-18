@@ -1,5 +1,6 @@
 import pytest
 from uuid import uuid4
+from sqlalchemy import select
 from middlewares.lang import resolve_message
 from services.mysql.model import (
     DfEngineActionMappings,
@@ -37,9 +38,8 @@ async def _make_template(db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_update_replaces_name_description_and_active(
-    authed_client, db_session, user_id
-):
+async def test_update_replaces_name_description_and_active(authed_client, db_session, user_id):
+    """200 OK; PATCH is a full replace of name/description/is_active, not a partial diff."""
     feature = await _make_feature(db_session, user_id)
     renamed = f"{feature.name}-v2"
 
@@ -55,9 +55,8 @@ async def test_update_replaces_name_description_and_active(
 
 
 @pytest.mark.asyncio
-async def test_update_add_and_remove_templates_in_one_call(
-    authed_client, db_session, user_id
-):
+async def test_update_add_and_remove_templates_in_one_call(authed_client, db_session, user_id):
+    """200 OK; process diffs template_uids against existing mappings — unlinks removed, links added, in one call."""
     feature = await _make_feature(db_session, user_id)
     kept = await _make_template(db_session, user_id)
     removed = await _make_template(db_session, user_id)
@@ -84,14 +83,13 @@ async def test_update_add_and_remove_templates_in_one_call(
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], feature.name)
-    linked_uids = {t["uid"] for t in item["templates"]}
+    linked_uids = {t["template_uid"] for t in item["templates"]}
     assert linked_uids == {kept.uid, added.uid}
 
 
 @pytest.mark.asyncio
-async def test_update_preserves_mapping_uid_for_unchanged_template(
-    authed_client, db_session, user_id
-):
+async def test_update_preserves_mapping_uid_for_unchanged_template(authed_client, db_session, user_id):
+    """200 OK; process leaves an unchanged mapping row untouched instead of deleting and recreating it."""
     feature = await _make_feature(db_session, user_id)
     template = await _make_template(db_session, user_id)
     mapping = await create_record(
@@ -108,13 +106,22 @@ async def test_update_preserves_mapping_uid_for_unchanged_template(
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], feature.name)
     assert len(item["templates"]) == 1
-    assert item["templates"][0]["mapping_uid"] == mapping.uid
+    assert item["templates"][0]["template_uid"] == template.uid
+
+    # Update left the linked template unchanged, so the join row itself
+    # should never have been deleted and recreated — same query pattern as
+    # the delete tests' cascade check, opening a fresh snapshot after the
+    # HTTP call's own connection has committed.
+    await db_session.commit()
+    still_present = (
+        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.uid == mapping.uid))
+    ).scalar_one_or_none()
+    assert still_present is not None
 
 
 @pytest.mark.asyncio
-async def test_update_empty_template_uids_unlinks_everything(
-    authed_client, db_session, user_id
-):
+async def test_update_empty_template_uids_unlinks_everything(authed_client, db_session, user_id):
+    """200 OK; passing an empty template_uids list unlinks every currently-mapped template."""
     feature = await _make_feature(db_session, user_id)
     template = await _make_template(db_session, user_id)
     await create_record(
@@ -135,6 +142,7 @@ async def test_update_empty_template_uids_unlinks_everything(
 
 @pytest.mark.asyncio
 async def test_update_unknown_uid_is_404(authed_client):
+    """404 feature_not_found when the path uid matches no feature."""
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{uuid4()}",
@@ -146,7 +154,8 @@ async def test_update_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_update_unknown_template_uid_is_404(authed_client, db_session, user_id):
+async def test_update_unknown_template_uid_is_422(authed_client, db_session, user_id):
+    """422; process rejects the whole update if a given template_uid doesn't exist."""
     feature = await _make_feature(db_session, user_id)
     unknown_uid = str(uuid4())
 
@@ -156,14 +165,15 @@ async def test_update_unknown_template_uid_is_404(authed_client, db_session, use
         json={"name": feature.name, "template_uids": [unknown_uid]},
         raise_for_status=False,
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 422
     body = resp.json()
     assert body["message"] == resolve_message("feature_template_not_found", "en")
-    assert unknown_uid in body["error"]["template_uids"]
+    assert body["error"]["template_uids.0"] == [resolve_message("prompt_template_not_found", "en")]
 
 
 @pytest.mark.asyncio
 async def test_update_rename_into_collision_is_409(authed_client, db_session, user_id):
+    """409 when renaming a feature to a name another feature already has."""
     existing = await _make_feature(db_session, user_id)
     other = await _make_feature(db_session, user_id)
 
@@ -179,6 +189,7 @@ async def test_update_rename_into_collision_is_409(authed_client, db_session, us
 
 @pytest.mark.asyncio
 async def test_requires_auth(client, db_session, user_id):
+    """401 when the request carries no bearer token."""
     feature = await _make_feature(db_session, user_id)
     resp = await client.call(
         "PATCH",

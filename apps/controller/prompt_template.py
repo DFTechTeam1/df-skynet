@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
-from schemas.payload.prompt_template import CreatePromptTemplatePayload
+from schemas.payload.prompt_template import PromptTemplatePayload
 from services.mysql.model import DfEnginePromptTemplates, Users, Employees
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError
@@ -17,17 +17,14 @@ from utils.formatter import format_datetime, format_creator
 # from apps.dependency.permission import require_permissions
 
 template_permission = {
-    "create_prompt_template": "create_prompt_template",
-    "fetch_prompt_templates": "fetch_prompt_templates",
-    "update_prompt_template": "update_prompt_template",
-    "delete_prompt_template": "delete_prompt_template",
+    "fetch_df_engine_prompt_templates": "fetch_df_engine_prompt_templates",
+    "update_df_engine_prompt_template": "update_df_engine_prompt_template",
+    "delete_df_engine_prompt_template": "delete_df_engine_prompt_template",
 }
 
 
 class PromptTemplateController(CoreDependencies):
-    async def prompt_templates(
-        self, name: Optional[str] = None
-    ) -> list[dict[str, Any]]:
+    async def prompt_templates(self, name: Optional[str] = None) -> list[dict[str, Any]]:
         """Fetch active prompt templates (newest first) shaped for the frontend:
         formatted timestamps, resolved `creater`/`updater`, and an `action`
         block reflecting what the current user is permitted to do. Shared by
@@ -70,21 +67,11 @@ class PromptTemplateController(CoreDependencies):
             template["creater"] = format_creator(template["created_by_user"])
             template["updater"] = format_creator(template["updated_by_user"])
             template["action"] = {
-                "can_fetch_prompt_templates": template_permission[
-                    "fetch_prompt_templates"
-                ]
+                "can_fetch_df_engine_prompt_templates": template_permission["fetch_df_engine_prompt_templates"]
                 in permissions,
-                "can_delete_prompt_template": template_permission[
-                    "delete_prompt_template"
-                ]
+                "can_delete_df_engine_prompt_template": template_permission["delete_df_engine_prompt_template"]
                 in permissions,
-                "can_update_prompt_template": template_permission[
-                    "update_prompt_template"
-                ]
-                in permissions,
-                "can_create_prompt_template": template_permission[
-                    "create_prompt_template"
-                ]
+                "can_update_df_engine_prompt_template": template_permission["update_df_engine_prompt_template"]
                 in permissions,
             }
 
@@ -123,7 +110,7 @@ class PromptTemplateController(CoreDependencies):
         tags=["Prompt Template Management"],
         response_model=Response,
         # dependencies=[
-        #     Depends(require_permissions(["fetch_prompt_templates"])) # Will be enabled later
+        #     Depends(require_permissions(["fetch_df_engine_prompt_templates"])) # Will be enabled later
         # ]
     )
     async def prompt_template_to_fetch_templates(
@@ -165,9 +152,7 @@ class PromptTemplateController(CoreDependencies):
         #     Depends(require_permissions(["create_prompt_template"])) # Will be enabled later
         # ]
     )
-    async def prompt_template_to_create_template(
-        self, schema: CreatePromptTemplatePayload
-    ) -> Response:
+    async def prompt_template_to_create_template(self, schema: PromptTemplatePayload) -> Response:
         response = Response()
         try:
             prompt_template = DfEnginePromptTemplates(
@@ -213,12 +198,12 @@ class PromptTemplateController(CoreDependencies):
         tags=["Prompt Template Management"],
         response_model=Response,
         # dependencies=[
-        #     Depends(require_permissions(["update_prompt_template"])) # Will be enabled later
+        #     Depends(require_permissions(["update_df_engine_prompt_template"])) # Will be enabled later
         # ]
     )
     async def prompt_template_to_update_template(
         self,
-        schema: CreatePromptTemplatePayload,
+        schema: PromptTemplatePayload,
         uid: UUID = Path(
             ...,
             description="Template UID.",
@@ -262,7 +247,7 @@ class PromptTemplateController(CoreDependencies):
         tags=["Prompt Template Management"],
         response_model=Response,
         # dependencies=[
-        #     Depends(require_permissions(["delete_prompt_template"])) # Will be enabled later
+        #     Depends(require_permissions(["delete_df_engine_prompt_template"])) # Will be enabled later
         # ]
     )
     async def prompt_template_to_delete_template(

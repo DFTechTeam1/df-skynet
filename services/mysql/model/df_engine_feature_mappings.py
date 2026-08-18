@@ -9,23 +9,11 @@ from utils import local_time
 class DfEngineFeatureMappings(SQLModel, table=True):
     __tablename__ = "df_engine_feature_mappings"  # type: ignore
 
-    id: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    )
-    created_at: datetime = Field(
-        default_factory=local_time, sa_column=Column(DateTime, nullable=False)
-    )
+    id: int = Field(sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
+    created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     uid: str = Field(sa_column=Column(CHAR(36), nullable=False, unique=True))
-    action_id: int = Field(
-        sa_column=Column(
-            BIGINT(unsigned=True), ForeignKey("df_engine_actions.id"), nullable=False
-        )
-    )
-    page_id: int = Field(
-        sa_column=Column(
-            BIGINT(unsigned=True), ForeignKey("df_engine_pages.id"), nullable=False
-        )
-    )
+    action_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_actions.id"), nullable=False))
+    page_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_pages.id"), nullable=False))
 
     df_engine_actions: Optional["DfEngineActions"] = Relationship(  # type: ignore
         back_populates="df_engine_feature_mappings"

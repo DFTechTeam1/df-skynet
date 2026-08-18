@@ -1,6 +1,6 @@
-from typing import List, Optional
+from typing import Any, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FeaturePayload(BaseModel):
@@ -33,11 +33,10 @@ class FeaturePayload(BaseModel):
         description="Whether this feature is available to be assigned to pages.",
         examples=[True],
     )
-    template_uids: List[UUID] = Field(
+    template_uids: list[str] = Field(
         default_factory=list,
         description=(
-            "Full desired set of prompt template UIDs linked to this feature. "
-            "Omit or pass an empty list for a feature with no linked templates."
+            "Full desired set of prompt template UIDs linked to this feature. Omit or pass an empty list for a feature with no linked templates."
         ),
         examples=[
             [
@@ -46,3 +45,8 @@ class FeaturePayload(BaseModel):
             ]
         ],
     )
+
+    @field_validator("template_uids", mode="before")
+    @classmethod
+    def dedupe_template_uids(cls, value: list[Any]) -> list[str]:
+        return list(dict.fromkeys(str(UUID(str(uid))) for uid in value))

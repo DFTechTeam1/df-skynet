@@ -17,103 +17,116 @@ from services.mysql.model import (
     Employees,
 )
 from log import logging
-from error import ServiceError, BaseError, DataConflictError, DataNotFoundError
+from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils.serializer import serialize
 from utils.formatter import format_datetime, format_creator
 # from apps.dependency.permission import require_permissions
 
+
 feature_permission = {
-    "fetch_features": "fetch_features",
-    "create_feature": "create_feature",
-    "update_feature": "update_feature",
-    "delete_feature": "delete_feature",
+    "fetch_df_engine_features": "fetch_df_engine_features",
+    "update_df_engine_feature": "update_df_engine_feature",
+    "delete_df_engine_feature": "delete_df_engine_feature",
 }
 
 
 class FeatureManagementController(CoreDependencies):
-    async def features(self, name: Optional[str] = None) -> list[dict[str, Any]]:
-        """Fetch features (newest first) shaped for the frontend: formatted
-        timestamps, resolved `creater`/`updater`, a nested `templates` array
-        built from `df_engine_action_mappings`, and an `action` block
-        reflecting what the current user is permitted to do. Both active and
-        inactive features are returned — unlike prompt templates, the
-        feature-management screen manages (and toggles) inactive rows too,
-        it doesn't just pick from active ones. Shared by every endpoint below
-        so each mutation can hand back fresh, complete state instead of the
-        frontend re-fetching separately.
+    def query_options(self):
+        return (
+            selectinload(DfEngineActions.created_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEngineActions.updated_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+            selectinload(  # type: ignore
+                DfEngineActions.df_engine_action_mappings  # type: ignore
+            )
+            .selectinload(DfEngineActionMappings.df_engine_prompt_templates)  # type: ignore
+            .selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEngineActions.df_engine_action_mappings)  # type: ignore
+            .selectinload(DfEngineActionMappings.df_engine_prompt_templates)  # type: ignore
+            .selectinload(DfEnginePromptTemplates.updated_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+        )
 
-        `name`, if given, filters to features whose name contains it
-        (case-insensitive) — this is what backs the search endpoint.
-        """
+    def format_response(self, feature: dict[str, Any], permissions: list[str]) -> dict[str, Any]:
+        feature["created_at"] = format_datetime(feature["created_at"])
+        feature["updated_at"] = format_datetime(feature["updated_at"])
+        feature["creater"] = format_creator(feature["created_by_user"])
+        feature["updater"] = format_creator(feature["updated_by_user"])
+
+        templates = []
+        for mapping in feature.get("df_engine_action_mappings", []):
+            template = mapping.get("df_engine_prompt_templates", {})
+            templates.append(
+                {
+                    "created_at": format_datetime(template.get("created_at")),
+                    "updated_at": format_datetime(template.get("updated_at")),
+                    "template_uid": template.get("uid"),
+                    "name": template.get("name"),
+                    "description": template.get("description"),
+                    "prompt": template.get("prompt"),
+                    "is_active": template.get("is_active"),
+                    "creater": format_creator(template.get("created_by_user")),
+                    "updater": format_creator(template.get("updated_by_user")),
+                }
+            )
+        feature["templates"] = templates
+        feature["action"] = {
+            "can_fetch_detail": feature_permission["fetch_df_engine_features"] in permissions,
+            "can_update_feature": feature_permission["update_df_engine_feature"] in permissions,
+            "can_delete_feature": feature_permission["delete_df_engine_feature"] in permissions,
+        }
+
+        feature.pop("id", None)
+        feature.pop("created_by_user", None)
+        feature.pop("updated_by_user", None)
+        feature.pop("created_by", None)
+        feature.pop("updated_by", None)
+        feature.pop("df_engine_action_mappings", None)
+        return feature
+
+    async def get_features(self, name: Optional[str] = None) -> list[dict[str, Any]]:
+        """Will fetch all features available if name not provided, ordered by latest to oldest."""
         query = select(DfEngineActions)
         if name:
             query = query.where(DfEngineActions.name.ilike(f"{name}%"))  # type: ignore
-
         records = (
             (
                 await self.db.execute(
-                    query.options(
-                        selectinload(DfEngineActions.created_by_user)  # type: ignore
-                        .load_only(Users.image)  # type: ignore
-                        .selectinload(Users.employees)  # type: ignore
-                        .load_only(Employees.nickname),  # type: ignore
-                        selectinload(DfEngineActions.updated_by_user)  # type: ignore
-                        .load_only(Users.image)  # type: ignore
-                        .selectinload(Users.employees)  # type: ignore
-                        .load_only(Employees.nickname),  # type: ignore
-                        selectinload(  # type: ignore
-                            DfEngineActions.df_engine_action_mappings
-                        ).selectinload(
-                            DfEngineActionMappings.df_engine_prompt_templates
-                        ),  # type: ignore
-                    ).order_by(DfEngineActions.created_at.desc())  # type: ignore
+                    query.options(*self.query_options()).order_by(  # type: ignore
+                        DfEngineActions.created_at.desc()  # type: ignore
+                    )
                 )
             )
             .scalars()
             .all()
         )
 
-        features = [record for record in serialize(records)]
         permissions = self.user.get("permissions", [])
-        for feature in features:
-            feature["created_at"] = format_datetime(feature["created_at"])
-            feature["updated_at"] = format_datetime(feature["updated_at"])
-            feature["creater"] = format_creator(feature["created_by_user"])
-            feature["updater"] = format_creator(feature["updated_by_user"])
+        return [self.format_response(feature, permissions) for feature in serialize(records)]
 
-            templates = []
-            for mapping in feature.get("df_engine_action_mappings") or []:
-                template = mapping.get("df_engine_prompt_templates") or {}
-                templates.append(
-                    {
-                        "mapping_uid": mapping.get("uid"),
-                        "uid": template.get("uid"),
-                        "name": template.get("name"),
-                        "description": template.get("description"),
-                        "is_active": template.get("is_active"),
-                    }
-                )
-            feature["templates"] = templates
+    async def get_feature_detail(self, uid: UUID) -> dict[str, Any]:
+        record = (
+            await self.db.execute(
+                select(DfEngineActions)
+                .where(DfEngineActions.uid == str(uid))  # type: ignore
+                .options(*self.query_options())  # type: ignore
+            )
+        ).scalar_one_or_none()
+        if record is None:
+            raise DataNotFoundError(message="feature_not_found")
 
-            feature["action"] = {
-                "can_fetch_features": feature_permission["fetch_features"]
-                in permissions,
-                "can_create_feature": feature_permission["create_feature"]
-                in permissions,
-                "can_update_feature": feature_permission["update_feature"]
-                in permissions,
-                "can_delete_feature": feature_permission["delete_feature"]
-                in permissions,
-            }
-
-            feature.pop("id", None)
-            feature.pop("created_by_user", None)
-            feature.pop("updated_by_user", None)
-            feature.pop("created_by", None)
-            feature.pop("updated_by", None)
-            feature.pop("df_engine_action_mappings", None)
-
-        return features
+        permissions = self.user.get("permissions", [])
+        return self.format_response(serialize(record), permissions)
 
     async def get_feature(self, uid: UUID) -> DfEngineActions:
         record = (
@@ -125,32 +138,28 @@ class FeatureManagementController(CoreDependencies):
             raise DataNotFoundError(message="feature_not_found")
         return record
 
-    async def get_templates_by_uid(
-        self, uids: list[UUID]
-    ) -> dict[str, DfEnginePromptTemplates]:
-        wanted = [str(uid) for uid in uids]
-        if not wanted:
+    async def get_templates_by_uid(self, template_uids: list[str]) -> dict[str, int]:
+        if not template_uids:
             return {}
 
-        found = (
-            (
-                await self.db.execute(
-                    select(DfEnginePromptTemplates).where(
-                        DfEnginePromptTemplates.uid.in_(wanted)  # type: ignore
-                    )
+        templates = (
+            await self.db.execute(
+                select(DfEnginePromptTemplates.id, DfEnginePromptTemplates.uid).where(  # type: ignore
+                    DfEnginePromptTemplates.uid.in_(template_uids)  # type: ignore
                 )
             )
-            .scalars()
-            .all()
-        )
-        templates_by_uid = {template.uid: template for template in found}
-        missing = [uid for uid in wanted if uid not in templates_by_uid]
-        if missing:
-            raise DataNotFoundError(
-                message="feature_template_not_found",
-                error={"template_uids": missing},
-            )
-        return templates_by_uid
+        ).all()
+        map_template: dict[str, int] = {uid: id_ for id_, uid in templates}
+
+        if len(map_template) != len(template_uids):
+            error = {
+                f"template_uids.{idx}": ["prompt_template_not_found"]
+                for idx, template_uid in enumerate(template_uids)
+                if template_uid not in map_template
+            }
+            raise DataValidationError(message="feature_template_not_found", error=error)
+
+        return map_template
 
     @controller.get(
         "/api/feature-management",
@@ -162,11 +171,9 @@ class FeatureManagementController(CoreDependencies):
             "that text (case-insensitive) are returned, in the exact same shape as the "
             "unfiltered list. Each feature includes a nested `templates` array built from "
             "`df_engine_action_mappings` — one feature can list many templates, and the "
-            "same template can appear under many different features. Each template entry "
-            "carries its own `mapping_uid` (the join row's uid), used internally when a "
-            "later update unlinks it. Each feature also includes its resolved `creater` / "
-            "`updater` and an `action` block reflecting which feature-management actions "
-            "the current user is permitted to perform."
+            "same template can appear under many different features. Each feature also "
+            "includes its resolved `creater` / `updater` and an `action` block reflecting "
+            "which feature-management actions the current user is permitted to perform."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
@@ -186,7 +193,40 @@ class FeatureManagementController(CoreDependencies):
     ) -> Response:
         response = Response()
         try:
-            response.data = await self.features(name=name)
+            response.data = await self.get_features(name=name)
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/api/feature-management/{uid}",
+        summary="Detail of a feature.",
+        description=(
+            "Returns a single feature (`df_engine_actions` row) identified by `uid`, in "
+            "the exact same shape as one item from the list endpoint — including its "
+            "nested `templates` array, resolved `creater` / `updater`, and `action` block. "
+            "404s if no feature matches `uid`."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Feature Management"],
+        response_model=Response,
+        # dependencies=[
+        #     Depends(require_permissions(["fetch_features"])) # Will be enabled later
+        # ]
+    )
+    async def feature_management_with_uid_to_fetch_detail_features(
+        self,
+        uid: UUID = Path(
+            description="Feature UID.",
+            examples=["36c101d8-12a8-4e3c-bf3d-eb49a337abdd"],
+        ),
+    ) -> Response:
+        response = Response()
+        try:
+            response.data = await self.get_feature_detail(uid)
         except BaseError:
             raise
         except Exception:
@@ -215,12 +255,10 @@ class FeatureManagementController(CoreDependencies):
         #     Depends(require_permissions(["create_feature"])) # Will be enabled later
         # ]
     )
-    async def feature_management_to_create_feature(
-        self, schema: FeaturePayload
-    ) -> Response:
+    async def feature_management_to_create_feature(self, schema: FeaturePayload) -> Response:
         response = Response()
         try:
-            templates_by_uid = await self.get_templates_by_uid(schema.template_uids)
+            map_template = await self.get_templates_by_uid(schema.template_uids)
 
             feature = DfEngineActions(
                 uid=str(uuid4()),
@@ -235,17 +273,17 @@ class FeatureManagementController(CoreDependencies):
             except IntegrityError:
                 raise DataConflictError(message="feature_already_exists")
 
-            for template in templates_by_uid.values():
+            for template_id in map_template.values():
                 self.db.add(
                     DfEngineActionMappings(
                         uid=str(uuid4()),
                         action_id=feature.id,
-                        template_id=template.id,
+                        template_id=template_id,
                     )
                 )
             await self.db.flush()
 
-            response.data = await self.features()
+            response.data = await self.get_features()
         except BaseError:
             raise
         except Exception:
@@ -287,7 +325,7 @@ class FeatureManagementController(CoreDependencies):
         response = Response()
         try:
             feature = await self.get_feature(uid)
-            templates_by_uid = await self.get_templates_by_uid(schema.template_uids)
+            map_template = await self.get_templates_by_uid(schema.template_uids)
 
             feature.name = schema.name
             feature.description = schema.description
@@ -299,7 +337,7 @@ class FeatureManagementController(CoreDependencies):
             except IntegrityError:
                 raise DataConflictError(message="feature_already_exists")
 
-            desired_ids = {template.id for template in templates_by_uid.values()}
+            desired_ids = set(map_template.values())
 
             existing_mappings = (
                 (
@@ -312,9 +350,7 @@ class FeatureManagementController(CoreDependencies):
                 .scalars()
                 .all()
             )
-            existing_by_template_id = {
-                mapping.template_id: mapping for mapping in existing_mappings
-            }
+            existing_by_template_id = {mapping.template_id: mapping for mapping in existing_mappings}
 
             for template_id, mapping in existing_by_template_id.items():
                 if template_id not in desired_ids:
@@ -332,7 +368,7 @@ class FeatureManagementController(CoreDependencies):
 
             await self.db.flush()
 
-            response.data = await self.features()
+            response.data = await self.get_features()
         except BaseError:
             raise
         except Exception:
@@ -385,7 +421,7 @@ class FeatureManagementController(CoreDependencies):
             await self.db.delete(feature)
             await self.db.flush()
 
-            response.data = await self.features()
+            response.data = await self.get_features()
         except BaseError:
             raise
         except Exception:
