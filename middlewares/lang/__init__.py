@@ -4,6 +4,7 @@ from middlewares.lang.en.equipment import EquipmentMessage as _EnEquipment
 from middlewares.lang.en.feature_management import (
     FeatureManagementMessage as _EnFeatureManagement,
 )
+from middlewares.lang.en.preference import PreferenceMessage as _EnPreference
 from middlewares.lang.en.prompt_template import (
     PromptTemplateMessage as _EnPromptTemplate,
 )
@@ -13,6 +14,7 @@ from middlewares.lang.id.equipment import EquipmentMessage as _IdEquipment
 from middlewares.lang.id.feature_management import (
     FeatureManagementMessage as _IdFeatureManagement,
 )
+from middlewares.lang.id.preference import PreferenceMessage as _IdPreference
 from middlewares.lang.id.prompt_template import (
     PromptTemplateMessage as _IdPromptTemplate,
 )
@@ -26,6 +28,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_EnCommon().message,
         **_EnEquipment().message,
         **_EnFeatureManagement().message,
+        **_EnPreference().message,
         **_EnPromptTemplate().message,
     },
     "id": {
@@ -33,6 +36,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_IdCommon().message,
         **_IdEquipment().message,
         **_IdFeatureManagement().message,
+        **_IdPreference().message,
         **_IdPromptTemplate().message,
     },
 }

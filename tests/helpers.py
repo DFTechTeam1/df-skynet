@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
-from services.mysql.model import Users
+from services.mysql.model import DfEnginePreferences, Users
 from utils.formatter import format_creator
 from utils.serializer import serialize
 
@@ -27,6 +27,15 @@ async def expected_user(db_session: AsyncSession, user_id: int) -> Optional[dict
         )
     ).scalar_one()
     return format_creator(serialize(user))
+
+
+async def clear_preference_row(db_session: AsyncSession, user_id: int) -> None:
+    row = (
+        await db_session.execute(select(DfEnginePreferences).where(DfEnginePreferences.user_id == int(user_id)))  # type: ignore
+    ).scalar_one_or_none()
+    if row is not None:
+        await db_session.delete(row)
+        await db_session.commit()
 
 
 def find_by_name(items: list[dict[str, Any]], name: str) -> dict[str, Any]:

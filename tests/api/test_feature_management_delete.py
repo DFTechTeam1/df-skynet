@@ -61,17 +61,12 @@ async def test_delete_success(authed_client, db_session, user_id):
 async def test_delete_cascades_to_mappings(authed_client, db_session, user_id):
     """200 OK; process deletes the feature's df_engine_action_mappings rows too, not just the feature."""
     feature, template, mapping = await _make_feature_with_mapping(db_session, user_id)
-
     resp = await authed_client.call("DELETE", f"{URL}/{feature.uid}")
     assert resp.status_code == 200
-
-    # Close out this transaction's REPEATABLE READ snapshot now, so the
-    # verification query below (after the HTTP delete commits on its own
-    # connection) opens a fresh one instead of reusing this stale read.
     await db_session.commit()
 
     remaining = (
-        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.uid == mapping.uid))
+        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.uid == mapping.uid))  # type: ignore
     ).scalar_one_or_none()
     assert remaining is None
 

@@ -8,7 +8,7 @@ dependencies = [
     "aiomysql>=0.3.2",
     "alembic>=1.19.1",
     "coverage>=7.15.4",
-    "fastapi>=0.141.1",
+    "fastapi==0.121.2",
     "fastapi-controller>=0.0.8",
     "fastapi-limiter>=0.2.0",
     "httpx>=0.28.1",
