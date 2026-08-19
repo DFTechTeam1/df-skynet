@@ -1,8 +1,8 @@
 import pytest
 from uuid import uuid4
 from services.mysql.model import (
-    DfEngineActionMappings,
-    DfEngineActions,
+    DfEngineFeaturePromptMappings,
+    DfEngineFeatures,
     DfEnginePromptTemplates,
 )
 from tests.helpers import create_record, response_names
@@ -99,7 +99,7 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 
 @pytest.mark.asyncio
 async def test_delete_blocked_then_succeeds_after_unmapping(authed_client, db_session, user_id):
-    """409 prompt_template_in_use while mapped to an action; delete succeeds once the mapping row is removed out-of-band."""
+    """409 prompt_template_in_use while mapped to a feature; delete succeeds once the mapping row is removed out-of-band."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -111,19 +111,19 @@ async def test_delete_blocked_then_succeeds_after_unmapping(authed_client, db_se
         ),
     )
 
-    action = await create_record(
+    feature = await create_record(
         db_session,
-        DfEngineActions,
+        DfEngineFeatures,
         dict(
             uid=str(uuid4()),
-            name=f"Action {uuid4().hex[:8]}",
+            name=f"Feature {uuid4().hex[:8]}",
             created_by=int(user_id),
         ),
     )
     mapping = await create_record(
         db_session,
-        DfEngineActionMappings,
-        dict(uid=str(uuid4()), action_id=action.id, template_id=row.id),
+        DfEngineFeaturePromptMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, template_id=row.id),
     )
 
     blocked = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)

@@ -1,10 +1,10 @@
 from services.mysql.model.cities import Cities
 from services.mysql.model.countries import Countries
-from services.mysql.model.df_engine_action_mappings import DfEngineActionMappings
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
-from services.mysql.model.df_engine_actions import DfEngineActions
-from services.mysql.model.df_engine_feature_mappings import DfEngineFeatureMappings
-from services.mysql.model.df_engine_pages import DfEnginePages
+from services.mysql.model.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappings
+from services.mysql.model.df_engine_features import DfEngineFeatures
+from services.mysql.model.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappings
+from services.mysql.model.df_engine_menus import DfEngineMenus
 from services.mysql.model.df_engine_preferences import DfEnginePreferences
 from services.mysql.model.df_engine_prompt_templates import DfEnginePromptTemplates
 from services.mysql.model.employees import Employees
@@ -22,11 +22,11 @@ from services.mysql.model.users import Users
 __all__ = [
     "Cities",
     "Countries",
-    "DfEngineActionMappings",
-    "DfEngineActions",
     "DfEngineApiKeys",
-    "DfEngineFeatureMappings",
-    "DfEnginePages",
+    "DfEngineFeaturePromptMappings",
+    "DfEngineFeatures",
+    "DfEngineMenuFeatureMappings",
+    "DfEngineMenus",
     "DfEnginePreferences",
     "DfEnginePromptTemplates",
     "Employees",

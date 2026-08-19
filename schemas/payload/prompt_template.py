@@ -6,7 +6,7 @@ class PromptTemplatePayload(BaseModel):
     """Payload to register a reusable prompt template.
 
     A prompt template holds the raw prompt text that gets injected as the base
-    prompt whenever it is wired to a page action via `df_engine_action_mappings`.
+    prompt whenever it is wired to a feature via `df_engine_feature_prompt_mappings`.
     `name` must be unique across all existing templates; `prompt` content may
     repeat (e.g. cloning a template under a new name to iterate on it).
     """
@@ -28,7 +28,7 @@ class PromptTemplatePayload(BaseModel):
         default=True,
         description=(
             "Whether this template is available for use. Active templates can be selected "
-            "when mapping a page action to a prompt; inactive templates are hidden from that "
+            "when mapping a feature to a prompt; inactive templates are hidden from that "
             "selection but remain stored for history."
         ),
         examples=[True],

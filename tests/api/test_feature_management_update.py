@@ -3,8 +3,10 @@ from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
 from services.mysql.model import (
-    DfEngineActionMappings,
-    DfEngineActions,
+    DfEngineFeaturePromptMappings,
+    DfEngineFeatures,
+    DfEngineMenuFeatureMappings,
+    DfEngineMenus,
     DfEnginePromptTemplates,
 )
 from tests.helpers import create_record, find_by_name
@@ -15,7 +17,7 @@ URL = "/api/feature-management"
 async def _make_feature(db_session, user_id):
     return await create_record(
         db_session,
-        DfEngineActions,
+        DfEngineFeatures,
         dict(
             uid=str(uuid4()),
             name=f"Feature {uuid4().hex[:8]}",
@@ -64,13 +66,13 @@ async def test_update_add_and_remove_templates_in_one_call(authed_client, db_ses
 
     await create_record(
         db_session,
-        DfEngineActionMappings,
-        dict(uid=str(uuid4()), action_id=feature.id, template_id=kept.id),
+        DfEngineFeaturePromptMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, template_id=kept.id),
     )
     await create_record(
         db_session,
-        DfEngineActionMappings,
-        dict(uid=str(uuid4()), action_id=feature.id, template_id=removed.id),
+        DfEngineFeaturePromptMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, template_id=removed.id),
     )
 
     resp = await authed_client.call(
@@ -94,8 +96,8 @@ async def test_update_preserves_mapping_uid_for_unchanged_template(authed_client
     template = await _make_template(db_session, user_id)
     mapping = await create_record(
         db_session,
-        DfEngineActionMappings,
-        dict(uid=str(uuid4()), action_id=feature.id, template_id=template.id),
+        DfEngineFeaturePromptMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, template_id=template.id),
     )
 
     resp = await authed_client.call(
@@ -109,7 +111,9 @@ async def test_update_preserves_mapping_uid_for_unchanged_template(authed_client
     assert item["templates"][0]["template_uid"] == template.uid
     await db_session.commit()
     still_present = (
-        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.uid == mapping.uid))  # type: ignore
+        await db_session.execute(
+            select(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.uid == mapping.uid)  # type: ignore
+        )
     ).scalar_one_or_none()
     assert still_present is not None
 
@@ -121,8 +125,8 @@ async def test_update_empty_template_uids_unlinks_everything(authed_client, db_s
     template = await _make_template(db_session, user_id)
     await create_record(
         db_session,
-        DfEngineActionMappings,
-        dict(uid=str(uuid4()), action_id=feature.id, template_id=template.id),
+        DfEngineFeaturePromptMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, template_id=template.id),
     )
 
     resp = await authed_client.call(
@@ -133,6 +137,45 @@ async def test_update_empty_template_uids_unlinks_everything(authed_client, db_s
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], feature.name)
     assert item["templates"] == []
+
+
+@pytest.mark.asyncio
+async def test_update_deactivating_removes_its_menu_mappings(authed_client, db_session, user_id):
+    """200 OK; setting is_active False deletes the feature's df_engine_menu_feature_mappings rows."""
+    feature = await _make_feature(db_session, user_id)
+    menu = await create_record(
+        db_session,
+        DfEngineMenus,
+        dict(
+            uid=str(uuid4()),
+            name=f"Menu {uuid4().hex[:8]}",
+            created_by=int(user_id),
+        ),
+    )
+    await create_record(
+        db_session,
+        DfEngineMenuFeatureMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, menu_id=menu.id),
+    )
+
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{feature.uid}",
+        json={"name": feature.name, "is_active": False},
+    )
+    assert resp.status_code == 200
+    await db_session.commit()
+
+    remaining = (
+        (
+            await db_session.execute(
+                select(DfEngineMenuFeatureMappings).where(DfEngineMenuFeatureMappings.feature_id == feature.id)  # type: ignore
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert remaining == []
 
 
 @pytest.mark.asyncio

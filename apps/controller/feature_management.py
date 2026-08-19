@@ -3,15 +3,16 @@ from typing import Any, Optional
 from uuid import uuid4, UUID
 from fastapi import status, Depends, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.feature_management import FeaturePayload
 from services.mysql.model import (
-    DfEngineActionMappings,
-    DfEngineActions,
+    DfEngineFeaturePromptMappings,
+    DfEngineFeatures,
+    DfEngineMenuFeatureMappings,
     DfEnginePromptTemplates,
     Users,
     Employees,
@@ -33,24 +34,24 @@ feature_permission = {
 class FeatureManagementController(CoreDependencies):
     def query_options(self):
         return (
-            selectinload(DfEngineActions.created_by_user)  # type: ignore
+            selectinload(DfEngineFeatures.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEngineActions.updated_by_user)  # type: ignore
+            selectinload(DfEngineFeatures.updated_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
             selectinload(  # type: ignore
-                DfEngineActions.df_engine_action_mappings  # type: ignore
+                DfEngineFeatures.df_engine_feature_prompt_mappings  # type: ignore
             )
-            .selectinload(DfEngineActionMappings.df_engine_prompt_templates)  # type: ignore
+            .selectinload(DfEngineFeaturePromptMappings.df_engine_prompt_templates)  # type: ignore
             .selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEngineActions.df_engine_action_mappings)  # type: ignore
-            .selectinload(DfEngineActionMappings.df_engine_prompt_templates)  # type: ignore
+            selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings)  # type: ignore
+            .selectinload(DfEngineFeaturePromptMappings.df_engine_prompt_templates)  # type: ignore
             .selectinload(DfEnginePromptTemplates.updated_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
@@ -64,7 +65,7 @@ class FeatureManagementController(CoreDependencies):
         feature["updater"] = format_creator(feature["updated_by_user"])
 
         templates = []
-        for mapping in feature.get("df_engine_action_mappings", []):
+        for mapping in feature.get("df_engine_feature_prompt_mappings", []):
             template = mapping.get("df_engine_prompt_templates", {})
             if not template.get("is_active"):
                 continue
@@ -93,19 +94,19 @@ class FeatureManagementController(CoreDependencies):
         feature.pop("updated_by_user", None)
         feature.pop("created_by", None)
         feature.pop("updated_by", None)
-        feature.pop("df_engine_action_mappings", None)
+        feature.pop("df_engine_feature_prompt_mappings", None)
         return feature
 
     async def get_features(self, name: Optional[str] = None) -> list[dict[str, Any]]:
         """Will fetch all features available if name not provided, ordered by latest to oldest."""
-        query = select(DfEngineActions)
+        query = select(DfEngineFeatures)
         if name:
-            query = query.where(DfEngineActions.name.ilike(f"{name}%"))  # type: ignore
+            query = query.where(DfEngineFeatures.name.ilike(f"{name}%"))  # type: ignore
         records = (
             (
                 await self.db.execute(
                     query.options(*self.query_options()).order_by(  # type: ignore
-                        DfEngineActions.created_at.desc()  # type: ignore
+                        DfEngineFeatures.created_at.desc()  # type: ignore
                     )
                 )
             )
@@ -119,8 +120,8 @@ class FeatureManagementController(CoreDependencies):
     async def get_feature_detail(self, uid: UUID) -> dict[str, Any]:
         record = (
             await self.db.execute(
-                select(DfEngineActions)
-                .where(DfEngineActions.uid == str(uid))  # type: ignore
+                select(DfEngineFeatures)
+                .where(DfEngineFeatures.uid == str(uid))  # type: ignore
                 .options(*self.query_options())  # type: ignore
             )
         ).scalar_one_or_none()
@@ -130,10 +131,10 @@ class FeatureManagementController(CoreDependencies):
         permissions = self.user.get("permissions", [])
         return self.format_response(serialize(record), permissions)
 
-    async def get_feature(self, uid: UUID) -> DfEngineActions:
+    async def get_feature(self, uid: UUID) -> DfEngineFeatures:
         record = (
             await self.db.execute(
-                select(DfEngineActions).where(DfEngineActions.uid == str(uid))  # type: ignore
+                select(DfEngineFeatures).where(DfEngineFeatures.uid == str(uid))  # type: ignore
             )
         ).scalar_one_or_none()
         if record is None:
@@ -167,12 +168,12 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management",
         summary="List or search features.",
         description=(
-            "Returns features (`df_engine_actions` rows), newest first — both active and "
+            "Returns features (`df_engine_features` rows), newest first — both active and "
             "inactive, since this screen manages and toggles inactive features too, unlike "
             "prompt templates. Pass `name` to search — only features whose name contains "
             "that text (case-insensitive) are returned, in the exact same shape as the "
             "unfiltered list. Each feature includes a nested `templates` array built from "
-            "`df_engine_action_mappings`, filtered to active templates only (inactive ones "
+            "`df_engine_feature_prompt_mappings`, filtered to active templates only (inactive ones "
             "are still mapped internally but omitted from this array) — one feature can "
             "list many templates, and the same template can appear under many different "
             "features. Each feature also "
@@ -209,7 +210,7 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management/{uid}",
         summary="Detail of a feature.",
         description=(
-            "Returns a single feature (`df_engine_actions` row) identified by `uid`, in "
+            "Returns a single feature (`df_engine_features` row) identified by `uid`, in "
             "the exact same shape as one item from the list endpoint — including its "
             "nested `templates` array, resolved `creater` / `updater`, and `action` block. "
             "404s if no feature matches `uid`."
@@ -242,7 +243,7 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management",
         summary="Create a feature.",
         description=(
-            "Registers a new feature (`df_engine_actions` row) and, in the same call, "
+            "Registers a new feature (`df_engine_features` row) and, in the same call, "
             "links it to the prompt templates given in `template_uids` — every uid must "
             "reference an existing prompt template, or the whole request fails. "
             "`template_uids` has no minimum length: omit it (or pass an empty list) to "
@@ -264,7 +265,7 @@ class FeatureManagementController(CoreDependencies):
         try:
             map_template = await self.get_templates_by_uid(schema.template_uids)
 
-            feature = DfEngineActions(
+            feature = DfEngineFeatures(
                 uid=str(uuid4()),
                 name=schema.name,
                 description=schema.description,
@@ -279,9 +280,9 @@ class FeatureManagementController(CoreDependencies):
 
             for template_id in map_template.values():
                 self.db.add(
-                    DfEngineActionMappings(
+                    DfEngineFeaturePromptMappings(
                         uid=str(uuid4()),
-                        action_id=feature.id,
+                        feature_id=feature.id,
                         template_id=template_id,
                     )
                 )
@@ -307,8 +308,10 @@ class FeatureManagementController(CoreDependencies):
             "preserved). It has no minimum length — pass an empty list to unlink every "
             "template from the feature. `name` must remain unique across all existing "
             "features. The record's `updated_by` is taken from the authenticated user "
-            "resolved from the bearer token, not from the request body. Returns the full, "
-            "up-to-date list of features."
+            "resolved from the bearer token, not from the request body. Setting `is_active` "
+            "to `false` also removes any `df_engine_menu_feature_mappings` rows linking this "
+            "feature to menus, so it stops appearing in menu-management's feature lists. "
+            "Returns the full, up-to-date list of features."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
@@ -336,6 +339,13 @@ class FeatureManagementController(CoreDependencies):
             feature.is_active = schema.is_active
             feature.updated_by = int(self.user["user_id"])
 
+            if not schema.is_active:
+                await self.db.execute(
+                    delete(DfEngineMenuFeatureMappings).where(
+                        DfEngineMenuFeatureMappings.feature_id == feature.id  # type: ignore
+                    )
+                )
+
             try:
                 await self.db.flush()
             except IntegrityError:
@@ -346,8 +356,8 @@ class FeatureManagementController(CoreDependencies):
             existing_mappings = (
                 (
                     await self.db.execute(
-                        select(DfEngineActionMappings).where(
-                            DfEngineActionMappings.action_id == feature.id  # type: ignore
+                        select(DfEngineFeaturePromptMappings).where(
+                            DfEngineFeaturePromptMappings.feature_id == feature.id  # type: ignore
                         )
                     )
                 )
@@ -363,9 +373,9 @@ class FeatureManagementController(CoreDependencies):
             for template_id in desired_ids:
                 if template_id not in existing_by_template_id:
                     self.db.add(
-                        DfEngineActionMappings(
+                        DfEngineFeaturePromptMappings(
                             uid=str(uuid4()),
-                            action_id=feature.id,
+                            feature_id=feature.id,
                             template_id=template_id,
                         )
                     )
@@ -385,7 +395,8 @@ class FeatureManagementController(CoreDependencies):
         summary="Delete a feature.",
         description=(
             "Permanently deletes the feature identified by `uid`, along with every "
-            "`df_engine_action_mappings` row linking it to a prompt template — there's no "
+            "`df_engine_feature_prompt_mappings` row linking it to a prompt template and "
+            "every `df_engine_menu_feature_mappings` row linking it to a menu — there's no "
             "separate unlink step, deleting a feature removes it entirely. Returns the "
             "full, up-to-date list of remaining features."
         ),
@@ -411,8 +422,8 @@ class FeatureManagementController(CoreDependencies):
             mappings = (
                 (
                     await self.db.execute(
-                        select(DfEngineActionMappings).where(
-                            DfEngineActionMappings.action_id == feature.id  # type: ignore
+                        select(DfEngineFeaturePromptMappings).where(
+                            DfEngineFeaturePromptMappings.feature_id == feature.id  # type: ignore
                         )
                     )
                 )
@@ -420,6 +431,20 @@ class FeatureManagementController(CoreDependencies):
                 .all()
             )
             for mapping in mappings:
+                await self.db.delete(mapping)
+
+            menu_mappings = (
+                (
+                    await self.db.execute(
+                        select(DfEngineMenuFeatureMappings).where(
+                            DfEngineMenuFeatureMappings.feature_id == feature.id  # type: ignore
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for mapping in menu_mappings:
                 await self.db.delete(mapping)
 
             await self.db.delete(feature)

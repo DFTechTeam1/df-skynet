@@ -1,9 +1,12 @@
 """create df engine prompt templates
 
-Revision ID: 810f1b851db3
-Revises: cf4a69dbb241
-Create Date: 2026-08-16 22:25:13.860235
+Revision ID: c3d4e5f6a7b8
+Revises: b2c3d4e5f6a7
+Create Date: 2026-08-19 12:02:00.000000
 
+Part of the squashed baseline (see a1b2c3d4e5f6). Created here, ahead of
+df_engine_feature_prompt_mappings, so that migration's FK to this table can
+be declared inline instead of deferred.
 """
 
 from typing import Sequence, Union
@@ -14,8 +17,8 @@ from sqlalchemy.dialects.mysql import BIGINT
 
 
 # revision identifiers, used by Alembic.
-revision: str = "810f1b851db3"
-down_revision: Union[str, Sequence[str], None] = "cf4a69dbb241"
+revision: str = "c3d4e5f6a7b8"
+down_revision: Union[str, Sequence[str], None] = "b2c3d4e5f6a7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -32,36 +35,11 @@ def upgrade() -> None:
         sa.Column("name", sa.String(255), nullable=False, unique=True),
         sa.Column("prompt", sa.Text, nullable=False),
         sa.Column("description", sa.Text, nullable=True),
-        sa.Column(
-            "created_by",
-            BIGINT(unsigned=True),
-            sa.ForeignKey("users.id"),
-            nullable=False,
-        ),
-        sa.Column(
-            "updated_by",
-            BIGINT(unsigned=True),
-            sa.ForeignKey("users.id"),
-            nullable=True,
-        ),
-    )
-
-    # Deferred FK: df_engine_action_mappings.template_id was created (previous migration)
-    # before this table existed, so the constraint is added now instead.
-    op.create_foreign_key(
-        "fk_df_engine_action_mappings_template_id",
-        "df_engine_action_mappings",
-        "df_engine_prompt_templates",
-        ["template_id"],
-        ["id"],
+        sa.Column("created_by", BIGINT(unsigned=True), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column("updated_by", BIGINT(unsigned=True), sa.ForeignKey("users.id"), nullable=True),
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_constraint(
-        "fk_df_engine_action_mappings_template_id",
-        "df_engine_action_mappings",
-        type_="foreignkey",
-    )
     op.drop_table("df_engine_prompt_templates")

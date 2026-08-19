@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.prompt_template import PromptTemplatePayload
-from services.mysql.model import DfEnginePromptTemplates, DfEngineActionMappings, Users, Employees
+from services.mysql.model import DfEnginePromptTemplates, DfEngineFeaturePromptMappings, Users, Employees
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError
 from utils.serializer import serialize
@@ -197,8 +197,8 @@ class PromptTemplateController(CoreDependencies):
         summary="Create a prompt template.",
         description=(
             "Registers a reusable prompt template holding the raw prompt text that will "
-            "later be injected as the base prompt whenever the template is wired to a page "
-            "action (see `df_engine_action_mappings`). `name` must be unique across all "
+            "later be injected as the base prompt whenever the template is wired to a "
+            "feature (see `df_engine_feature_prompt_mappings`). `name` must be unique across all "
             "existing templates; `prompt` content may repeat across templates (e.g. cloning "
             "a template under a new name). The record's `created_by` is taken from the "
             "authenticated user resolved from the bearer token, not from the request body. "
@@ -253,7 +253,7 @@ class PromptTemplateController(CoreDependencies):
             "`updated_by` is taken from the authenticated user resolved from the bearer "
             "token, not from the request body. Returns the full, up-to-date list of "
             "prompt templates. Setting `is_active` to `false` also removes any "
-            "`df_engine_action_mappings` rows linking this template to features, so it "
+            "`df_engine_feature_prompt_mappings` rows linking this template to features, so it "
             "stops appearing in feature-management's template lists."
         ),
         status_code=status.HTTP_200_OK,
@@ -284,8 +284,8 @@ class PromptTemplateController(CoreDependencies):
 
             if not schema.is_active:
                 await self.db.execute(
-                    delete(DfEngineActionMappings).where(
-                        DfEngineActionMappings.template_id == prompt_template.id  # type: ignore
+                    delete(DfEngineFeaturePromptMappings).where(
+                        DfEngineFeaturePromptMappings.template_id == prompt_template.id  # type: ignore
                     )
                 )
 
@@ -308,8 +308,8 @@ class PromptTemplateController(CoreDependencies):
         summary="Delete a prompt template.",
         description=(
             "Permanently deletes the prompt template identified by `uid`. Fails with a "
-            "conflict if the template is still referenced by a `df_engine_action_mappings` "
-            "row (i.e. currently wired to a page action) — unmap it there first. Returns "
+            "conflict if the template is still referenced by a `df_engine_feature_prompt_mappings` "
+            "row (i.e. currently wired to a feature) — unmap it there first. Returns "
             "the full, up-to-date list of remaining prompt templates."
         ),
         status_code=status.HTTP_200_OK,

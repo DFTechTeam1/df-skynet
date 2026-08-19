@@ -7,6 +7,9 @@ from middlewares.lang.en.feature_management import (
     FeatureManagementMessage as _EnFeatureManagement,
 )
 from middlewares.lang.en.key_management import KeyManagementMessage as _EnKeyManagement
+from middlewares.lang.en.menu_management import (
+    MenuManagementMessage as _EnMenuManagement,
+)
 from middlewares.lang.en.preference import PreferenceMessage as _EnPreference
 from middlewares.lang.en.prompt_template import (
     PromptTemplateMessage as _EnPromptTemplate,
@@ -18,6 +21,9 @@ from middlewares.lang.id.feature_management import (
     FeatureManagementMessage as _IdFeatureManagement,
 )
 from middlewares.lang.id.key_management import KeyManagementMessage as _IdKeyManagement
+from middlewares.lang.id.menu_management import (
+    MenuManagementMessage as _IdMenuManagement,
+)
 from middlewares.lang.id.preference import PreferenceMessage as _IdPreference
 from middlewares.lang.id.prompt_template import (
     PromptTemplateMessage as _IdPromptTemplate,
@@ -38,6 +44,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_EnEquipment().message,
         **_EnFeatureManagement().message,
         **_EnKeyManagement().message,
+        **_EnMenuManagement().message,
         **_EnPreference().message,
         **_EnPromptTemplate().message,
     },
@@ -47,6 +54,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_IdEquipment().message,
         **_IdFeatureManagement().message,
         **_IdKeyManagement().message,
+        **_IdMenuManagement().message,
         **_IdPreference().message,
         **_IdPromptTemplate().message,
     },

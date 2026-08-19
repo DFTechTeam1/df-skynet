@@ -6,8 +6,8 @@ from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
-class DfEngineActions(SQLModel, table=True):
-    __tablename__ = "df_engine_actions"  # type: ignore
+class DfEngineFeatures(SQLModel, table=True):
+    __tablename__ = "df_engine_features"  # type: ignore
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
@@ -23,14 +23,14 @@ class DfEngineActions(SQLModel, table=True):
     )
 
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEngineActions.created_by]"}
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineFeatures.created_by]"}
     )
     updated_by_user: Optional["Users"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEngineActions.updated_by]"}
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineFeatures.updated_by]"}
     )
-    df_engine_action_mappings: list["DfEngineActionMappings"] = Relationship(  # type: ignore
-        back_populates="df_engine_actions"
+    df_engine_feature_prompt_mappings: list["DfEngineFeaturePromptMappings"] = Relationship(  # type: ignore
+        back_populates="df_engine_features"
     )
-    df_engine_feature_mappings: list["DfEngineFeatureMappings"] = Relationship(  # type: ignore
-        back_populates="df_engine_actions"
+    df_engine_menu_feature_mappings: list["DfEngineMenuFeatureMappings"] = Relationship(  # type: ignore
+        back_populates="df_engine_features"
     )

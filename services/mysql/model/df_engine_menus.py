@@ -6,10 +6,10 @@ from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
-class DfEnginePages(SQLModel, table=True):
-    __tablename__ = "df_engine_pages"  # type: ignore
+class DfEngineMenus(SQLModel, table=True):
+    __tablename__ = "df_engine_menus"  # type: ignore
 
-    id: int = Field(sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
+    id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     uid: str = Field(sa_column=Column(CHAR(36), nullable=False, unique=True))
@@ -23,11 +23,11 @@ class DfEnginePages(SQLModel, table=True):
     )
 
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEnginePages.created_by]"}
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineMenus.created_by]"}
     )
     updated_by_user: Optional["Users"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEnginePages.updated_by]"}
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineMenus.updated_by]"}
     )
-    df_engine_feature_mappings: list["DfEngineFeatureMappings"] = Relationship(  # type: ignore
-        back_populates="df_engine_pages"
+    df_engine_menu_feature_mappings: list["DfEngineMenuFeatureMappings"] = Relationship(  # type: ignore
+        back_populates="df_engine_menus"
     )
