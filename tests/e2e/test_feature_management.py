@@ -1,7 +1,7 @@
 import pytest
 from uuid import uuid4
 from sqlalchemy import select
-from services.mysql.model import DfEngineActionMappings, DfEngineActions
+from services.mysql.model import DfEngineFeaturePromptMappings, DfEngineFeatures
 from tests.helpers import find_by_name, response_names
 
 URL = "/api/feature-management"
@@ -74,7 +74,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     # 6. capture the internal id before deleting, to check cascade below —
     # the API never exposes it, so this is the one place we drop to raw ORM
     feature_row = (
-        await db_session.execute(select(DfEngineActions).where(DfEngineActions.uid == feature_uid))
+        await db_session.execute(select(DfEngineFeatures).where(DfEngineFeatures.uid == feature_uid))
     ).scalar_one()
     feature_id = feature_row.id
     # Close out this transaction's REPEATABLE READ snapshot now, so the
@@ -91,7 +91,9 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     final_list = await authed_client.call("GET", URL)
     assert renamed not in response_names(final_list.json())
     remaining_mappings = (
-        await db_session.execute(select(DfEngineActionMappings).where(DfEngineActionMappings.action_id == feature_id))
+        await db_session.execute(
+            select(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.feature_id == feature_id)
+        )
     ).scalar_one_or_none()
     assert remaining_mappings is None
 

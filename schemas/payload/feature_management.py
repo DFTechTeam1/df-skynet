@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class FeaturePayload(BaseModel):
-    """Payload to create or fully replace a feature (`df_engine_actions` row).
+    """Payload to create or fully replace a feature (`df_engine_features` row).
 
     Used for both create and update — update replaces the full record, not a
     partial diff. `name` must be unique across all existing features.
@@ -30,7 +30,7 @@ class FeaturePayload(BaseModel):
     )
     is_active: bool = Field(
         default=True,
-        description="Whether this feature is available to be assigned to pages.",
+        description="Whether this feature is available to be assigned to menus.",
         examples=[True],
     )
     template_uids: list[str] = Field(

@@ -2,7 +2,7 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineActionMappings, DfEngineActions, DfEnginePromptTemplates
+from services.mysql.model import DfEngineFeaturePromptMappings, DfEngineFeatures, DfEnginePromptTemplates
 from tests.helpers import create_record, expected_user, find_by_name
 
 URL = "/api/prompt-management"
@@ -65,11 +65,11 @@ async def test_update_deactivating_removes_it_from_the_list(authed_client, db_se
 
 
 @pytest.mark.asyncio
-async def test_update_deactivating_removes_its_action_mappings(authed_client, db_session, user_id):
-    """200 OK; setting is_active False deletes the template's df_engine_action_mappings rows."""
+async def test_update_deactivating_removes_its_feature_mappings(authed_client, db_session, user_id):
+    """200 OK; setting is_active False deletes the template's df_engine_feature_prompt_mappings rows."""
     feature = await create_record(
         db_session,
-        DfEngineActions,
+        DfEngineFeatures,
         dict(
             uid=str(uuid4()),
             name=f"Feature {uuid4().hex[:8]}",
@@ -88,8 +88,8 @@ async def test_update_deactivating_removes_its_action_mappings(authed_client, db
     )
     await create_record(
         db_session,
-        DfEngineActionMappings,
-        dict(uid=str(uuid4()), action_id=feature.id, template_id=template.id),
+        DfEngineFeaturePromptMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, template_id=template.id),
     )
 
     resp = await authed_client.call(
@@ -103,7 +103,7 @@ async def test_update_deactivating_removes_its_action_mappings(authed_client, db
     remaining = (
         (
             await db_session.execute(
-                select(DfEngineActionMappings).where(DfEngineActionMappings.template_id == template.id)  # type: ignore
+                select(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.template_id == template.id)  # type: ignore
             )
         )
         .scalars()

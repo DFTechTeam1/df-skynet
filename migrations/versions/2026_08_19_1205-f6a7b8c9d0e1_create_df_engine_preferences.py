@@ -1,9 +1,11 @@
 """create df engine preferences
 
-Revision ID: 145f3944f4ec
-Revises: 2a9c5200f1ac
-Create Date: 2026-08-18 19:54:00.000000
+Revision ID: f6a7b8c9d0e1
+Revises: e5f6a7b8c9d0
+Create Date: 2026-08-19 12:05:00.000000
 
+Part of the squashed baseline (see a1b2c3d4e5f6) — unchanged from the
+original migration, just re-chained after the renamed tables.
 """
 
 from typing import Sequence, Union
@@ -14,8 +16,8 @@ from sqlalchemy.dialects.mysql import BIGINT, DECIMAL
 
 
 # revision identifiers, used by Alembic.
-revision: str = "145f3944f4ec"
-down_revision: Union[str, Sequence[str], None] = "2a9c5200f1ac"
+revision: str = "f6a7b8c9d0e1"
+down_revision: Union[str, Sequence[str], None] = "e5f6a7b8c9d0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
