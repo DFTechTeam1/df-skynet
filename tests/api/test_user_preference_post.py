@@ -1,7 +1,7 @@
 import pytest
 from tests.helpers import clear_preference_row
 
-URL = "/api/preferences"
+URL = "/api/user-preference"
 
 
 @pytest.mark.asyncio

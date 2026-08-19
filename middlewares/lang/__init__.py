@@ -1,9 +1,12 @@
+from contextvars import ContextVar
+
 from middlewares.lang.en.auth import AuthMessage as _EnAuth
 from middlewares.lang.en.common import CommonMessage as _EnCommon
 from middlewares.lang.en.equipment import EquipmentMessage as _EnEquipment
 from middlewares.lang.en.feature_management import (
     FeatureManagementMessage as _EnFeatureManagement,
 )
+from middlewares.lang.en.key_management import KeyManagementMessage as _EnKeyManagement
 from middlewares.lang.en.preference import PreferenceMessage as _EnPreference
 from middlewares.lang.en.prompt_template import (
     PromptTemplateMessage as _EnPromptTemplate,
@@ -14,6 +17,7 @@ from middlewares.lang.id.equipment import EquipmentMessage as _IdEquipment
 from middlewares.lang.id.feature_management import (
     FeatureManagementMessage as _IdFeatureManagement,
 )
+from middlewares.lang.id.key_management import KeyManagementMessage as _IdKeyManagement
 from middlewares.lang.id.preference import PreferenceMessage as _IdPreference
 from middlewares.lang.id.prompt_template import (
     PromptTemplateMessage as _IdPromptTemplate,
@@ -22,12 +26,18 @@ from middlewares.lang.id.prompt_template import (
 DEFAULT_LANG = "en"
 SUPPORTED_LANGUAGES = {"id", "en"}
 
+# Set by LanguageMiddleware per request. Response bodies (schemas/response.py)
+# read this to localize the default success message — unlike error responses,
+# they're built with no access to the `Request` object.
+current_lang: ContextVar[str] = ContextVar("current_lang", default=DEFAULT_LANG)
+
 MESSAGES: dict[str, dict[str, str]] = {
     "en": {
         **_EnAuth().message,
         **_EnCommon().message,
         **_EnEquipment().message,
         **_EnFeatureManagement().message,
+        **_EnKeyManagement().message,
         **_EnPreference().message,
         **_EnPromptTemplate().message,
     },
@@ -36,6 +46,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_IdCommon().message,
         **_IdEquipment().message,
         **_IdFeatureManagement().message,
+        **_IdKeyManagement().message,
         **_IdPreference().message,
         **_IdPromptTemplate().message,
     },

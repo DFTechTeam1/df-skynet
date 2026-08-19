@@ -3,7 +3,7 @@ from sqlalchemy import select
 from services.mysql.model import DfEnginePreferences
 from tests.helpers import clear_preference_row
 
-URL = "/api/preferences"
+URL = "/api/user-preference"
 
 
 @pytest.mark.asyncio
@@ -55,7 +55,7 @@ async def test_full_preference_lifecycle(authed_client, db_session, user_id):
     # duplicates the row, even after two sequential saves
     await db_session.commit()
     rows = (
-        (await db_session.execute(select(DfEnginePreferences).where(DfEnginePreferences.user_id == int(user_id))))
+        (await db_session.execute(select(DfEnginePreferences).where(DfEnginePreferences.user_id == int(user_id))))  # type: ignore
         .scalars()
         .all()
     )

@@ -13,7 +13,7 @@ from error import ServiceError, BaseError, DataConflictError
 from utils import local_time
 
 
-class PreferenceController(CoreDependencies):
+class UserPreferenceController(CoreDependencies):
     async def get_preference_row(self, user_id: int) -> Optional[DfEnginePreferences]:
         return (
             await self.db.execute(select(DfEnginePreferences).where(DfEnginePreferences.user_id == user_id))  # type: ignore
@@ -45,7 +45,7 @@ class PreferenceController(CoreDependencies):
         return PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
 
     @controller.get(
-        "/api/preferences",
+        "/user-preference",
         summary="Fetch the current user's preferences.",
         description=(
             "Returns the authenticated user's saved preferences (theme, accent, language, "
@@ -57,7 +57,7 @@ class PreferenceController(CoreDependencies):
         tags=["User Preference"],
         response_model=Response,
     )
-    async def preferences_to_fetch_user_preference(self) -> Response:
+    async def user_preferences_to_fetch_user_preference(self) -> Response:
         response = Response()
         try:
             response.data = await self.get_preference(int(self.user["user_id"]))
@@ -69,7 +69,7 @@ class PreferenceController(CoreDependencies):
         return response
 
     @controller.post(
-        "/api/preferences",
+        "/user-preference",
         summary="Create or update the current user's preferences.",
         description=(
             "Replaces the authenticated user's preferences with the full payload given — "
@@ -81,7 +81,7 @@ class PreferenceController(CoreDependencies):
         tags=["User Preference"],
         response_model=Response,
     )
-    async def preferences_to_update_user_preference(self, schema: PreferencePayload) -> Response:
+    async def user_preferences_to_update_user_preference(self, schema: PreferencePayload) -> Response:
         response = Response()
         try:
             response.data = await self.upsert_preference(int(self.user["user_id"]), schema)
