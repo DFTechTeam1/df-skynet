@@ -6,13 +6,15 @@ from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
-class DfEngineActionMappings(SQLModel, table=True):
-    __tablename__ = "df_engine_action_mappings"  # type: ignore
+class DfEngineFeaturePromptMappings(SQLModel, table=True):
+    __tablename__ = "df_engine_feature_prompt_mappings"  # type: ignore
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     uid: str = Field(sa_column=Column(CHAR(36), nullable=False, unique=True))
-    action_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_actions.id"), nullable=False))
+    feature_id: int = Field(
+        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_features.id"), nullable=False)
+    )
     template_id: int = Field(
         sa_column=Column(
             BIGINT(unsigned=True),
@@ -21,9 +23,9 @@ class DfEngineActionMappings(SQLModel, table=True):
         )
     )
 
-    df_engine_actions: Optional["DfEngineActions"] = Relationship(  # type: ignore
-        back_populates="df_engine_action_mappings"
+    df_engine_features: Optional["DfEngineFeatures"] = Relationship(  # type: ignore
+        back_populates="df_engine_feature_prompt_mappings"
     )
     df_engine_prompt_templates: Optional["DfEnginePromptTemplates"] = Relationship(  # type: ignore
-        back_populates="df_engine_action_mappings"
+        back_populates="df_engine_feature_prompt_mappings"
     )

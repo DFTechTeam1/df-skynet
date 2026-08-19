@@ -2,8 +2,8 @@ import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
 from services.mysql.model import (
-    DfEngineActionMappings,
-    DfEngineActions,
+    DfEngineFeaturePromptMappings,
+    DfEngineFeatures,
     DfEnginePromptTemplates,
 )
 from tests.helpers import create_record, response_names
@@ -58,8 +58,8 @@ async def test_delete_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_delete_blocked_while_mapped_to_an_action(authed_client, db_session, user_id):
-    """409 prompt_template_in_use when the template is still referenced by a df_engine_action_mappings row; template stays in the list."""
+async def test_delete_blocked_while_mapped_to_a_feature(authed_client, db_session, user_id):
+    """409 prompt_template_in_use when the template is still referenced by a df_engine_feature_prompt_mappings row; template stays in the list."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -70,19 +70,19 @@ async def test_delete_blocked_while_mapped_to_an_action(authed_client, db_sessio
             created_by=int(user_id),
         ),
     )
-    action = await create_record(
+    feature = await create_record(
         db_session,
-        DfEngineActions,
+        DfEngineFeatures,
         dict(
             uid=str(uuid4()),
-            name=f"Action {uuid4().hex[:8]}",
+            name=f"Feature {uuid4().hex[:8]}",
             created_by=int(user_id),
         ),
     )
     await create_record(
         db_session,
-        DfEngineActionMappings,
-        dict(uid=str(uuid4()), action_id=action.id, template_id=row.id),
+        DfEngineFeaturePromptMappings,
+        dict(uid=str(uuid4()), feature_id=feature.id, template_id=row.id),
     )
 
     resp = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)

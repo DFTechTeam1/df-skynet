@@ -1,20 +1,19 @@
 import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineFeatures, DfEnginePromptTemplates
+from services.mysql.model import DfEngineFeatures, DfEngineMenus
 from tests.helpers import create_record, expected_user, find_by_name
 
-URL = "/api/feature-management"
+URL = "/api/menu-management"
 
 
-async def _make_template(db_session, user_id):
+async def _make_feature(db_session, user_id):
     return await create_record(
         db_session,
-        DfEnginePromptTemplates,
+        DfEngineFeatures,
         dict(
             uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
+            name=f"Feature {uuid4().hex[:8]}",
             created_by=int(user_id),
         ),
     )
@@ -22,7 +21,7 @@ async def _make_template(db_session, user_id):
 
 @pytest.mark.asyncio
 async def test_create_success_returns_full_refreshed_list(authed_client):
-    """200 OK; response body is the refreshed feature list, with the new feature's fields as given."""
+    """200 OK; response body is the refreshed menu list, with the new menu's fields as given."""
     name = f"Create Test {uuid4().hex[:8]}"
     resp = await authed_client.call(
         "POST",
@@ -31,46 +30,44 @@ async def test_create_success_returns_full_refreshed_list(authed_client):
             "name": name,
             "description": "a desc",
             "is_active": True,
-            "template_uids": [],
+            "feature_uids": [],
         },
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], name)
     assert item["description"] == "a desc"
     assert item["is_active"] is True
-    assert item["templates"] == []
+    assert item["features"] == []
 
 
 @pytest.mark.asyncio
-async def test_create_defaults_is_active_true_and_no_templates_required(
-    authed_client,
-):
-    """200 OK; omitting is_active/description/template_uids falls back to active, null desc, no templates."""
+async def test_create_defaults_is_active_true_and_no_features_required(authed_client):
+    """200 OK; omitting is_active/description/feature_uids falls back to active, null desc, no features."""
     name = f"Create Defaults {uuid4().hex[:8]}"
     resp = await authed_client.call("POST", URL, json={"name": name})
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], name)
     assert item["is_active"] is True
     assert item["description"] is None
-    assert item["templates"] == []
+    assert item["features"] == []
 
 
 @pytest.mark.asyncio
-async def test_create_with_linked_templates(authed_client, db_session, user_id):
-    """200 OK; process links every given template_uid via a new df_engine_feature_prompt_mappings row in the same call."""
-    template_a = await _make_template(db_session, user_id)
-    template_b = await _make_template(db_session, user_id)
+async def test_create_with_linked_features(authed_client, db_session, user_id):
+    """200 OK; process links every given feature_uid via a new df_engine_menu_feature_mappings row in the same call."""
+    feature_a = await _make_feature(db_session, user_id)
+    feature_b = await _make_feature(db_session, user_id)
     name = f"Create Linked {uuid4().hex[:8]}"
 
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "template_uids": [template_a.uid, template_b.uid]},
+        json={"name": name, "feature_uids": [feature_a.uid, feature_b.uid]},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], name)
-    linked_uids = {t["template_uid"] for t in item["templates"]}
-    assert linked_uids == {template_a.uid, template_b.uid}
+    linked_uids = {f["feature_uid"] for f in item["features"]}
+    assert linked_uids == {feature_a.uid, feature_b.uid}
 
 
 @pytest.mark.asyncio
@@ -112,13 +109,13 @@ async def test_create_missing_required_name(authed_client):
 
 @pytest.mark.asyncio
 async def test_create_duplicate_name_conflict(authed_client, db_session, user_id):
-    """409 when `name` already belongs to another feature."""
+    """409 when `name` already belongs to another menu."""
     existing = await create_record(
         db_session,
-        DfEngineFeatures,
+        DfEngineMenus,
         dict(
             uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
+            name=f"Menu {uuid4().hex[:8]}",
             created_by=int(user_id),
         ),
     )
@@ -129,26 +126,26 @@ async def test_create_duplicate_name_conflict(authed_client, db_session, user_id
         raise_for_status=False,
     )
     assert resp.status_code == 409
-    assert resp.json()["message"] == resolve_message("feature_already_exists", "en")
+    assert resp.json()["message"] == resolve_message("menu_already_exists", "en")
 
 
 @pytest.mark.asyncio
-async def test_create_unknown_template_uid_is_422(authed_client):
-    """422; process rejects the whole request before inserting anything if a template_uid doesn't exist."""
+async def test_create_unknown_feature_uid_is_422(authed_client):
+    """422; process rejects the whole request before inserting anything if a feature_uid doesn't exist."""
     unknown_uid = str(uuid4())
     resp = await authed_client.call(
         "POST",
         URL,
         json={
-            "name": f"Bad Template {uuid4().hex[:8]}",
-            "template_uids": [unknown_uid],
+            "name": f"Bad Feature {uuid4().hex[:8]}",
+            "feature_uids": [unknown_uid],
         },
         raise_for_status=False,
     )
     assert resp.status_code == 422
     body = resp.json()
-    assert body["message"] == resolve_message("feature_template_not_found", "en")
-    assert body["error"]["template_uids.0"] == [resolve_message("prompt_template_not_found", "en")]
+    assert body["message"] == resolve_message("menu_feature_not_found", "en")
+    assert body["error"]["feature_uids.0"] == [resolve_message("feature_not_found", "en")]
 
 
 @pytest.mark.asyncio

@@ -166,7 +166,7 @@ Table df_engine_api_keys {
 }
 
 
-Table df_engine_pages {
+Table df_engine_menus {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
@@ -179,7 +179,7 @@ Table df_engine_pages {
 }
 
 
-Table df_engine_actions {
+Table df_engine_features {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
@@ -192,26 +192,24 @@ Table df_engine_actions {
 }
 
 
-Table df_engine_action_mappings {
+Table df_engine_feature_prompt_mappings {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
-    action_id integer [not null]
+    feature_id integer [not null]
     template_id integer [not null]
 }
 
 
-Table df_engine_feature_mappings {
+Table df_engine_menu_feature_mappings {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
-    action_id integer [not null]
-    page_id integer [not null]
+    feature_id integer [not null]
+    menu_id integer [not null]
 }
 
 
-Ref: df_engine_pages.id < df_engine_feature_mappings.page_id
-Ref: df_engine_actions.id < df_engine_feature_mappings.action_id
 
 
 Table df_engine_prompt_templates {
@@ -587,10 +585,10 @@ Ref: users.id < generation_favorite_files.favorited_by
 Ref: users.id < generation_prompts.created_by
 Ref: users.id < project_generation_shares.created_by
 Ref: users.id < storyboards.created_by
-Ref: users.id < df_engine_pages.created_by
-Ref: users.id < df_engine_pages.updated_by
-Ref: users.id < df_engine_actions.created_by
-Ref: users.id < df_engine_actions.updated_by
+Ref: users.id < df_engine_menus.created_by
+Ref: users.id < df_engine_menus.updated_by
+Ref: users.id < df_engine_features.created_by
+Ref: users.id < df_engine_features.updated_by
 Ref: users.id < df_engine_prompt_templates.created_by
 Ref: users.id < df_engine_prompt_templates.updated_by
 Ref: users.id < df_engine_preferences.user_id
@@ -639,5 +637,8 @@ Ref: employees.id < df_engine_api_keys.employee_id
 Ref: users.id < df_engine_api_keys.created_by
 Ref: users.id < df_engine_api_keys.updated_by
 Ref: df_engine_api_keys.id < generation_prompts.key_id
-Ref: df_engine_actions.id < df_engine_action_mappings.action_id
-Ref: df_engine_prompt_templates.id < df_engine_action_mappings.template_id
+Ref: df_engine_features.id < df_engine_feature_prompt_mappings.feature_id
+Ref: df_engine_prompt_templates.id < df_engine_feature_prompt_mappings.template_id
+
+Ref: df_engine_menus.id < df_engine_menu_feature_mappings.menu_id
+Ref: df_engine_features.id < df_engine_menu_feature_mappings.feature_id

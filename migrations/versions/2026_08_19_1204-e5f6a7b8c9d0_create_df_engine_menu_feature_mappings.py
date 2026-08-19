@@ -1,9 +1,12 @@
-"""create df engine action mappings
+"""create df engine menu feature mappings
 
-Revision ID: cf4a69dbb241
-Revises: 95bd21923c75
-Create Date: 2026-08-16 22:22:11.664791
+Revision ID: e5f6a7b8c9d0
+Revises: d4e5f6a7b8c9
+Create Date: 2026-08-19 12:04:00.000000
 
+Renamed from the legacy df_engine_feature_mappings table (page_id ->
+menu_id, action_id -> feature_id). Part of the squashed baseline (see
+a1b2c3d4e5f6).
 """
 
 from typing import Sequence, Union
@@ -14,31 +17,34 @@ from sqlalchemy.dialects.mysql import BIGINT
 
 
 # revision identifiers, used by Alembic.
-revision: str = "cf4a69dbb241"
-down_revision: Union[str, Sequence[str], None] = "95bd21923c75"
+revision: str = "e5f6a7b8c9d0"
+down_revision: Union[str, Sequence[str], None] = "d4e5f6a7b8c9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # template_id -> df_engine_prompt_templates.id is added as a deferred FK in the
-    # next migration (810f1b851db3), since df_engine_prompt_templates does not exist yet.
     op.create_table(
-        "df_engine_action_mappings",
+        "df_engine_menu_feature_mappings",
         sa.Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
         sa.Column("uid", sa.CHAR(36), nullable=False, unique=True),
         sa.Column(
-            "action_id",
+            "feature_id",
             BIGINT(unsigned=True),
-            sa.ForeignKey("df_engine_actions.id"),
+            sa.ForeignKey("df_engine_features.id"),
             nullable=False,
         ),
-        sa.Column("template_id", BIGINT(unsigned=True), nullable=False),
+        sa.Column(
+            "menu_id",
+            BIGINT(unsigned=True),
+            sa.ForeignKey("df_engine_menus.id"),
+            nullable=False,
+        ),
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_table("df_engine_action_mappings")
+    op.drop_table("df_engine_menu_feature_mappings")

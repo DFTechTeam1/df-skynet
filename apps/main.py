@@ -7,6 +7,7 @@ from apps.controller.common import CommonController  # noqa
 from apps.controller.feature_management import FeatureManagementController  # noqa
 from apps.controller.prompt_template import PromptTemplateController  # noqa
 from apps.controller.user_preference import UserPreferenceController  # noqa
+from apps.controller.menu_management import MenuManagementController  # noqa
 from apps.controller.api_key_management import APIKeyManagementController  # noqa
 from apps.controller.core import CoreDependencies, PlainDependencies
 from config.openapi import scalar_config
