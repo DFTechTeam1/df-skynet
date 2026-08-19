@@ -162,7 +162,7 @@ class FeatureManagementController(CoreDependencies):
         return map_template
 
     @controller.get(
-        "/api/feature-management",
+        "/feature-management",
         summary="List or search features.",
         description=(
             "Returns features (`df_engine_actions` rows), newest first — both active and "
@@ -202,7 +202,7 @@ class FeatureManagementController(CoreDependencies):
         return response
 
     @controller.get(
-        "/api/feature-management/{uid}",
+        "/feature-management/{uid}",
         summary="Detail of a feature.",
         description=(
             "Returns a single feature (`df_engine_actions` row) identified by `uid`, in "
@@ -235,7 +235,7 @@ class FeatureManagementController(CoreDependencies):
         return response
 
     @controller.post(
-        "/api/feature-management",
+        "/feature-management",
         summary="Create a feature.",
         description=(
             "Registers a new feature (`df_engine_actions` row) and, in the same call, "
@@ -292,7 +292,7 @@ class FeatureManagementController(CoreDependencies):
         return response
 
     @controller.patch(
-        "/api/feature-management/{uid}",
+        "/feature-management/{uid}",
         summary="Update a feature.",
         description=(
             "Replaces the feature identified by `uid` — the request body carries the full "
@@ -377,7 +377,7 @@ class FeatureManagementController(CoreDependencies):
         return response
 
     @controller.delete(
-        "/api/feature-management/{uid}",
+        "/feature-management/{uid}",
         summary="Delete a feature.",
         description=(
             "Permanently deletes the feature identified by `uid`, along with every "

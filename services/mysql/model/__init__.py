@@ -1,6 +1,7 @@
 from services.mysql.model.cities import Cities
 from services.mysql.model.countries import Countries
 from services.mysql.model.df_engine_action_mappings import DfEngineActionMappings
+from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model.df_engine_actions import DfEngineActions
 from services.mysql.model.df_engine_feature_mappings import DfEngineFeatureMappings
 from services.mysql.model.df_engine_pages import DfEnginePages
@@ -23,6 +24,7 @@ __all__ = [
     "Countries",
     "DfEngineActionMappings",
     "DfEngineActions",
+    "DfEngineApiKeys",
     "DfEngineFeatureMappings",
     "DfEnginePages",
     "DfEnginePreferences",
