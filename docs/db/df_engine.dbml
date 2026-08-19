@@ -149,15 +149,20 @@ Enum language_types {
 
 Table df_engine_api_keys {
     id integer [pk, increment]
+    created_at timestamp [default: `now()`]
     expired_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
     limit_usage decimal(10, 2) [default: null]
     limit_reset limit_resets [default: null]
     uid varchar(36) [not null, unique]
-    key varchar(255) [not null, unique]
-    name varchar(255) [not null, unique]
+    key text [not null]
+    name varchar(255) [not null, note: "Unique among non-deleted rows only (app-enforced, not a DB constraint) — soft-deleting a key frees its name for reuse."]
+    description text [default: null]
     employee_id integer [not null]
     is_active boolean [not null, default: true]
-    description text [default: null]
+    updated_at timestamp [default: null]
+    created_by integer [not null]
+    updated_by integer [default: null]
+    deleted_at timestamp [default: null, note: "Soft delete — other tables may reference this row's id."]
 }
 
 
@@ -631,6 +636,8 @@ Ref: generation_galleries.id < storyboard_motions.gallery_id
 
 
 Ref: employees.id < df_engine_api_keys.employee_id
+Ref: users.id < df_engine_api_keys.created_by
+Ref: users.id < df_engine_api_keys.updated_by
 Ref: df_engine_api_keys.id < generation_prompts.key_id
 Ref: df_engine_actions.id < df_engine_action_mappings.action_id
 Ref: df_engine_prompt_templates.id < df_engine_action_mappings.template_id

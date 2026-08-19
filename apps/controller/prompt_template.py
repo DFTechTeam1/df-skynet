@@ -121,7 +121,7 @@ class PromptTemplateController(CoreDependencies):
         return self.format_response(serialize(record), permissions)
 
     @controller.get(
-        "/api/prompt-management/{uid}",
+        "/prompt-management/{uid}",
         summary="Details of a prompt templates.",
         description=(
             "Returns a single active prompt template identified by `uid`, in the exact "
@@ -156,7 +156,7 @@ class PromptTemplateController(CoreDependencies):
         return response
 
     @controller.get(
-        "/api/prompt-management",
+        "/prompt-management",
         summary="List or search prompt templates.",
         description=(
             "Returns active prompt templates, newest first. Pass `name` to search — only "
@@ -193,7 +193,7 @@ class PromptTemplateController(CoreDependencies):
         return response
 
     @controller.post(
-        "/api/prompt-management",
+        "/prompt-management",
         summary="Create a prompt template.",
         description=(
             "Registers a reusable prompt template holding the raw prompt text that will "
@@ -244,7 +244,7 @@ class PromptTemplateController(CoreDependencies):
         return response
 
     @controller.patch(
-        "/api/prompt-management/{uid}",
+        "/prompt-management/{uid}",
         summary="Update a prompt template.",
         description=(
             "Replaces the prompt template identified by `uid` — the request body carries "
@@ -295,7 +295,7 @@ class PromptTemplateController(CoreDependencies):
         return response
 
     @controller.delete(
-        "/api/prompt-management/{uid}",
+        "/prompt-management/{uid}",
         summary="Delete a prompt template.",
         description=(
             "Permanently deletes the prompt template identified by `uid`. Fails with a "
