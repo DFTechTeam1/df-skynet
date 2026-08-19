@@ -1,7 +1,8 @@
 import pytest
 from uuid import uuid4
+from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEnginePromptTemplates
+from services.mysql.model import DfEngineActionMappings, DfEngineActions, DfEnginePromptTemplates
 from tests.helpers import create_record, expected_user, find_by_name
 
 URL = "/api/prompt-management"
@@ -61,6 +62,54 @@ async def test_update_deactivating_removes_it_from_the_list(authed_client, db_se
     )
     assert resp.status_code == 200
     assert all(item["name"] != row.name for item in resp.json()["data"])
+
+
+@pytest.mark.asyncio
+async def test_update_deactivating_removes_its_action_mappings(authed_client, db_session, user_id):
+    """200 OK; setting is_active False deletes the template's df_engine_action_mappings rows."""
+    feature = await create_record(
+        db_session,
+        DfEngineActions,
+        dict(
+            uid=str(uuid4()),
+            name=f"Feature {uuid4().hex[:8]}",
+            created_by=int(user_id),
+        ),
+    )
+    template = await create_record(
+        db_session,
+        DfEnginePromptTemplates,
+        dict(
+            uid=str(uuid4()),
+            name=f"Prompt {uuid4().hex[:8]}",
+            prompt="a prompt",
+            created_by=int(user_id),
+        ),
+    )
+    await create_record(
+        db_session,
+        DfEngineActionMappings,
+        dict(uid=str(uuid4()), action_id=feature.id, template_id=template.id),
+    )
+
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{template.uid}",
+        json={"name": template.name, "prompt": template.prompt, "is_active": False},
+    )
+    assert resp.status_code == 200
+    await db_session.commit()
+
+    remaining = (
+        (
+            await db_session.execute(
+                select(DfEngineActionMappings).where(DfEngineActionMappings.template_id == template.id)  # type: ignore
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert remaining == []
 
 
 @pytest.mark.asyncio

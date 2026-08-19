@@ -3,13 +3,13 @@ from typing import Any, Optional
 from uuid import uuid4, UUID
 from fastapi import status, Depends, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.prompt_template import PromptTemplatePayload
-from services.mysql.model import DfEnginePromptTemplates, Users, Employees
+from services.mysql.model import DfEnginePromptTemplates, DfEngineActionMappings, Users, Employees
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError
 from utils.serializer import serialize
@@ -252,7 +252,9 @@ class PromptTemplateController(CoreDependencies):
             "diff. `name` must remain unique across all existing templates. The record's "
             "`updated_by` is taken from the authenticated user resolved from the bearer "
             "token, not from the request body. Returns the full, up-to-date list of "
-            "prompt templates."
+            "prompt templates. Setting `is_active` to `false` also removes any "
+            "`df_engine_action_mappings` rows linking this template to features, so it "
+            "stops appearing in feature-management's template lists."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Prompt Template Management"],
@@ -279,6 +281,13 @@ class PromptTemplateController(CoreDependencies):
             prompt_template.is_active = schema.is_active
             prompt_template.prompt = schema.prompt
             prompt_template.updated_by = int(self.user["user_id"])
+
+            if not schema.is_active:
+                await self.db.execute(
+                    delete(DfEngineActionMappings).where(
+                        DfEngineActionMappings.template_id == prompt_template.id  # type: ignore
+                    )
+                )
 
             try:
                 await self.db.flush()
