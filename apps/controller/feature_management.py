@@ -66,6 +66,8 @@ class FeatureManagementController(CoreDependencies):
         templates = []
         for mapping in feature.get("df_engine_action_mappings", []):
             template = mapping.get("df_engine_prompt_templates", {})
+            if not template.get("is_active"):
+                continue
             templates.append(
                 {
                     "created_at": format_datetime(template.get("created_at")),
@@ -170,8 +172,10 @@ class FeatureManagementController(CoreDependencies):
             "prompt templates. Pass `name` to search — only features whose name contains "
             "that text (case-insensitive) are returned, in the exact same shape as the "
             "unfiltered list. Each feature includes a nested `templates` array built from "
-            "`df_engine_action_mappings` — one feature can list many templates, and the "
-            "same template can appear under many different features. Each feature also "
+            "`df_engine_action_mappings`, filtered to active templates only (inactive ones "
+            "are still mapped internally but omitted from this array) — one feature can "
+            "list many templates, and the same template can appear under many different "
+            "features. Each feature also "
             "includes its resolved `creater` / `updater` and an `action` block reflecting "
             "which feature-management actions the current user is permitted to perform."
         ),

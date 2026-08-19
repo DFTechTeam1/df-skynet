@@ -225,6 +225,40 @@ async def test_templates_array_reflects_linked_rows(authed_client, db_session, u
 
 
 @pytest.mark.asyncio
+async def test_templates_array_excludes_inactive_mapped_templates(authed_client, db_session, user_id):
+    """200 OK; `templates` omits a mapped template whose is_active is False, even though the mapping row still exists."""
+    feature = await create_record(
+        db_session,
+        DfEngineActions,
+        dict(
+            uid=str(uuid4()),
+            name=f"Feature {uuid4().hex[:8]}",
+            created_by=int(user_id),
+        ),
+    )
+    inactive_template = await create_record(
+        db_session,
+        DfEnginePromptTemplates,
+        dict(
+            uid=str(uuid4()),
+            name=f"Prompt {uuid4().hex[:8]}",
+            prompt="a prompt",
+            is_active=False,
+            created_by=int(user_id),
+        ),
+    )
+    await create_record(
+        db_session,
+        DfEngineActionMappings,
+        dict(uid=str(uuid4()), action_id=feature.id, template_id=inactive_template.id),
+    )
+
+    resp = await authed_client.call("GET", URL)
+    item = find_by_name(resp.json()["data"], feature.name)
+    assert item["templates"] == []
+
+
+@pytest.mark.asyncio
 async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", URL, raise_for_status=False)
