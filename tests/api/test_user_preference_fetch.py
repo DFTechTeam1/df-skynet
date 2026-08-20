@@ -33,13 +33,13 @@ async def test_fetch_returns_saved_values_when_a_row_exists(authed_client, db_se
         "language": "indonesia",
         "default_aspect_ratio": "1:1",
         "default_size": "2K",
-        "confirm_before_spending": 1.25,
+        "confirm_before_spending": "over_0.1",
     }
     await authed_client.call("POST", URL, json=payload)
 
     resp = await authed_client.call("GET", URL)
     assert resp.status_code == 200
-    assert resp.json()["data"] == payload
+    assert resp.json()["data"] == dict(payload, confirm_before_spending="Over 0.1")
 
 
 @pytest.mark.asyncio

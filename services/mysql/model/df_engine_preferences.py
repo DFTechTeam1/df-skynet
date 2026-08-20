@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import DateTime, DECIMAL, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
@@ -18,7 +18,7 @@ class DfEnginePreferences(SQLModel, table=True):
     language: str = Field(default="english", sa_column=Column(String(20), nullable=False))
     default_aspect_ratio: str = Field(default="16:9", sa_column=Column(String(20), nullable=False))
     default_size: str = Field(default="4K", sa_column=Column(String(20), nullable=False))
-    confirm_before_spending: float = Field(default=0.50, sa_column=Column(DECIMAL(10, 2), nullable=False))
+    confirm_before_spending: str = Field(default="over_0.5", sa_column=Column(String(255), nullable=False))
 
     users: Optional["Users"] = Relationship(  # type: ignore
         back_populates="df_engine_preferences", sa_relationship_kwargs={"uselist": False}

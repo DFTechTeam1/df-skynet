@@ -32,6 +32,21 @@ class SizeEnum(str, Enum):
     FOUR_K = "4K"
 
 
+class ConfirmBeforeSpendingEnum(str, Enum):
+    OVER_0_5 = "over_0.5"
+    OFF = "off"
+    OVER_0_1 = "over_0.1"
+    ALWAYS = "always"
+
+
+CONFIRM_BEFORE_SPENDING_LABELS: dict[str, str] = {
+    ConfirmBeforeSpendingEnum.OVER_0_5.value: "Over 0.5",
+    ConfirmBeforeSpendingEnum.OFF.value: "Off",
+    ConfirmBeforeSpendingEnum.OVER_0_1.value: "Over 0.1",
+    ConfirmBeforeSpendingEnum.ALWAYS.value: "Always",
+}
+
+
 class PreferencePayload(BaseModel):
     """Payload to create or fully replace the current user's preferences.
 
@@ -47,9 +62,8 @@ class PreferencePayload(BaseModel):
         default=AspectRatioEnum.RATIO_16_9, description="New generations start with this ratio."
     )
     default_size: SizeEnum = Field(default=SizeEnum.FOUR_K, description="Default output resolution.")
-    confirm_before_spending: float = Field(
-        default=0.5,
-        ge=0,
+    confirm_before_spending: ConfirmBeforeSpendingEnum = Field(
+        default=ConfirmBeforeSpendingEnum.OVER_0_5,
         description="Ask before any generation that costs more than this.",
-        examples=[0.5],
+        examples=["over_0.5"],
     )
