@@ -89,8 +89,8 @@ async def test_fetch_detail_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_detail_inactive_row_is_404(authed_client, db_session, user_id):
-    """404 prompt_template_not_found; detail only serves active templates, same as the list endpoint."""
+async def test_fetch_detail_inactive_row_is_still_fetchable(authed_client, db_session, user_id):
+    """200 OK; detail serves inactive templates too, same as the list endpoint — needed to view one before reactivating it."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -102,9 +102,9 @@ async def test_fetch_detail_inactive_row_is_404(authed_client, db_session, user_
             created_by=int(user_id),
         ),
     )
-    resp = await authed_client.call("GET", f"{URL}/{row.uid}", raise_for_status=False)
-    assert resp.status_code == 404
-    assert resp.json()["message"] == resolve_message("prompt_template_not_found", "en")
+    resp = await authed_client.call("GET", f"{URL}/{row.uid}")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["is_active"] is False
 
 
 @pytest.mark.asyncio
