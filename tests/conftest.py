@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+from typing import Any, Optional
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
@@ -153,3 +155,54 @@ async def wrong_position_employee_uid(db_session) -> str:
 
     row = await _create_employee(db_session, status=1, position_id=position.id)
     return row.uid
+
+
+class _FakeOpenRouterResponse:
+    """Stands in for the subset of `httpx.Response` that
+    `APIKeyManagementController.call_openrouter` actually reads."""
+
+    def __init__(self, status_code: int, json_data: Optional[dict[str, Any]] = None):
+        self.status_code = status_code
+        self._json_data = json_data
+        self.content = b"{}" if json_data is not None else b""
+        self.headers: dict[str, str] = {}
+        self.request = SimpleNamespace(url="https://openrouter.ai/api/v1/keys")
+
+    def json(self) -> dict[str, Any]:
+        return self._json_data or {}
+
+
+class _FakeOpenRouterCaller:
+    """Drop-in replacement for `services.api_caller.APICaller` scoped to
+    `apps.controller.api_key_management` only — fabricates OpenRouter
+    responses instead of making a real HTTP call, so tests never touch a
+    real OpenRouter account. POST /keys returns a fresh, unique key/hash
+    pair each call; PATCH/DELETE return an empty 200 (matching a real
+    disable/delete call)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> "_FakeOpenRouterCaller":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def call(self, method: str, path: str, json: Optional[dict[str, Any]] = None, **kwargs: Any):
+        if method == "POST":
+            return _FakeOpenRouterResponse(
+                201,
+                {"key": f"sk-or-v1-fake{uuid4().hex}", "data": {"hash": uuid4().hex}},
+            )
+        return _FakeOpenRouterResponse(200)
+
+
+@pytest.fixture
+def mock_openrouter(monkeypatch):
+    """Bypasses every real OpenRouter call made through
+    `apps.controller.api_key_management.call_openrouter` — the controller
+    module's own `APICaller` reference is replaced, so this has no effect on
+    `client`/`authed_client` (which hold their own `services.api_caller.APICaller`
+    reference for talking to this app itself)."""
+    monkeypatch.setattr("apps.controller.api_key_management.APICaller", _FakeOpenRouterCaller)

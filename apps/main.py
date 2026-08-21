@@ -13,6 +13,7 @@ from apps.controller.core import CoreDependencies, PlainDependencies
 from config.openapi import scalar_config
 from error.register import register_exception_handlers
 from middlewares.language import LanguageMiddleware
+from apps.secret import CORS_ALLOWED_ORIGIN_1
 
 app = FastAPI(title="DF-Skynet", version="1.0", docs_url=None, redoc_url=None)
 
@@ -21,6 +22,7 @@ app.openapi = lambda: scalar_config(app)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
+    allow_origins=[CORS_ALLOWED_ORIGIN_1],
     allow_methods=["*"],
     allow_headers=["*"],
 )

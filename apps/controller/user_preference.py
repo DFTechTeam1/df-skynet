@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
-from schemas.payload.preference import PreferencePayload
+from schemas.payload.preference import PreferencePayload, CONFIRM_BEFORE_SPENDING_LABELS
 from services.mysql.model import DfEnginePreferences
 from log import logging
 from error import ServiceError, BaseError, DataConflictError
@@ -19,11 +19,17 @@ class UserPreferenceController(CoreDependencies):
             await self.db.execute(select(DfEnginePreferences).where(DfEnginePreferences.user_id == user_id))  # type: ignore
         ).scalar_one_or_none()
 
+    def _format_response(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["confirm_before_spending"] = CONFIRM_BEFORE_SPENDING_LABELS[data["confirm_before_spending"]]
+        return data
+
     async def get_preference(self, user_id: int) -> dict[str, Any]:
         row = await self.get_preference_row(user_id)
         if row is None:
-            return PreferencePayload().model_dump(mode="json")
-        return PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
+            return self._format_response(PreferencePayload().model_dump(mode="json"))
+        return self._format_response(
+            PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
+        )
 
     async def upsert_preference(self, user_id: int, schema: PreferencePayload) -> dict[str, Any]:
         row = await self.get_preference_row(user_id)
@@ -42,7 +48,9 @@ class UserPreferenceController(CoreDependencies):
         except IntegrityError:
             raise DataConflictError(message="preference_already_exists")
 
-        return PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
+        return self._format_response(
+            PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
+        )
 
     @controller.get(
         "/user-preference",

@@ -24,15 +24,16 @@ async def test_full_preference_lifecycle(authed_client, db_session, user_id):
         "language": "indonesia",
         "default_aspect_ratio": "1:1",
         "default_size": "2K",
-        "confirm_before_spending": 1.0,
+        "confirm_before_spending": "over_0.1",
     }
+    first_response = dict(first, confirm_before_spending="Over 0.1")
     create_resp = await authed_client.call("POST", URL, json=first)
     assert create_resp.status_code == 200
-    assert create_resp.json()["data"] == first
+    assert create_resp.json()["data"] == first_response
 
     # 3. fetch reflects the saved values
     fetch_resp = await authed_client.call("GET", URL)
-    assert fetch_resp.json()["data"] == first
+    assert fetch_resp.json()["data"] == first_response
 
     # 4. second save (update) — different values across every field
     second = {
@@ -41,15 +42,16 @@ async def test_full_preference_lifecycle(authed_client, db_session, user_id):
         "language": "english",
         "default_aspect_ratio": "9:16",
         "default_size": "1K",
-        "confirm_before_spending": 0.75,
+        "confirm_before_spending": "off",
     }
+    second_response = dict(second, confirm_before_spending="Off")
     update_resp = await authed_client.call("POST", URL, json=second)
     assert update_resp.status_code == 200
-    assert update_resp.json()["data"] == second
+    assert update_resp.json()["data"] == second_response
 
     # 5. fetch reflects the latest state, not the first save
     final_fetch = await authed_client.call("GET", URL)
-    assert final_fetch.json()["data"] == second
+    assert final_fetch.json()["data"] == second_response
 
     # 6. exactly one row exists for this user — POST upserts, it never
     # duplicates the row, even after two sequential saves
@@ -73,7 +75,7 @@ async def test_invalid_update_leaves_previous_value_intact(authed_client, db_ses
         "language": "english",
         "default_aspect_ratio": "16:9",
         "default_size": "1K",
-        "confirm_before_spending": 0.5,
+        "confirm_before_spending": "over_0.5",
     }
     await authed_client.call("POST", URL, json=valid)
 
@@ -82,4 +84,4 @@ async def test_invalid_update_leaves_previous_value_intact(authed_client, db_ses
     assert bad_resp.status_code == 422
 
     fetch_resp = await authed_client.call("GET", URL)
-    assert fetch_resp.json()["data"] == valid
+    assert fetch_resp.json()["data"] == dict(valid, confirm_before_spending="Over 0.5")

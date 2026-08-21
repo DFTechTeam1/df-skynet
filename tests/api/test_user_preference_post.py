@@ -15,7 +15,7 @@ async def test_post_creates_a_row_on_first_write(authed_client, db_session, user
         "language": "indonesia",
         "default_aspect_ratio": "1:1",
         "default_size": "2K",
-        "confirm_before_spending": 1.25,
+        "confirm_before_spending": "over_0.1",
     }
     resp = await authed_client.call("POST", URL, json=payload)
     assert resp.status_code == 200
@@ -34,15 +34,15 @@ async def test_post_updates_the_existing_row_instead_of_duplicating(authed_clien
         "language": "english",
         "default_aspect_ratio": "16:9",
         "default_size": "1K",
-        "confirm_before_spending": 0.5,
+        "confirm_before_spending": "over_0.5",
     }
     await authed_client.call("POST", URL, json=first)
 
-    second = dict(first, theme="light", confirm_before_spending=2.0)
+    second = dict(first, theme="light", confirm_before_spending="always")
     resp = await authed_client.call("POST", URL, json=second)
     assert resp.status_code == 200
     assert resp.json()["data"]["theme"] == "light"
-    assert resp.json()["data"]["confirm_before_spending"] == 2.0
+    assert resp.json()["data"]["confirm_before_spending"] == "Always"
 
     fetch = await authed_client.call("GET", URL)
     assert fetch.json()["data"]["theme"] == "light"
@@ -56,9 +56,9 @@ async def test_post_invalid_enum_is_422(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_post_negative_confirm_before_spending_is_422(authed_client):
-    """422 when confirm_before_spending is negative."""
-    resp = await authed_client.call("POST", URL, json={"confirm_before_spending": -1}, raise_for_status=False)
+async def test_post_invalid_confirm_before_spending_is_422(authed_client):
+    """422 when confirm_before_spending isn't one of the allowed enum values."""
+    resp = await authed_client.call("POST", URL, json={"confirm_before_spending": "over_9000"}, raise_for_status=False)
     assert resp.status_code == 422
 
 
