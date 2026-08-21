@@ -146,8 +146,8 @@ async def test_delete_blocked_then_succeeds_after_unmapping(authed_client, db_se
 
 
 @pytest.mark.asyncio
-async def test_search_and_active_filter_compose_correctly(authed_client):
-    """200 OK; name search returns only active-matching templates, excluding an inactive one with a matching prefix."""
+async def test_search_matches_regardless_of_active_status(authed_client):
+    """200 OK; name search returns matching templates whether active or inactive."""
     prefix = f"Report{uuid4().hex[:8]}"
     active_a = f"{prefix}-A"
     active_b = f"{prefix}-B"
@@ -162,7 +162,7 @@ async def test_search_and_active_filter_compose_correctly(authed_client):
 
     assert active_a in found
     assert active_b in found
-    assert inactive_c not in found
+    assert inactive_c in found
 
 
 @pytest.mark.asyncio

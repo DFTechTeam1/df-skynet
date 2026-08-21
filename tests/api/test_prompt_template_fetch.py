@@ -10,17 +10,17 @@ URL = "/api/prompt-management"
 
 @pytest.mark.asyncio
 async def test_fetch_all_prompt_templates(authed_client):
-    """200 OK; returns a list of active-only templates when no name filter is given."""
+    """200 OK; returns the list of templates when no name filter is given."""
     resp = await authed_client.call("GET", URL)
     body = resp.json()
     assert resp.status_code == 200
     assert body["message"] == "Success"
-    assert all(item["is_active"] is True for item in body["data"])
+    assert isinstance(body["data"], list)
 
 
 @pytest.mark.asyncio
-async def test_fetch_prompt_templates_inactive_row_is_excluded(authed_client, db_session, user_id):
-    """200 OK; inactive templates are excluded from the unfiltered list, unlike the feature-management list."""
+async def test_fetch_prompt_templates_includes_inactive_row(authed_client, db_session, user_id):
+    """200 OK; inactive templates are included in the unfiltered list, same as feature-management's list."""
     inactive = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -35,8 +35,9 @@ async def test_fetch_prompt_templates_inactive_row_is_excluded(authed_client, db
     resp = await authed_client.call("GET", URL)
     body = resp.json()
     assert resp.status_code == 200
-    assert all(item["is_active"] is True for item in body["data"])
-    assert inactive.name not in response_names(body)
+    assert inactive.name in response_names(body)
+    item = find_by_name(body["data"], inactive.name)
+    assert item["is_active"] is False
 
 
 @pytest.mark.asyncio
@@ -107,8 +108,8 @@ async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_name_search_excludes_inactive_rows(authed_client, db_session, user_id):
-    """200 OK; `name` filter still excludes inactive templates even when they match the search text."""
+async def test_name_search_includes_inactive_rows(authed_client, db_session, user_id):
+    """200 OK; `name` filter still matches inactive templates, same as active ones."""
     prefix = f"Report{uuid4().hex[:8]}"
     active = await create_record(
         db_session,
@@ -136,7 +137,7 @@ async def test_name_search_excludes_inactive_rows(authed_client, db_session, use
     resp = await authed_client.call("GET", URL, params={"name": prefix})
     found = response_names(resp.json())
     assert active.name in found
-    assert inactive.name not in found
+    assert inactive.name in found
 
 
 @pytest.mark.asyncio
