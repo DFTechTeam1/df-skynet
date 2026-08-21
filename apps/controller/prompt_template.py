@@ -58,18 +58,16 @@ class PromptTemplateController(CoreDependencies):
         return template
 
     async def prompt_templates(self, name: Optional[str] = None) -> list[dict[str, Any]]:
-        """Fetch active prompt templates (newest first) shaped for the frontend:
-        formatted timestamps, resolved `creator`/`updater`, and an `action`
-        block reflecting what the current user is permitted to do. Shared by
-        every endpoint below so each mutation can hand back fresh, complete
-        state instead of the frontend re-fetching separately.
+        """Fetch prompt templates (active and inactive, newest first) shaped
+        for the frontend: formatted timestamps, resolved `creator`/`updater`,
+        and an `action` block reflecting what the current user is permitted
+        to do. Shared by every endpoint below so each mutation can hand back
+        fresh, complete state instead of the frontend re-fetching separately.
 
         `name`, if given, filters to templates whose name contains it
         (case-insensitive) — this is what backs the search endpoint.
         """
-        query = select(DfEnginePromptTemplates).where(
-            DfEnginePromptTemplates.is_active == True  # type: ignore
-        )
+        query = select(DfEnginePromptTemplates)
         if name:
             query = query.where(DfEnginePromptTemplates.name.ilike(f"{name}%"))  # type: ignore
 
@@ -101,15 +99,14 @@ class PromptTemplateController(CoreDependencies):
         return record
 
     async def prompt_template_detail(self, uid: UUID) -> dict[str, Any]:
-        """Fetch a single active prompt template by `uid`, shaped identically
-        to an entry from `prompt_templates()`.
+        """Fetch a single prompt template by `uid` (active or inactive),
+        shaped identically to an entry from `prompt_templates()`.
         """
         record = (
             await self.db.execute(
                 select(DfEnginePromptTemplates)
                 .where(
                     DfEnginePromptTemplates.uid == str(uid),  # type: ignore
-                    DfEnginePromptTemplates.is_active == True,  # type: ignore
                 )
                 .options(*self.query_options())  # type: ignore
             )
@@ -124,7 +121,7 @@ class PromptTemplateController(CoreDependencies):
         "/prompt-management/{uid}",
         summary="Details of a prompt templates.",
         description=(
-            "Returns a single active prompt template identified by `uid`, in the exact "
+            "Returns a single prompt template identified by `uid` (active or inactive), in the exact "
             "same shape as an entry from the list endpoint. Includes its resolved "
             "`creator` / `updater` (`image` from the user, `nickname` from their linked "
             "employee record) and an `action` block reflecting which prompt-template "
@@ -159,7 +156,7 @@ class PromptTemplateController(CoreDependencies):
         "/prompt-management",
         summary="List or search prompt templates.",
         description=(
-            "Returns active prompt templates, newest first. Pass `name` to search — only "
+            "Returns prompt templates (active and inactive), newest first. Pass `name` to search — only "
             "templates whose name contains that text (case-insensitive) are returned, in "
             "the exact same shape as the unfiltered list. Each record includes its "
             "resolved `creator` / `updater` (`image` from the user, `nickname` from "
@@ -216,7 +213,6 @@ class PromptTemplateController(CoreDependencies):
         response = Response()
         try:
             prompt_template = DfEnginePromptTemplates(
-                uid=str(uuid4()),
                 name=schema.name,
                 description=schema.description,
                 is_active=schema.is_active,
@@ -227,12 +223,6 @@ class PromptTemplateController(CoreDependencies):
             try:
                 await self.db.flush()
             except IntegrityError:
-                # No manual rollback here — get_db()'s own except-clause already
-                # rolls back the whole request once this propagates. A second,
-                # redundant rollback here previously discarded more than this
-                # request's own failed write under nested-savepoint (test)
-                # transactions, since the session had nothing left to roll back
-                # to by the time get_db's wrapper ran.
                 raise DataConflictError(message="prompt_template_already_exists")
 
             response.data = await self.prompt_templates()

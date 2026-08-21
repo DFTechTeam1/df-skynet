@@ -42,8 +42,8 @@ async def test_update_full_replace(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_update_deactivating_removes_it_from_the_list(authed_client, db_session, user_id):
-    """200 OK; setting is_active False drops the template from the refreshed (active-only) list."""
+async def test_update_deactivating_keeps_it_in_the_list(authed_client, db_session, user_id):
+    """200 OK; setting is_active False keeps the template in the refreshed list, now flagged inactive."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -61,7 +61,8 @@ async def test_update_deactivating_removes_it_from_the_list(authed_client, db_se
         json={"name": row.name, "prompt": row.prompt, "is_active": False},
     )
     assert resp.status_code == 200
-    assert all(item["name"] != row.name for item in resp.json()["data"])
+    item = find_by_name(resp.json()["data"], row.name)
+    assert item["is_active"] is False
 
 
 @pytest.mark.asyncio
