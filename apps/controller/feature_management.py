@@ -20,7 +20,7 @@ from services.mysql.model import (
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils.serializer import serialize
-from utils.formatter import format_datetime, format_creator
+from utils.formatter import format_datetime, format_user_employees
 # from apps.dependency.permission import require_permissions
 
 
@@ -61,8 +61,8 @@ class FeatureManagementController(CoreDependencies):
     def format_response(self, feature: dict[str, Any], permissions: list[str]) -> dict[str, Any]:
         feature["created_at"] = format_datetime(feature["created_at"])
         feature["updated_at"] = format_datetime(feature["updated_at"])
-        feature["creater"] = format_creator(feature["created_by_user"])
-        feature["updater"] = format_creator(feature["updated_by_user"])
+        feature["creator"] = format_user_employees(feature["created_by_user"])
+        feature["updater"] = format_user_employees(feature["updated_by_user"])
 
         templates = []
         for mapping in feature.get("df_engine_feature_prompt_mappings", []):
@@ -78,8 +78,8 @@ class FeatureManagementController(CoreDependencies):
                     "description": template.get("description"),
                     "prompt": template.get("prompt"),
                     "is_active": template.get("is_active"),
-                    "creater": format_creator(template.get("created_by_user")),
-                    "updater": format_creator(template.get("updated_by_user")),
+                    "creator": format_user_employees(template.get("created_by_user")),
+                    "updater": format_user_employees(template.get("updated_by_user")),
                 }
             )
         feature["templates"] = templates
@@ -177,7 +177,7 @@ class FeatureManagementController(CoreDependencies):
             "are still mapped internally but omitted from this array) — one feature can "
             "list many templates, and the same template can appear under many different "
             "features. Each feature also "
-            "includes its resolved `creater` / `updater` and an `action` block reflecting "
+            "includes its resolved `creator` / `updater` and an `action` block reflecting "
             "which feature-management actions the current user is permitted to perform."
         ),
         status_code=status.HTTP_200_OK,
@@ -212,7 +212,7 @@ class FeatureManagementController(CoreDependencies):
         description=(
             "Returns a single feature (`df_engine_features` row) identified by `uid`, in "
             "the exact same shape as one item from the list endpoint — including its "
-            "nested `templates` array, resolved `creater` / `updater`, and `action` block. "
+            "nested `templates` array, resolved `creator` / `updater`, and `action` block. "
             "404s if no feature matches `uid`."
         ),
         status_code=status.HTTP_200_OK,

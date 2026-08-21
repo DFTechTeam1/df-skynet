@@ -157,7 +157,7 @@ async def test_name_search_empty_string_is_a_validation_error(authed_client):
 
 @pytest.mark.asyncio
 async def test_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
-    """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creater/updater are exposed instead."""
+    """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creator/updater are exposed instead."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -168,7 +168,7 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
             created_by=int(user_id),
         ),
     )
-    creater = await expected_user(db_session, user_id)
+    creator = await expected_user(db_session, user_id)
 
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
@@ -178,14 +178,14 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
     assert "updated_by" not in item
     assert "created_by_user" not in item
     assert "updated_by_user" not in item
-    assert item["creater"] == creater
-    assert set(item["creater"].keys()) == {"image", "nickname"}
+    assert item["creator"] == creator
+    assert set(item["creator"].keys()) == {"image", "nickname"}
     assert item["updater"] is None
 
 
 @pytest.mark.asyncio
 async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id):
-    """200 OK; `creater` is whitelisted to exactly {image, nickname}, no other user fields leak."""
+    """200 OK; `creator` is whitelisted to exactly {image, nickname}, no other user fields leak."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -198,9 +198,9 @@ async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id)
     )
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
-    # creater is whitelisted to exactly {image, nickname} — no password,
+    # creator is whitelisted to exactly {image, nickname} — no password,
     # no remember_token, no anything else off the real Users row.
-    assert set(item["creater"].keys()) == {"image", "nickname"}
+    assert set(item["creator"].keys()) == {"image", "nickname"}
 
 
 @pytest.mark.asyncio

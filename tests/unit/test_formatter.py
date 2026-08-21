@@ -1,27 +1,27 @@
 import pytest
 from datetime import datetime
-from utils.formatter import format_creator, format_datetime
+from utils.formatter import format_user_employees, format_datetime
 
 
 class TestFormatCreator:
     def test_none_returns_none(self):
         """None input returns None."""
-        assert format_creator(None) is None
+        assert format_user_employees(None) is None
 
     def test_full_shape(self):
         """Full user dict flattens employees.nickname into a top-level nickname alongside image."""
         user = {"image": "pic.png", "employees": {"nickname": "Bastian"}}
-        assert format_creator(user) == {"image": "pic.png", "nickname": "Bastian"}
+        assert format_user_employees(user) == {"image": "pic.png", "nickname": "Bastian"}
 
     def test_missing_employees_key_gives_none_nickname(self):
         """Missing employees key still returns image with a None nickname."""
         user = {"image": "pic.png"}
-        assert format_creator(user) == {"image": "pic.png", "nickname": None}
+        assert format_user_employees(user) == {"image": "pic.png", "nickname": None}
 
     def test_employees_explicitly_none_gives_none_nickname(self):
         """employees explicitly set to None also yields a None nickname."""
         user = {"image": None, "employees": None}
-        assert format_creator(user) == {"image": None, "nickname": None}
+        assert format_user_employees(user) == {"image": None, "nickname": None}
 
 
 class TestFormatDatetime:

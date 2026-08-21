@@ -19,7 +19,7 @@ from services.mysql.model import (
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils.serializer import serialize
-from utils.formatter import format_datetime, format_creator
+from utils.formatter import format_datetime, format_user_employees
 # from apps.dependency.permission import require_permissions
 
 
@@ -60,8 +60,8 @@ class MenuManagementController(CoreDependencies):
     def format_response(self, menu: dict[str, Any], permissions: list[str]) -> dict[str, Any]:
         menu["created_at"] = format_datetime(menu["created_at"])
         menu["updated_at"] = format_datetime(menu["updated_at"])
-        menu["creater"] = format_creator(menu["created_by_user"])
-        menu["updater"] = format_creator(menu["updated_by_user"])
+        menu["creator"] = format_user_employees(menu["created_by_user"])
+        menu["updater"] = format_user_employees(menu["updated_by_user"])
 
         features = []
         for mapping in menu.get("df_engine_menu_feature_mappings", []):
@@ -76,8 +76,8 @@ class MenuManagementController(CoreDependencies):
                     "name": feature.get("name"),
                     "description": feature.get("description"),
                     "is_active": feature.get("is_active"),
-                    "creater": format_creator(feature.get("created_by_user")),
-                    "updater": format_creator(feature.get("updated_by_user")),
+                    "creator": format_user_employees(feature.get("created_by_user")),
+                    "updater": format_user_employees(feature.get("updated_by_user")),
                 }
             )
         menu["features"] = features
@@ -174,7 +174,7 @@ class MenuManagementController(CoreDependencies):
             "`df_engine_menu_feature_mappings`, filtered to active features only (inactive "
             "ones are still mapped internally but omitted from this array) — one menu can "
             "list many features, and the same feature can appear under many different "
-            "menus. Each menu also includes its resolved `creater` / `updater` and an "
+            "menus. Each menu also includes its resolved `creator` / `updater` and an "
             "`action` block reflecting which menu-management actions the current user is "
             "permitted to perform."
         ),
@@ -210,7 +210,7 @@ class MenuManagementController(CoreDependencies):
         description=(
             "Returns a single menu (`df_engine_menus` row) identified by `uid`, in the "
             "exact same shape as one item from the list endpoint — including its nested "
-            "`features` array, resolved `creater` / `updater`, and `action` block. 404s if "
+            "`features` array, resolved `creator` / `updater`, and `action` block. 404s if "
             "no menu matches `uid`."
         ),
         status_code=status.HTTP_200_OK,

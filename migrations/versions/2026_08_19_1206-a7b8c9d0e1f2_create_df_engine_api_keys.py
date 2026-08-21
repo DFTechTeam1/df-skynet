@@ -55,10 +55,6 @@ def upgrade() -> None:
             sa.ForeignKey("users.id"),
             nullable=True,
         ),
-        # `name` has no DB-level unique constraint: it must stay unique only among
-        # non-deleted rows (soft-deleting a key frees its name for reuse), and MySQL
-        # has no partial/filtered unique index. Enforced instead by the controller
-        # checking for an existing non-deleted row with the same name before insert/update.
         sa.Column("deleted_at", sa.DateTime, nullable=True),
     )
 
