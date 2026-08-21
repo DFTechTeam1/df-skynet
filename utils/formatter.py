@@ -2,22 +2,7 @@ from datetime import datetime
 from typing import Optional, Any
 
 
-def format_creator(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """Reshape a serialized `Users` row (as produced by `utils.serializer.serialize`,
-    with its `employees` relationship eager-loaded) into `{"image", "nickname"}`.
-
-    Used for both `created_by_user` and `updated_by_user` on a prompt template,
-    hence the generic "creator" naming rather than tying it to one field.
-
-    Args:
-        user: The serialized `Users` dict (with a nested `employees` dict), or
-            `None` if the relationship wasn't set (e.g. `updated_by_user` on a
-            record nobody has updated yet).
-
-    Returns:
-        `{"image": ..., "nickname": ...}`, or `None` if `user` is `None`.
-        `nickname` is `None` if the user has no linked `employees` row.
-    """
+def format_user_employees(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if user is None:
         return None
     employees = user.get("employees") or {}
@@ -27,20 +12,7 @@ def format_creator(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     }
 
 
-def format_pic(employee: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """Reshape a serialized `Employees` row (with its `users` relationship
-    eager-loaded) into `{"image", "nickname"}` — the mirror of `format_creator`,
-    but traversed the other way: `nickname` lives on `employees` directly,
-    `image` lives on the linked `users` row.
-
-    Args:
-        employee: The serialized `Employees` dict (with a nested `users`
-            dict), or `None` if the relationship wasn't set.
-
-    Returns:
-        `{"image": ..., "nickname": ...}`, or `None` if `employee` is `None`.
-        `image` is `None` if the employee has no linked `users` row.
-    """
+def format_employee_users(employee: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if employee is None:
         return None
     users = employee.get("users") or {}

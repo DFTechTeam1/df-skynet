@@ -31,7 +31,7 @@ async def test_fetch_detail_success(authed_client, db_session, user_id):
 
 @pytest.mark.asyncio
 async def test_fetch_detail_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
-    """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creater/updater are exposed instead."""
+    """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creator/updater are exposed instead."""
     row = await create_record(
         db_session,
         DfEnginePromptTemplates,
@@ -42,7 +42,7 @@ async def test_fetch_detail_response_shape_has_creater_not_created_by_user(authe
             created_by=int(user_id),
         ),
     )
-    creater = await expected_user(db_session, user_id)
+    creator = await expected_user(db_session, user_id)
 
     resp = await authed_client.call("GET", f"{URL}/{row.uid}")
     item = resp.json()["data"]
@@ -52,8 +52,8 @@ async def test_fetch_detail_response_shape_has_creater_not_created_by_user(authe
     assert "updated_by" not in item
     assert "created_by_user" not in item
     assert "updated_by_user" not in item
-    assert item["creater"] == creater
-    assert set(item["creater"].keys()) == {"image", "nickname"}
+    assert item["creator"] == creator
+    assert set(item["creator"].keys()) == {"image", "nickname"}
     assert item["updater"] is None
 
 

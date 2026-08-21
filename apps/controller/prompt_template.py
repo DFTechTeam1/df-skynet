@@ -13,7 +13,7 @@ from services.mysql.model import DfEnginePromptTemplates, DfEngineFeaturePromptM
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError
 from utils.serializer import serialize
-from utils.formatter import format_datetime, format_creator
+from utils.formatter import format_datetime, format_user_employees
 # from apps.dependency.permission import require_permissions
 
 template_permission = {
@@ -39,8 +39,8 @@ class PromptTemplateController(CoreDependencies):
     def format_response(self, template: dict[str, Any], permissions: list[str]) -> dict[str, Any]:
         template["created_at"] = format_datetime(template["created_at"])
         template["updated_at"] = format_datetime(template["updated_at"])
-        template["creater"] = format_creator(template["created_by_user"])
-        template["updater"] = format_creator(template["updated_by_user"])
+        template["creator"] = format_user_employees(template["created_by_user"])
+        template["updater"] = format_user_employees(template["updated_by_user"])
         template["action"] = {
             "can_fetch_df_engine_prompt_templates": template_permission["fetch_df_engine_prompt_templates"]
             in permissions,
@@ -59,7 +59,7 @@ class PromptTemplateController(CoreDependencies):
 
     async def prompt_templates(self, name: Optional[str] = None) -> list[dict[str, Any]]:
         """Fetch active prompt templates (newest first) shaped for the frontend:
-        formatted timestamps, resolved `creater`/`updater`, and an `action`
+        formatted timestamps, resolved `creator`/`updater`, and an `action`
         block reflecting what the current user is permitted to do. Shared by
         every endpoint below so each mutation can hand back fresh, complete
         state instead of the frontend re-fetching separately.
@@ -126,7 +126,7 @@ class PromptTemplateController(CoreDependencies):
         description=(
             "Returns a single active prompt template identified by `uid`, in the exact "
             "same shape as an entry from the list endpoint. Includes its resolved "
-            "`creater` / `updater` (`image` from the user, `nickname` from their linked "
+            "`creator` / `updater` (`image` from the user, `nickname` from their linked "
             "employee record) and an `action` block reflecting which prompt-template "
             "actions the current user is permitted to perform."
         ),
@@ -162,7 +162,7 @@ class PromptTemplateController(CoreDependencies):
             "Returns active prompt templates, newest first. Pass `name` to search — only "
             "templates whose name contains that text (case-insensitive) are returned, in "
             "the exact same shape as the unfiltered list. Each record includes its "
-            "resolved `creater` / `updater` (`image` from the user, `nickname` from "
+            "resolved `creator` / `updater` (`image` from the user, `nickname` from "
             "their linked employee record) and an `action` block reflecting which "
             "prompt-template actions the current user is permitted to perform."
         ),

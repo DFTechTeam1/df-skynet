@@ -32,11 +32,9 @@ def upgrade() -> None:
         existing_type=DECIMAL(10, 2),
         type_=sa.String(255),
         existing_nullable=False,
-        server_default="over_0.5",
+        server_default="always",
     )
-    op.execute(
-        "UPDATE df_engine_preferences SET confirm_before_spending = 'always' WHERE confirm_before_spending IS NOT NULL"
-    )
+    op.execute("UPDATE df_engine_preferences SET confirm_before_spending = 'always'")
 
 
 def downgrade() -> None:

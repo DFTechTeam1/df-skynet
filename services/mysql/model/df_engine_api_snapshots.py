@@ -1,14 +1,14 @@
 from datetime import datetime
 from typing import Optional
 from uuid import uuid4
-from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import Boolean, CHAR, DateTime, DECIMAL, ForeignKey, String, Text
+from sqlmodel import Column, Field, SQLModel
+from sqlalchemy import CHAR, DateTime, DECIMAL, String, Text
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
-class DfEngineApiKeys(SQLModel, table=True):
-    __tablename__ = "df_engine_api_keys"  # type: ignore
+class DfEngineApiSnapshots(SQLModel, table=True):
+    __tablename__ = "df_engine_api_snapshots"  # type: ignore
 
     id: int = Field(
         default=None,
@@ -24,24 +24,6 @@ class DfEngineApiKeys(SQLModel, table=True):
     hash: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     name: str = Field(sa_column=Column(String(255), nullable=False))
     description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    employee_id: Optional[int] = Field(
-        default=None,
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("employees.id"), nullable=True),
-    )
     employee_name: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
-    is_main: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
-    created_by: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=False))
-    updated_by: Optional[int] = Field(
-        default=None,
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True),
-    )
-
-    employees: Optional["Employees"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEngineApiKeys.employee_id]"}
-    )
-    created_by_user: Optional["Users"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEngineApiKeys.created_by]"}
-    )
-    updated_by_user: Optional["Users"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEngineApiKeys.updated_by]"}
-    )
+    created_by: int = Field(sa_column=Column(BIGINT(unsigned=True), nullable=False))
+    updated_by: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), nullable=True))

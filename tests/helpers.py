@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
 from services.mysql.model import DfEnginePreferences, Users
-from utils.formatter import format_creator
+from utils.formatter import format_user_employees
 from utils.serializer import serialize
 
 ModelT = TypeVar("ModelT", bound=SQLModel)
@@ -26,7 +26,7 @@ async def expected_user(db_session: AsyncSession, user_id: int) -> Optional[dict
             .options(selectinload(Users.employees))  # type: ignore
         )
     ).scalar_one()
-    return format_creator(serialize(user))
+    return format_user_employees(serialize(user))
 
 
 async def clear_preference_row(db_session: AsyncSession, user_id: int) -> None:
