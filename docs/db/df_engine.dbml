@@ -150,7 +150,7 @@ Enum language_types {
 Table df_engine_api_keys {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
-    expired_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
+    expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
     uid varchar(36) [not null, unique]
     limit decimal(10, 2) [default: null]
     limit_reset limit_resets [default: null]
@@ -169,7 +169,7 @@ Table df_engine_api_keys {
 Table df_engine_api_snapshots {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
-    expired_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
+    expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
     limit decimal(10, 2) [default: null]
     limit_reset limit_resets [default: null]
     uid varchar(36) [not null, unique]
@@ -177,6 +177,7 @@ Table df_engine_api_snapshots {
     hash varchar(255) [default: null]
     name varchar(255) [not null]
     description text [default: null]
+    employee_id integer [default: null, note: "Denormalized copy, no FK — archival record must survive employee deletion"]
     employee_name varchar(255) [default: null]
     updated_at timestamp [default: null]
     created_by integer [not null]
@@ -197,6 +198,19 @@ Table df_engine_openrouter_logs {
     response_body json [default: null, note: "SENSITIVE — may contain the raw OpenRouter key/hash from a /keys response. Restrict read access; mask before returning through any API."]
     error_message text [default: null, note: "Populated when the call raised (timeout, non-2xx, network error, etc.)."]
     duration_ms integer [default: null]
+}
+
+Table df_engine_api_key_rotation_issues {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    old_uid varchar(36) [not null, note: "df_engine_api_keys.uid this rotation was replacing — no FK, the old row is usually already deleted by the time this exists"]
+    new_uid varchar(36) [default: null, note: "df_engine_api_keys.uid of the replacement, when it was successfully saved locally"]
+    new_key_hash varchar(255) [default: null, note: "Set only for new_key_db_conflict — OpenRouter already created this key but the local row failed to save"]
+    new_key_value varchar(255) [default: null, note: "SENSITIVE — raw key value, same case as new_key_hash. Restrict read access; mask before returning through any API."]
+    issue_type varchar(50) [not null, note: "new_key_db_conflict | old_key_not_revoked | archive_failed"]
+    detail text [default: null, note: "The underlying exception text"]
+    resolved_at timestamp [default: null, note: "Null until a reconciliation job or human fixes the drift"]
 }
 
 
