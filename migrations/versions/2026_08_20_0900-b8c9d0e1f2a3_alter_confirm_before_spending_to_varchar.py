@@ -39,6 +39,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute("UPDATE df_engine_preferences SET confirm_before_spending = '0.50'")
     op.alter_column(
         "df_engine_preferences",
         "confirm_before_spending",
