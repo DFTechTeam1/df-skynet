@@ -16,7 +16,7 @@ class DfEngineApiKeys(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
-    expired_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+    expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     limit: Optional[float] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
     limit_reset: Optional[str] = Field(default=None, sa_column=Column(String(20), nullable=True))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))

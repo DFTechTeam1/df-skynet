@@ -36,8 +36,6 @@ class PromptTemplatePayload(BaseModel):
     prompt: str = Field(
         ...,
         min_length=1,
-        # `df_engine_prompt_templates.prompt` is a MySQL TEXT column (64KB byte cap).
-        # Bounded well under that, accounting for multi-byte (utf8mb4) characters.
         max_length=16_000,
         description="The raw prompt text (markdown supported) that will be injected as the base prompt.",
         examples=[
