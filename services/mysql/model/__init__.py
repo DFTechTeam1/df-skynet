@@ -1,5 +1,6 @@
 from services.mysql.model.cities import Cities
 from services.mysql.model.countries import Countries
+from services.mysql.model.df_engine_api_key_rotation_issues import DfEngineApiKeyRotationIssues
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model.df_engine_api_snapshots import DfEngineApiSnapshots
 from services.mysql.model.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappings
@@ -24,6 +25,7 @@ from services.mysql.model.users import Users
 __all__ = [
     "Cities",
     "Countries",
+    "DfEngineApiKeyRotationIssues",
     "DfEngineApiKeys",
     "DfEngineApiSnapshots",
     "DfEngineFeaturePromptMappings",
