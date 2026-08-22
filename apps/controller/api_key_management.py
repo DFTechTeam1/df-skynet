@@ -458,6 +458,8 @@ class APIKeyManagementController(CoreDependencies):
                     )
                     continue
 
+                # TODO: behavior will like the delete action, just direct hit into delete api, instead GET first.
+
                 if record.expires_at is None:
                     new_expires_at = None
                 else:
@@ -629,6 +631,8 @@ class APIKeyManagementController(CoreDependencies):
                 )
                 response.data = await self.get_api_keys()
                 return response
+
+            # TODO: will be direct delete, if 404 then invalid hash, otherwise valid, when invalid proceed only delete record
 
             """Proceed deleting valid API key"""
             await self.call_openrouter("DELETE", f"/keys/{record.hash}")

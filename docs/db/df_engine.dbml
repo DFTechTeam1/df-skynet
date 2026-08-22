@@ -118,10 +118,9 @@ Enum shot_types {
 }
 
 Enum model_usage_types {
-    chat // inputs [text, list of image], outputs [text]
-    storyboard_generation // inputs [text, list of image], outputs [text]
-    image_generation // inputs [text, list of image], outputs [image]
-    video_generation // inputs [text, list of image, list of video], outputs [video]
+    text
+    video
+    image
 }
 
 
@@ -312,117 +311,33 @@ Table tasks {
 }
 
 
-Table model_options {
+Table df_engine_model_options {
     id integer [pk, increment]
-    name varchar(255) [not null, note: "Example: Muse-Spark"]
-    model_id varchar(255) [not null, note: "Example: meta/muse-spark-1.2"]
-    description text [default: null, note: "Example: Qwen3.8 Max is the flagship model in Alibaba's Qwen3.8 series, the general-availability successor to the Qwen3.8 Max Preview. It is a multimodal reasoning model intended for complex reasoning, visual understanding,..."]
-    architecture json [default: null, note: '''Only filled if model is image_generation and chat. Example:
-     {
-        "modality": "text+image+file+audio+video->text",
-        "input_modalities": [
-          "text",
-          "image",
-          "video",
-          "file",
-          "audio"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Other",
-        "instruct_type": null
-      },
-    ''']
-    type model_usage_types [not null, default: "image_generation"]
-    is_main boolean [default: null]
-    is_enabled boolean [not null, default: false]
-    supported_parameters json [default: null, note: '''Only filled if model is image_generation and chat. Example:
-    {
-        "resolution": {
-          "type": "enum",
-          "values": [
-            "1K",
-            "2K"
-          ]
-        },
-        "aspect_ratio": {
-          "type": "enum",
-          "values": [
-            "1:1",
-            "1:2",
-            "1:4",
-            "2:1",
-            "2:3",
-            "3:2",
-            "3:4",
-            "4:1",
-            "4:3",
-            "4:5",
-            "5:4",
-            "9:16",
-            "16:9"
-          ]
-        },
-        "n": {
-          "type": "range",
-          "min": 1,
-          "max": 6
-        },
-        "input_references": {
-          "type": "range",
-          "min": 0,
-          "max": 4
-        },
-        "seed": {
-          "type": "boolean"
-        }
-      }
-    ''']
-    supported_resolutions json [default: null, note: '''Only filled if model is video_generation. Example:
-    [
-        "720p",
-        "1080p"
-    ]
-    ''']
-    supported_aspect_ratios json [default: null, note: '''Only filled if model is video_generation. Example:
-     [
-        "16:9",
-        "9:16",
-        "1:1"
-      ],
-    ''']
-    supported_sizes json [default: null, note: '''Only filled if model is video_generation. Example:
-    [
-        "1280x720",
-        "720x1280",
-        "720x720"
-    ]
-    ''']
-    supported_durations json [default: null, note: '''Only filled if model is video_generation. Example:
-    [
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12,
-        13,
-        14,
-        15
-    ]
-    ''']
-    supported_frame_images json [default: null, note: '''Only filled if model is video_generation. Example:
-    [
-        "first_frame",
-        "last_frame"
-    ]
-    ''']
-    generate_audio boolean [default: null, note: "Only filled if model is video_generation. If true, the model can generate audio for the video."]
+    sync_at timestamp [default: `now()`] // video, image, text
+    name varchar(255) [not null, note: "Example: Muse-Spark"] // video, image, text
+    created bigint [default: null] // video , image, text
+    model_id varchar(255) [not null, note: "Example: meta/muse-spark-1.2"] // video, image, text
+    description text [default: null] // video, image, text
+    architecture json [default: null] // image, text
+    type model_usage_types [not null]
+    is_main boolean [default: null] // video, image, text
+    is_enabled boolean [not null, default: false] // video, image, text
+    is_available boolean [not null, default: true] // video, image, text
+    supported_parameters json [default: null] // image, text
+    default_parameters json [default: null] // text
+    supports_streaming bool [default: null] // image
+    supported_resolutions json [default: null] // video
+    supported_aspect_ratios json [default: null] // video
+    supported_sizes json [default: null] // video
+    supported_durations json [default: null] // video
+    supported_frame_images json [default: null] // video
+    generate_audio boolean [default: null] // video
+    allowed_passthrough_parameters json [default: null] // video
+    pricing_skus json [default: null] // video
+    pricing json [default: null] // text
+    top_provider json [default: null] // text
+    knowledge_cutoff date [default: null] // text
+    expiration_date date [default: null] // text
 }
 
 Table generation_prompts {
@@ -660,7 +575,7 @@ Ref: projects.id < storyboards.project_id
 Ref: projects.id < df_engine_files.project_id
 Ref: projects.id < project_generation_shares.project_id
 Ref: generation_galleries.id < gallery_details.gallery_id
-Ref: model_options.id < generation_prompts.model_id
+Ref: df_engine_model_options.id < generation_prompts.model_id
 
 // Element relationships
 Ref: projects.id < elements_presets.project_id
