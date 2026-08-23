@@ -206,3 +206,37 @@ def mock_openrouter(monkeypatch):
     `client`/`authed_client` (which hold their own `services.api_caller.APICaller`
     reference for talking to this app itself)."""
     monkeypatch.setattr("apps.controller.api_key_management.APICaller", _FakeOpenRouterCaller)
+
+
+class _FakeModelSyncCall:
+    """Per-test controllable stand-in for `services.openrouter.call_openrouter`,
+    scoped to `apps.controller.model_management` only. Keyed by exact request
+    `path` — the real controller reuses the identical `/videos/models` path for
+    both the `video` and `image` types, so configuring that path answers both.
+
+    Any path not explicitly `.set(...)` returns an error-shaped payload (no
+    `data` key), which the controller's own guard treats as "unexpected
+    response, skip this type" rather than "OpenRouter returned zero models" —
+    critical here, since `df_engine_model_options` is shared, real, synced data:
+    treating an unconfigured type as an empty list would flag every real row of
+    that type unavailable the moment a test hits this endpoint.
+    """
+
+    def __init__(self) -> None:
+        self.responses: dict[str, Any] = {}
+
+    def set(self, path: str, items: list[dict[str, Any]]) -> None:
+        self.responses[path] = {"data": items}
+
+    async def __call__(self, db: Any, user_id: int, method: str, path: str, **kwargs: Any) -> Any:
+        return self.responses.get(path, {"error": {"message": "not configured for this test"}})
+
+
+@pytest.fixture
+def mock_model_sync(monkeypatch):
+    """Bypasses every real OpenRouter call made through the model-management
+    sync endpoint. See `_FakeModelSyncCall` for why unconfigured paths must
+    fail safe rather than default to an empty model list."""
+    fake = _FakeModelSyncCall()
+    monkeypatch.setattr("apps.controller.model_management.call_openrouter", fake)
+    return fake

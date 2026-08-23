@@ -20,3 +20,11 @@ def wib_to_utc_iso(wib_naive: Optional[datetime]) -> Optional[str]:
         return None
     wib = timezone("Asia/Jakarta").localize(wib_naive)
     return wib.astimezone(timezone("UTC")).isoformat().replace("+00:00", "Z")
+
+
+def epoch_to_wib(value: Optional[int]) -> Optional[datetime]:
+    """Convert a Unix epoch (seconds, UTC) — e.g. OpenRouter's `created` field —
+    into a naive WIB wall-clock datetime, matching `local_time()`'s convention."""
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=timezone("UTC")).astimezone(timezone("Asia/Jakarta")).replace(tzinfo=None)

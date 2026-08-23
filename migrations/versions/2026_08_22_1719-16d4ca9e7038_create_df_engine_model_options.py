@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table(
         "df_engine_model_options",
         sa.Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
-        sa.Column("sync_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
+        sa.Column("last_sync_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
         sa.Column("uid", sa.CHAR(36), nullable=False, unique=True),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("created", sa.BigInteger, nullable=True),

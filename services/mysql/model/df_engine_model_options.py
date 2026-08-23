@@ -37,7 +37,7 @@ class DfEngineModelOptions(SQLModel, table=True):
     )
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
-    sync_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
+    last_sync_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     name: str = Field(sa_column=Column(String(255), nullable=False))
     created: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
@@ -51,6 +51,7 @@ class DfEngineModelOptions(SQLModel, table=True):
     )
     is_main: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     is_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+    is_available: bool = Field(default=False, sa_column=Column(Boolean, nullable=True))
     supported_parameters: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON(none_as_null=True), nullable=True)
     )
