@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
-from schemas.payload.preference import PreferencePayload, CONFIRM_BEFORE_SPENDING_LABELS
+from schemas.payload.user_preference import PreferencePayload, CONFIRM_BEFORE_SPENDING_LABELS
 from services.mysql.model import DfEnginePreferences
 from log import logging
 from error import ServiceError, BaseError, DataConflictError

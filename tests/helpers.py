@@ -1,9 +1,9 @@
 from typing import Any, Optional, Type, TypeVar
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
-from services.mysql.model import DfEnginePreferences, Users
+from services.mysql.model import DfEnginePreferences, DfEngineSettingLogs, DfEngineSettings, Users
 from utils.formatter import format_user_employees
 from utils.serializer import serialize
 
@@ -36,6 +36,22 @@ async def clear_preference_row(db_session: AsyncSession, user_id: int) -> None:
     if row is not None:
         await db_session.delete(row)
         await db_session.commit()
+
+
+SETTING_CODE = "admin_setting"
+
+
+async def clear_setting_state(db_session: AsyncSession) -> None:
+    """Deletes every `df_engine_settings` row for the admin-setting group and
+    every `df_engine_setting_logs` row, so a setting test starts from "nothing
+    saved yet" regardless of what an earlier run left behind. Settings are a
+    single global config (not scoped per-user), so there's nothing meaningful
+    to snapshot/restore the way the model-management `is_main` tests do for
+    real, already-synced model rows.
+    """
+    await db_session.execute(delete(DfEngineSettings).where(DfEngineSettings.code == SETTING_CODE))  # type: ignore
+    await db_session.execute(delete(DfEngineSettingLogs))
+    await db_session.commit()
 
 
 def find_by_name(items: list[dict[str, Any]], name: str) -> dict[str, Any]:

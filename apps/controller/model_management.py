@@ -6,9 +6,10 @@ from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy import func
 from apps.controller.core import CoreDependencies
+from apps.controller.setting import SETTING_CODE
 from schemas.payload.model_management import SetModelEnabledPayload
 from schemas.response import PaginationResponse, Response
-from services.mysql.model import DfEngineModelOptions
+from services.mysql.model import DfEngineModelOptions, DfEngineSettings
 from log import logging
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from utils import epoch_to_wib, local_time
@@ -50,6 +51,25 @@ class ModelManagementController(CoreDependencies):
 
         record.pop("id", None)
         return record
+
+    async def clear_engine_model_reference(self, model_uid: str) -> None:
+        """A disabled model can no longer power the settings page's enhancer or
+        assistant model — null out any `df_engine_settings` row still pointing at
+        it, so the setting falls back to the engine's default instead of quietly
+        referencing a model that's no longer selectable.
+        """
+        rows = await query(
+            db=self.db,
+            table=DfEngineSettings,
+            filters=(
+                DfEngineSettings.code == SETTING_CODE,  # type: ignore
+                DfEngineSettings.key.in_(("enhancer_model", "assistant_model")),  # type: ignore
+                DfEngineSettings.value == model_uid,  # type: ignore
+            ),
+        )
+        for row in rows:
+            row.value = None
+            row.updated_at = local_time()
 
     async def get_model_option(self, uid: UUID) -> DfEngineModelOptions:
         record = await query(
@@ -228,7 +248,11 @@ class ModelManagementController(CoreDependencies):
             "a model OpenRouter no longer returns can't be enabled or disabled through "
             "this endpoint either way. Only an enabled model can be set as main — "
             "disabling a model that currently holds `is_main` also clears that flag, "
-            "since a disabled model can never stay main. Returns the updated model."
+            "since a disabled model can never stay main. Disabling a model that's "
+            "currently saved as the settings page's enhancer or assistant model also "
+            "clears that reference back to blank (falls back to the engine's "
+            "default) — the settings page can only keep an enabled model selected. "
+            "Returns the updated model."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],
@@ -250,65 +274,15 @@ class ModelManagementController(CoreDependencies):
                 raise DataValidationError(message="model_option_unavailable_cannot_set_enabled")
 
             record.is_enabled = schema.is_enabled
-            if not schema.is_enabled and record.is_main:
-                record.is_main = False
+            if not schema.is_enabled:
+                if record.is_main:
+                    record.is_main = False
+                await self.clear_engine_model_reference(record.uid)
 
             await self.db.flush()
             logging.info(
                 f"user={self.user['user_id']} model uid={record.uid} model_id={record.model_id} "
                 f"is_enabled={record.is_enabled} is_main={record.is_main}"
-            )
-
-            # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
-            #     "permissions", []
-            # )
-            has_sync_permission = True  # will be overide first
-            response.data = self.format_response(serialize(record), has_sync_permission)
-        except BaseError:
-            raise
-        except Exception:
-            logging.error(traceback.format_exc())
-            raise ServiceError()
-        return response
-
-    @controller.patch(
-        "/models/{uid}/main",
-        summary="Set a model as the main model for its type.",
-        description=(
-            "Marks this model as a main one for its usage type (`text`, `image`, "
-            "`video`) — the model must be available on OpenRouter and already enabled. "
-            "A usage type can have one or more main models at a time: setting a new "
-            "main does not clear any other model currently marked main for the same "
-            "type. Returns the updated model."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["Model Management"],
-        response_model=Response,
-    )
-    async def model_management_to_set_model_main(
-        self,
-        uid: UUID = Path(
-            ...,
-            description="Model UID.",
-            examples=["8d96ff4e-5c35-4329-bd5d-827e2c68599d"],
-        ),
-    ) -> Response:
-        response = Response()
-        try:
-            record = await self.get_model_option(uid)
-            if not record.is_available:
-                raise DataValidationError(message="model_option_unavailable_cannot_set_main")
-
-            if not record.is_enabled:
-                raise DataValidationError(message="model_option_must_be_enabled_to_set_main")
-
-            if not record.is_main:
-                record.is_main = True
-                await self.db.flush()
-
-            logging.info(
-                f"user={self.user['user_id']} model uid={record.uid} model_id={record.model_id} "
-                f"set as main type={record.type}"
             )
 
             # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
@@ -364,9 +338,6 @@ class ModelManagementController(CoreDependencies):
                     items = None
 
                 if items is None:
-                    # An error payload (e.g. {"error": ...}) has no "data" key — treating
-                    # that as "zero models" would flag every existing model of this type
-                    # unavailable, so skip syncing this type instead of trusting it.
                     logging.warning(
                         f"user={self.user['user_id']} model sync skipped type={model_type} path={path}: "
                         f"unexpected OpenRouter response shape response={openrouter_response!r}"
