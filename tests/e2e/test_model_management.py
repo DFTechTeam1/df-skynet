@@ -20,12 +20,10 @@ URL = "/api/models"
 
 @pytest_asyncio.fixture(autouse=True)
 async def _restore_real_main_state(db_session):
-    """PATCH /models/{uid}/main overrides whichever row currently holds
-    `is_main` for that type — including any REAL, already-synced row. These
-    journeys promote fixtures to main, so snapshot every row that's main
-    before the test and force that exact set back afterward — see the
-    identical fixture in tests/api/test_model_management_set_main.py for the
-    full rationale.
+    """These journeys promote fixtures to main alongside any REAL,
+    already-synced row. Snapshot every row that's main before the test and
+    force that exact set back afterward — see the identical fixture in
+    tests/api/test_model_management_set_main.py for the full rationale.
     """
     before_ids = set(
         (await db_session.execute(select(DfEngineModelOptions.id).where(DfEngineModelOptions.is_main.is_(True))))
@@ -72,9 +70,10 @@ async def _fetch_item(authed_client, search: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_enable_promote_then_override_main_journey(authed_client, db_session):
+async def test_enable_promote_then_second_main_journey(authed_client, db_session):
     """A synced-but-idle model gets enabled, promoted to main, then a second
-    candidate takes over as main — the first is demoted automatically."""
+    candidate is promoted too — a type can have more than one main model,
+    so the first stays main."""
     prefix = f"Journey{uuid4().hex[:8]}"
     model_a = await create_record(
         db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-a", type="video")
@@ -97,7 +96,6 @@ async def test_enable_promote_then_override_main_journey(authed_client, db_sessi
 
     item = await _fetch_item(authed_client, model_a.name)
     assert item["is_main"] is True
-    assert item["action"]["can_set_main"] is False  # already main
 
     # 4. a second, same-type candidate shows up and gets enabled
     model_b = await create_record(
@@ -105,15 +103,14 @@ async def test_enable_promote_then_override_main_journey(authed_client, db_sessi
     )
     await authed_client.call("PATCH", f"{URL}/{model_b.uid}", json={"is_enabled": True})
 
-    # 5. promoting B overrides A automatically — one call, no separate "demote A"
-    override_resp = await authed_client.call("PATCH", f"{URL}/{model_b.uid}/main")
-    assert override_resp.status_code == 200
-    assert override_resp.json()["data"]["is_main"] is True
+    # 5. promoting B leaves A as main too — a type can have more than one main
+    second_resp = await authed_client.call("PATCH", f"{URL}/{model_b.uid}/main")
+    assert second_resp.status_code == 200
+    assert second_resp.json()["data"]["is_main"] is True
 
     item_a = await _fetch_item(authed_client, model_a.name)
     item_b = await _fetch_item(authed_client, model_b.name)
-    assert item_a["is_main"] is False
-    assert item_a["action"]["can_set_main"] is True  # eligible again now that it's no longer main
+    assert item_a["is_main"] is True
     assert item_b["is_main"] is True
 
 

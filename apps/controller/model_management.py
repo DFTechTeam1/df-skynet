@@ -4,7 +4,7 @@ from typing import Any, Optional
 from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import func, update
+from sqlalchemy import func
 from apps.controller.core import CoreDependencies
 from schemas.payload.model_management import SetModelEnabledPayload
 from schemas.response import PaginationResponse, Response
@@ -27,7 +27,7 @@ class ModelUsageTypes(StrEnum):
 
 model_management_permission = {
     "fetch_df_engine_model_option": "fetch_df_engine_model_option",
-    "sync_df_engine_option": "sync_df_engine_option",
+    "sync_df_engine_model_option": "sync_df_engine_model_option",
 }
 
 
@@ -45,10 +45,7 @@ class ModelManagementController(CoreDependencies):
         record["created"] = format_datetime(epoch_to_wib(record["created"]))
         record["action"] = {
             "can_set_enabled": has_sync_permission and record["is_available"],
-            "can_set_main": has_sync_permission
-            and record["is_available"]
-            and record["is_enabled"]
-            and not record["is_main"],
+            "can_set_main": has_sync_permission and record["is_available"] and record["is_enabled"],
         }
 
         record.pop("id", None)
@@ -206,7 +203,7 @@ class ModelManagementController(CoreDependencies):
                 offset=(page - 1) * itemsPerPage,
             )
 
-            # has_sync_permission = model_management_permission["sync_df_engine_option"] in self.user.get(
+            # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
             #     "permissions", []
             # )
             has_sync_permission = True  # will be overide first
@@ -262,7 +259,7 @@ class ModelManagementController(CoreDependencies):
                 f"is_enabled={record.is_enabled} is_main={record.is_main}"
             )
 
-            # has_sync_permission = model_management_permission["sync_df_engine_option"] in self.user.get(
+            # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
             #     "permissions", []
             # )
             has_sync_permission = True  # will be overide first
@@ -278,12 +275,11 @@ class ModelManagementController(CoreDependencies):
         "/models/{uid}/main",
         summary="Set a model as the main model for its type.",
         description=(
-            "Marks this model as the main one for its usage type (`text`, `image`, "
+            "Marks this model as a main one for its usage type (`text`, `image`, "
             "`video`) — the model must be available on OpenRouter and already enabled. "
-            "At most one model per type can be main at a time, so this overrides "
-            "whichever model currently holds it: the previous main model for the same "
-            "type is cleared automatically, no separate confirmation needed. Returns "
-            "the updated model."
+            "A usage type can have one or more main models at a time: setting a new "
+            "main does not clear any other model currently marked main for the same "
+            "type. Returns the updated model."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],
@@ -302,19 +298,11 @@ class ModelManagementController(CoreDependencies):
             record = await self.get_model_option(uid)
             if not record.is_available:
                 raise DataValidationError(message="model_option_unavailable_cannot_set_main")
+
             if not record.is_enabled:
                 raise DataValidationError(message="model_option_must_be_enabled_to_set_main")
 
             if not record.is_main:
-                await self.db.execute(
-                    update(DfEngineModelOptions)
-                    .where(
-                        DfEngineModelOptions.type == record.type,  # type: ignore
-                        DfEngineModelOptions.id != record.id,  # type: ignore
-                        DfEngineModelOptions.is_main.is_(True),  # type: ignore
-                    )
-                    .values(is_main=False)
-                )
                 record.is_main = True
                 await self.db.flush()
 
@@ -323,7 +311,7 @@ class ModelManagementController(CoreDependencies):
                 f"set as main type={record.type}"
             )
 
-            # has_sync_permission = model_management_permission["sync_df_engine_option"] in self.user.get(
+            # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
             #     "permissions", []
             # )
             has_sync_permission = True  # will be overide first
