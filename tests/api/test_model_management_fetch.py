@@ -146,13 +146,15 @@ async def test_action_flags_available_enabled_not_main(authed_client, db_session
 
 
 @pytest.mark.asyncio
-async def test_action_flags_already_main_cannot_set_main_again(authed_client, db_session):
-    """200 OK; a model that's already main shows can_set_main=False."""
+async def test_action_flags_already_main_can_set_main_again(authed_client, db_session):
+    """200 OK; a usage type can have more than one main model, so a model
+    that's already main still shows can_set_main=True (setting it again is
+    an idempotent no-op)."""
     row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=True, is_main=True))
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert item["action"] == {"can_set_enabled": True, "can_set_main": False}
+    assert item["action"] == {"can_set_enabled": True, "can_set_main": True}
 
 
 @pytest.mark.asyncio

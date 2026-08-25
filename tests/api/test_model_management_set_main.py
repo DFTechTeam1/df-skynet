@@ -12,12 +12,11 @@ URL = "/api/models"
 
 @pytest_asyncio.fixture(autouse=True)
 async def _restore_real_main_state(db_session):
-    """PATCH /models/{uid}/main overrides whichever row currently holds
-    `is_main` for that type — including any REAL, already-synced row, not
-    just other test fixtures. Snapshot every row that's main before the test
-    and force that exact set back afterward, so these tests can never
-    permanently alter real production main-model state or leave orphaned
-    test rows still marked main for a future run to trip over.
+    """These tests promote fixtures to main alongside any REAL, already-synced
+    row. Snapshot every row that's main before the test and force that exact
+    set back afterward, so these tests can never permanently alter real
+    production main-model state or leave orphaned test rows still marked
+    main for a future run to trip over.
     """
     before_ids = set(
         (await db_session.execute(select(DfEngineModelOptions.id).where(DfEngineModelOptions.is_main.is_(True))))
@@ -67,8 +66,8 @@ async def test_set_main_success(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_set_main_overrides_previous_main_same_type(authed_client, db_session):
-    """200 OK; setting a new main automatically clears the previous main of the same type — no separate call needed."""
+async def test_set_main_does_not_clear_other_main_same_type(authed_client, db_session):
+    """200 OK; a type can have more than one main model — setting a new one leaves an existing main untouched."""
     old_main = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=True, is_main=True))
     new_main = await create_record(
         db_session, DfEngineModelOptions, _model_option_data(type=old_main.type, is_enabled=True, is_main=False)
@@ -80,7 +79,7 @@ async def test_set_main_overrides_previous_main_same_type(authed_client, db_sess
 
     await db_session.rollback()  # see the endpoint's own committed write (REPEATABLE READ)
     await db_session.refresh(old_main)
-    assert old_main.is_main is False
+    assert old_main.is_main is True
 
 
 @pytest.mark.asyncio
