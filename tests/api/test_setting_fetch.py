@@ -1,0 +1,100 @@
+import pytest
+from typing import Any
+from uuid import uuid4
+from services.mysql.model import DfEngineModelOptions
+from tests.helpers import create_record, clear_setting_state
+
+URL = "/api/setting"
+
+
+def _model_option_data(**overrides: Any) -> dict[str, Any]:
+    unique = uuid4().hex[:10]
+    data = dict(
+        uid=str(uuid4()),
+        model_id=f"test-vendor/test-model-{unique}",
+        name=f"SettingFetchTest-{unique}",
+        type="text",
+        is_available=True,
+        is_enabled=True,
+        is_main=False,
+    )
+    data.update(overrides)
+    return data
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_defaults_when_nothing_saved_yet(authed_client, db_session):
+    """200 OK; GET returns the schema's own defaults and null models when no settings exist yet."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("GET", URL)
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["admin_view"] == {"see_all_asset": True}
+    assert body["limit"] == {"generate_per_min": 0, "enhance_per_min": 0}
+    assert body["spend_ceiling"] == {"daily_ceiling_global_user": 0, "daily_ceiling_per_user": 0}
+    assert body["storyboard"] == {
+        "max_storyboard_char": 4000,
+        "max_scene_per_storyboard": 100,
+        "max_shot_per_scene": 100,
+    }
+    assert body["compose_input"] == {"max_prompt_char": 4000}
+    assert body["enhancer_model"] is None
+    assert body["assistant_model"] is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_returns_saved_values(authed_client, db_session):
+    """200 OK; GET reflects whatever was last saved via POST."""
+    await clear_setting_state(db_session)
+    payload = {
+        "admin_view": {"see_all_asset": False},
+        "limit": {"generate_per_min": 5, "enhance_per_min": 10},
+        "spend_ceiling": {"daily_ceiling_global_user": 100, "daily_ceiling_per_user": 20},
+        "storyboard": {"max_storyboard_char": 3000, "max_scene_per_storyboard": 50, "max_shot_per_scene": 20},
+        "compose_input": {"max_prompt_char": 2000},
+        "enhancer_model": None,
+        "assistant_model": None,
+    }
+    await authed_client.call("POST", URL, json=payload)
+
+    resp = await authed_client.call("GET", URL)
+    body = resp.json()["data"]
+    assert body["admin_view"] == payload["admin_view"]
+    assert body["limit"] == payload["limit"]
+    assert body["spend_ceiling"] == payload["spend_ceiling"]
+    assert body["storyboard"] == payload["storyboard"]
+    assert body["compose_input"] == payload["compose_input"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_resolves_enhancer_and_assistant_model_info(authed_client, db_session):
+    """200 OK; enhancer_model/assistant_model come back as full model info, not a bare UID."""
+    await clear_setting_state(db_session)
+    enhancer = await create_record(db_session, DfEngineModelOptions, _model_option_data(name="Enhancer-A"))
+    assistant = await create_record(db_session, DfEngineModelOptions, _model_option_data(name="Assistant-A"))
+
+    payload = {
+        "admin_view": {},
+        "limit": {},
+        "spend_ceiling": {},
+        "storyboard": {},
+        "compose_input": {},
+        "enhancer_model": enhancer.uid,
+        "assistant_model": assistant.uid,
+    }
+    await authed_client.call("POST", URL, json=payload)
+
+    resp = await authed_client.call("GET", URL)
+    body = resp.json()["data"]
+    assert body["enhancer_model"]["uid"] == enhancer.uid
+    assert body["enhancer_model"]["name"] == enhancer.name
+    assert body["assistant_model"]["uid"] == assistant.uid
+    assert body["assistant_model"]["name"] == assistant.name
+
+
+@pytest.mark.asyncio
+async def test_requires_auth(client):
+    """401 when the request carries no bearer token."""
+    resp = await client.call("GET", URL, raise_for_status=False)
+    assert resp.status_code == 401

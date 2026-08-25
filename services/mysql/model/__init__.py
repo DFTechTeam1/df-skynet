@@ -11,6 +11,8 @@ from services.mysql.model.df_engine_model_options import DfEngineModelOptions
 from services.mysql.model.df_engine_openrouter_logs import DfEngineOpenrouterLogs
 from services.mysql.model.df_engine_preferences import DfEnginePreferences
 from services.mysql.model.df_engine_prompt_templates import DfEnginePromptTemplates
+from services.mysql.model.df_engine_setting_logs import DfEngineSettingLogs
+from services.mysql.model.df_engine_settings import DfEngineSettings
 from services.mysql.model.employees import Employees
 from services.mysql.model.model_has_permissions import ModelHasPermissions
 from services.mysql.model.model_has_roles import ModelHasRoles
@@ -37,6 +39,8 @@ __all__ = [
     "DfEngineOpenrouterLogs",
     "DfEnginePreferences",
     "DfEnginePromptTemplates",
+    "DfEngineSettingLogs",
+    "DfEngineSettings",
     "Employees",
     "ModelHasPermissions",
     "ModelHasRoles",

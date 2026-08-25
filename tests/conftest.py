@@ -22,6 +22,23 @@ def app():
     return app
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """`rate_limit()` builds one `RateLimiter` (and its `KeyedBucketFactory`)
+    per controller class at import time, shared for the life of the process —
+    not per request or per test. A path with no path params (e.g. `/api/setting`)
+    keys to a single bucket for the whole test run, so a test file that legitimately
+    calls the same fixed path many times (unlike `/api/models/{uid}`, where a random
+    uid gives every call its own bucket) can trip the real 15/second cap purely from
+    test volume. Clearing every bucket before each test keeps that budget scoped to
+    the current test instead of accumulating across the whole session.
+    """
+    from apps.controller.core import CoreDependencies
+
+    CoreDependencies.throttle.dependency.limiter.bucket_factory.buckets.clear()
+    yield
+
+
 @pytest_asyncio.fixture
 async def db_session():
     async with make_session(DB_ASYNC_URL)() as session:
@@ -82,9 +99,6 @@ async def _create_employee(db_session, **overrides) -> Employees:
     """
     template = await _any_employee_template(db_session)
     suffix = uuid4().hex[:10]
-    # `basic_salary` is typed `float` on the model but stored as DECIMAL, so the DB
-    # driver hands back a `Decimal` — model_dump() would otherwise warn about the
-    # mismatch even though `Employees(**data)` below coerces it back to float fine.
     data = template.model_dump(exclude={"id"}, warnings=False)
     data.update(
         uid=str(uuid4()),
