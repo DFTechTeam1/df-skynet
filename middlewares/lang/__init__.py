@@ -14,6 +14,7 @@ from middlewares.lang.en.preference import PreferenceMessage as _EnPreference
 from middlewares.lang.en.prompt_template import (
     PromptTemplateMessage as _EnPromptTemplate,
 )
+from middlewares.lang.en.setting import SettingMessage as _EnSetting
 from middlewares.lang.id.auth import AuthMessage as _IdAuth
 from middlewares.lang.id.common import CommonMessage as _IdCommon
 from middlewares.lang.id.equipment import EquipmentMessage as _IdEquipment
@@ -29,6 +30,7 @@ from middlewares.lang.id.preference import PreferenceMessage as _IdPreference
 from middlewares.lang.id.prompt_template import (
     PromptTemplateMessage as _IdPromptTemplate,
 )
+from middlewares.lang.id.setting import SettingMessage as _IdSetting
 
 DEFAULT_LANG = "en"
 SUPPORTED_LANGUAGES = {"id", "en"}
@@ -45,6 +47,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_EnModelManagement().message,
         **_EnPreference().message,
         **_EnPromptTemplate().message,
+        **_EnSetting().message,
     },
     "id": {
         **_IdAuth().message,
@@ -56,6 +59,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_IdModelManagement().message,
         **_IdPreference().message,
         **_IdPromptTemplate().message,
+        **_IdSetting().message,
     },
 }
 
