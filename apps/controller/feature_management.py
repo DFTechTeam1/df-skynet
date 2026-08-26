@@ -17,6 +17,7 @@ from services.mysql.model import (
     Users,
     Employees,
 )
+from services.redis import get_json, set_json, delete_pattern
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils.serializer import serialize
@@ -29,6 +30,17 @@ feature_permission = {
     "update_df_engine_feature": "update_df_engine_feature",
     "delete_df_engine_feature": "delete_df_engine_feature",
 }
+
+CACHE_TTL_SECONDS = 3600
+LIST_CACHE_PATTERN = "feature_management:list:*"
+
+
+def list_cache_key(name: Optional[str]) -> str:
+    return f"feature_management:list:{(name or '').strip().lower() or 'all'}"
+
+
+def detail_cache_key(uid: str) -> str:
+    return f"feature_management:detail:{uid}"
 
 
 class FeatureManagementController(CoreDependencies):
@@ -98,38 +110,54 @@ class FeatureManagementController(CoreDependencies):
         return feature
 
     async def get_features(self, name: Optional[str] = None) -> list[dict[str, Any]]:
-        """Will fetch all features available if name not provided, ordered by latest to oldest."""
-        query = select(DfEngineFeatures)
-        if name:
-            query = query.where(DfEngineFeatures.name.ilike(f"{name}%"))  # type: ignore
-        records = (
-            (
-                await self.db.execute(
-                    query.options(*self.query_options()).order_by(  # type: ignore
-                        DfEngineFeatures.created_at.desc()  # type: ignore
+        """Will fetch all features available if name not provided, ordered by latest to oldest.
+
+        Raw (pre-`format_response`) rows are cached in Redis keyed by the
+        normalized `name` filter — cached data has no per-user info, so it's
+        safe to share across requests. `format_response` still runs on every
+        call to compute the requesting user's own `action` permissions.
+        """
+        cache_key = list_cache_key(name)
+        raw = await get_json(self.redis, cache_key)
+        if raw is None:
+            query = select(DfEngineFeatures)
+            if name:
+                query = query.where(DfEngineFeatures.name.ilike(f"{name}%"))  # type: ignore
+            records = (
+                (
+                    await self.db.execute(
+                        query.options(*self.query_options()).order_by(  # type: ignore
+                            DfEngineFeatures.created_at.desc()  # type: ignore
+                        )
                     )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
+            raw = serialize(records)
+            await set_json(self.redis, cache_key, raw, ttl=CACHE_TTL_SECONDS)
 
         permissions = self.user.get("permissions", [])
-        return [self.format_response(feature, permissions) for feature in serialize(records)]
+        return [self.format_response(feature, permissions) for feature in raw]
 
     async def get_feature_detail(self, uid: UUID) -> dict[str, Any]:
-        record = (
-            await self.db.execute(
-                select(DfEngineFeatures)
-                .where(DfEngineFeatures.uid == str(uid))  # type: ignore
-                .options(*self.query_options())  # type: ignore
-            )
-        ).scalar_one_or_none()
-        if record is None:
-            raise DataNotFoundError(message="feature_not_found")
+        cache_key = detail_cache_key(str(uid))
+        raw = await get_json(self.redis, cache_key)
+        if raw is None:
+            record = (
+                await self.db.execute(
+                    select(DfEngineFeatures)
+                    .where(DfEngineFeatures.uid == str(uid))  # type: ignore
+                    .options(*self.query_options())  # type: ignore
+                )
+            ).scalar_one_or_none()
+            if record is None:
+                raise DataNotFoundError(message="feature_not_found")
+            raw = serialize(record)
+            await set_json(self.redis, cache_key, raw, ttl=CACHE_TTL_SECONDS)
 
         permissions = self.user.get("permissions", [])
-        return self.format_response(serialize(record), permissions)
+        return self.format_response(raw, permissions)
 
     async def get_feature(self, uid: UUID) -> DfEngineFeatures:
         record = (
@@ -288,6 +316,12 @@ class FeatureManagementController(CoreDependencies):
                 )
             await self.db.flush()
 
+            logging.info(
+                f"user={self.user['user_id']} created feature uid={feature.uid} "
+                f"name={feature.name!r} is_active={feature.is_active} template_count={len(map_template)}"
+            )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
             response.data = await self.get_features()
         except BaseError:
             raise
@@ -365,6 +399,8 @@ class FeatureManagementController(CoreDependencies):
                 .all()
             )
             existing_by_template_id = {mapping.template_id: mapping for mapping in existing_mappings}
+            unlinked_count = len(existing_by_template_id.keys() - desired_ids)
+            linked_count = len(desired_ids - existing_by_template_id.keys())
 
             for template_id, mapping in existing_by_template_id.items():
                 if template_id not in desired_ids:
@@ -382,6 +418,14 @@ class FeatureManagementController(CoreDependencies):
 
             await self.db.flush()
 
+            logging.info(
+                f"user={self.user['user_id']} updated feature uid={feature.uid} "
+                f"name={feature.name!r} is_active={feature.is_active} "
+                f"templates_linked={linked_count} templates_unlinked={unlinked_count}"
+            )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
+            await self.redis.delete(detail_cache_key(str(uid)))
             response.data = await self.get_features()
         except BaseError:
             raise
@@ -450,6 +494,13 @@ class FeatureManagementController(CoreDependencies):
             await self.db.delete(feature)
             await self.db.flush()
 
+            logging.info(
+                f"user={self.user['user_id']} deleted feature uid={feature.uid} "
+                f"name={feature.name!r} mapping_count={len(mappings)} menu_mapping_count={len(menu_mappings)}"
+            )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
+            await self.redis.delete(detail_cache_key(str(uid)))
             response.data = await self.get_features()
         except BaseError:
             raise

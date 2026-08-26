@@ -24,8 +24,17 @@ from utils.serializer import serialize
 from services.mysql import query
 from services.mysql.model import DfEngineSettings, DfEngineSettingLogs, DfEngineModelOptions, Users, Employees
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
+from services.redis import get_json, set_json, delete_pattern
 
 SETTING_CODE = "admin_setting"
+
+CACHE_TTL_SECONDS = 3600
+DETAIL_CACHE_KEY = f"setting:detail:{SETTING_CODE}"
+LOGS_CACHE_PATTERN = "setting:logs:*"
+
+
+def logs_cache_key(page: int, items_per_page: int) -> str:
+    return f"setting:logs:page={page}:size={items_per_page}"
 
 
 class SettingController(CoreDependencies):
@@ -100,19 +109,32 @@ class SettingController(CoreDependencies):
         return record
 
     async def build_setting_response(self) -> dict[str, Any]:
+        """The settings config is global, not per-user (no `action`/permission
+        block like the other controllers' list responses), so the fully
+        resolved response can be cached and returned as-is — no per-request
+        reformatting step is needed.
+        """
+        cached = await get_json(self.redis, DETAIL_CACHE_KEY)
+        if cached is not None:
+            return cached
+
         rows = await self.get_setting_rows()
         enhancer_row = rows.get("enhancer_model")
         assistant_row = rows.get("assistant_model")
+        enhancer_model = await self.resolve_engine_model(enhancer_row.value if enhancer_row else None)
+        assistant_model = await self.resolve_engine_model(assistant_row.value if assistant_row else None)
 
-        return {
+        result = {
             "admin_view": self._parse_group(rows, "admin_view", AdminView),
             "limit": self._parse_group(rows, "limit", UserRateLimit),
             "spend_ceiling": self._parse_group(rows, "spend_ceiling", UserSpendCeiling),
             "storyboard": self._parse_group(rows, "storyboard", UserStoryboard),
             "compose_input": self._parse_group(rows, "compose_input", UserComposeInput),
-            "enhancer_model": await self.resolve_engine_model(enhancer_row.value if enhancer_row else None),
-            "assistant_model": await self.resolve_engine_model(assistant_row.value if assistant_row else None),
+            "enhancer_model": serialize(enhancer_model) if enhancer_model else None,
+            "assistant_model": serialize(assistant_model) if assistant_model else None,
         }
+        await set_json(self.redis, DETAIL_CACHE_KEY, result, ttl=CACHE_TTL_SECONDS)
+        return result
 
     def _client_ip(self, request: Request) -> str:
         forwarded_for = request.headers.get("X-Forwarded-For", "").split(",")[0]
@@ -169,7 +191,8 @@ class SettingController(CoreDependencies):
                 row.value = value
                 row.updated_at = local_time()
 
-        if is_first_save or previous_snapshot != incoming_snapshot:
+        changed = is_first_save or previous_snapshot != incoming_snapshot
+        if changed:
             user_id = int(self.user["user_id"])
             user_email, user_name = await self._snapshot_user(user_id)
             self.db.add(
@@ -186,7 +209,25 @@ class SettingController(CoreDependencies):
 
         await self.db.flush()
 
+        logging.info(f"user={self.user['user_id']} saved settings code={SETTING_CODE} changed={changed}")
+
+        await self.redis.delete(DETAIL_CACHE_KEY)
+        if changed:
+            # Only a real change adds a new df_engine_setting_logs row — an
+            # unchanged save has nothing new for the logs cache to miss.
+            await delete_pattern(self.redis, LOGS_CACHE_PATTERN)
+
     async def fetch_setting_logs(self, page: int, items_per_page: int) -> tuple[list[dict[str, Any]], int]:
+        """No `action`/permission block here either (each entry's `creator` is
+        who made *that* historical change, not the current caller), so the
+        fully formatted page can be cached and returned as-is, keyed by page
+        + page size like model_management's multi-dimension list.
+        """
+        cache_key = logs_cache_key(page, items_per_page)
+        cached = await get_json(self.redis, cache_key)
+        if cached is not None:
+            return cached["logs"], cached["total_data"]
+
         query_options = (
             selectinload(DfEngineSettingLogs.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
@@ -218,7 +259,9 @@ class SettingController(CoreDependencies):
             record.pop("created_by", None)
             logs.append(record)
 
-        return logs, total_data or 0
+        total_data = total_data or 0
+        await set_json(self.redis, cache_key, {"logs": logs, "total_data": total_data}, ttl=CACHE_TTL_SECONDS)
+        return logs, total_data
 
     @controller.get(
         "/setting",

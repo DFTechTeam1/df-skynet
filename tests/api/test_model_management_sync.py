@@ -26,7 +26,8 @@ from uuid import uuid4
 from sqlalchemy import select
 from services.mysql.model import DfEngineModelOptions
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
-from apps.controller.model_management import ModelManagementController
+from services.redis import client as redis_client
+from apps.controller.model_management import ModelManagementController, list_cache_key
 
 URL = "/api/models"
 
@@ -209,3 +210,18 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("POST", URL, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_sync_invalidates_the_list_cache(authed_client, mock_model_sync):
+    """200 OK; even a no-op sync (nothing configured on mock_model_sync, same safe setup as the
+    "skips unconfigured types" test above) still clears every cached list page — sync always
+    flushes at the end regardless of whether anything actually changed."""
+    redis = redis_client()
+    await authed_client.call("GET", URL)
+    key = list_cache_key(None, None, None, 1, 500)
+    assert await redis.exists(key)
+
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+    assert not await redis.exists(key)

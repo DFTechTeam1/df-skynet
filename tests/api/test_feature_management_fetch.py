@@ -4,10 +4,15 @@ from uuid import uuid4
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from services.redis import client as redis_client
 from utils import local_time
 from tests.helpers import expected_user, find_by_name, response_names
 
 URL = "/api/feature-management"
+
+# NOTE: `tests/conftest.py`'s `_clear_all_redis_caches` autouse fixture
+# clears every controller's cache before each test — no per-file fixture
+# needed here even though these tests bypass the API via factories.
 
 
 @pytest.mark.asyncio
@@ -173,3 +178,40 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", URL, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_list_response_is_cached_with_a_ttl(authed_client):
+    """200 OK; a GET populates `feature_management:list:all` in Redis with an expiry."""
+    redis = redis_client()
+    resp = await authed_client.call("GET", URL)
+    assert resp.status_code == 200
+    assert await redis.exists("feature_management:list:all")
+    assert await redis.ttl("feature_management:list:all") > 0
+
+
+@pytest.mark.asyncio
+async def test_create_invalidates_the_list_cache(authed_client, user_id):
+    """200 OK; a POST clears the cached list so the next GET reflects the new row, not the stale cache."""
+    redis = redis_client()
+    await authed_client.call("GET", URL)
+    assert await redis.exists("feature_management:list:all")
+
+    name = f"Cache invalidation {uuid4().hex[:8]}"
+    await authed_client.call("POST", URL, json={"name": name})
+
+    resp = await authed_client.call("GET", URL)
+    assert name in response_names(resp.json())
+
+
+@pytest.mark.asyncio
+async def test_detail_response_is_cached_with_a_ttl(authed_client, user_id):
+    """200 OK; GET-by-uid populates `feature_management:detail:<uid>` in Redis with an expiry."""
+    row = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    redis = redis_client()
+
+    resp = await authed_client.call("GET", f"{URL}/{row.uid}")
+    assert resp.status_code == 200
+    key = f"feature_management:detail:{row.uid}"
+    assert await redis.exists(key)
+    assert await redis.ttl(key) > 0

@@ -8,6 +8,7 @@ from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from services.redis import client as redis_client
 from tests.helpers import response_names
 
 URL = "/api/feature-management"
@@ -91,3 +92,17 @@ async def test_requires_auth(client, user_id):
     feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     resp = await client.call("DELETE", f"{URL}/{feature.uid}", raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_invalidates_the_list_cache(authed_client, user_id):
+    """200 OK; DELETE clears the cached list so a subsequent GET no longer shows the deleted feature."""
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    warm = await authed_client.call("GET", URL)
+    assert feature.name in response_names(warm.json())
+    assert await redis_client().exists("feature_management:list:all")
+
+    await authed_client.call("DELETE", f"{URL}/{feature.uid}")
+
+    resp = await authed_client.call("GET", URL)
+    assert feature.name not in response_names(resp.json())

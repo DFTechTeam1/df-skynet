@@ -16,6 +16,7 @@ from services.mysql.model import (
     Users,
     Employees,
 )
+from services.redis import get_json, set_json, delete_pattern
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils.serializer import serialize
@@ -28,6 +29,17 @@ menu_permission = {
     "update_df_engine_menu": "update_df_engine_menu",
     "delete_df_engine_menu": "delete_df_engine_menu",
 }
+
+CACHE_TTL_SECONDS = 3600
+LIST_CACHE_PATTERN = "menu_management:list:*"
+
+
+def list_cache_key(name: Optional[str]) -> str:
+    return f"menu_management:list:{(name or '').strip().lower() or 'all'}"
+
+
+def detail_cache_key(uid: str) -> str:
+    return f"menu_management:detail:{uid}"
 
 
 class MenuManagementController(CoreDependencies):
@@ -96,38 +108,54 @@ class MenuManagementController(CoreDependencies):
         return menu
 
     async def get_menus(self, name: Optional[str] = None) -> list[dict[str, Any]]:
-        """Will fetch all menus available if name not provided, ordered by latest to oldest."""
-        query = select(DfEngineMenus)
-        if name:
-            query = query.where(DfEngineMenus.name.ilike(f"{name}%"))  # type: ignore
-        records = (
-            (
-                await self.db.execute(
-                    query.options(*self.query_options()).order_by(  # type: ignore
-                        DfEngineMenus.created_at.desc()  # type: ignore
+        """Will fetch all menus available if name not provided, ordered by latest to oldest.
+
+        Raw (pre-`format_response`) rows are cached in Redis keyed by the
+        normalized `name` filter — cached data has no per-user info, so it's
+        safe to share across requests. `format_response` still runs on every
+        call to compute the requesting user's own `action` permissions.
+        """
+        cache_key = list_cache_key(name)
+        raw = await get_json(self.redis, cache_key)
+        if raw is None:
+            query = select(DfEngineMenus)
+            if name:
+                query = query.where(DfEngineMenus.name.ilike(f"{name}%"))  # type: ignore
+            records = (
+                (
+                    await self.db.execute(
+                        query.options(*self.query_options()).order_by(  # type: ignore
+                            DfEngineMenus.created_at.desc()  # type: ignore
+                        )
                     )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
+            raw = serialize(records)
+            await set_json(self.redis, cache_key, raw, ttl=CACHE_TTL_SECONDS)
 
         permissions = self.user.get("permissions", [])
-        return [self.format_response(menu, permissions) for menu in serialize(records)]
+        return [self.format_response(menu, permissions) for menu in raw]
 
     async def get_menu_detail(self, uid: UUID) -> dict[str, Any]:
-        record = (
-            await self.db.execute(
-                select(DfEngineMenus)
-                .where(DfEngineMenus.uid == str(uid))  # type: ignore
-                .options(*self.query_options())  # type: ignore
-            )
-        ).scalar_one_or_none()
-        if record is None:
-            raise DataNotFoundError(message="menu_not_found")
+        cache_key = detail_cache_key(str(uid))
+        raw = await get_json(self.redis, cache_key)
+        if raw is None:
+            record = (
+                await self.db.execute(
+                    select(DfEngineMenus)
+                    .where(DfEngineMenus.uid == str(uid))  # type: ignore
+                    .options(*self.query_options())  # type: ignore
+                )
+            ).scalar_one_or_none()
+            if record is None:
+                raise DataNotFoundError(message="menu_not_found")
+            raw = serialize(record)
+            await set_json(self.redis, cache_key, raw, ttl=CACHE_TTL_SECONDS)
 
         permissions = self.user.get("permissions", [])
-        return self.format_response(serialize(record), permissions)
+        return self.format_response(raw, permissions)
 
     async def get_menu(self, uid: UUID) -> DfEngineMenus:
         record = (
@@ -286,6 +314,12 @@ class MenuManagementController(CoreDependencies):
                 )
             await self.db.flush()
 
+            logging.info(
+                f"user={self.user['user_id']} created menu uid={menu.uid} "
+                f"name={menu.name!r} is_active={menu.is_active} feature_count={len(map_feature)}"
+            )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
             response.data = await self.get_menus()
         except BaseError:
             raise
@@ -365,6 +399,8 @@ class MenuManagementController(CoreDependencies):
                 .all()
             )
             existing_by_feature_id = {mapping.feature_id: mapping for mapping in existing_mappings}
+            unlinked_count = len(existing_by_feature_id.keys() - desired_ids)
+            linked_count = len(desired_ids - existing_by_feature_id.keys())
 
             for feature_id, mapping in existing_by_feature_id.items():
                 if feature_id not in desired_ids:
@@ -382,6 +418,14 @@ class MenuManagementController(CoreDependencies):
 
             await self.db.flush()
 
+            logging.info(
+                f"user={self.user['user_id']} updated menu uid={menu.uid} "
+                f"name={menu.name!r} is_active={menu.is_active} "
+                f"features_linked={linked_count} features_unlinked={unlinked_count}"
+            )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
+            await self.redis.delete(detail_cache_key(str(uid)))
             response.data = await self.get_menus()
         except BaseError:
             raise
@@ -435,6 +479,13 @@ class MenuManagementController(CoreDependencies):
             await self.db.delete(menu)
             await self.db.flush()
 
+            logging.info(
+                f"user={self.user['user_id']} deleted menu uid={menu.uid} "
+                f"name={menu.name!r} mapping_count={len(mappings)}"
+            )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
+            await self.redis.delete(detail_cache_key(str(uid)))
             response.data = await self.get_menus()
         except BaseError:
             raise

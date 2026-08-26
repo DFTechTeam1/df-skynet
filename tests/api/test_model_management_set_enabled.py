@@ -2,6 +2,8 @@ import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from services.redis import client as redis_client
+from apps.controller.model_management import list_cache_key
 
 URL = "/api/models"
 
@@ -75,3 +77,23 @@ async def test_requires_auth(client):
     row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
     resp = await client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": True}, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_set_enabled_invalidates_the_list_cache(authed_client):
+    """200 OK; a PATCH clears the list cache so a subsequent GET reflects the change, not the stale cache."""
+    prefix = f"Cache{uuid4().hex[:8]}"
+    row = DfEngineModelOptionsFactory.create(
+        name=prefix, type="text", is_available=True, is_enabled=False, is_main=False
+    )
+    redis = redis_client()
+
+    await authed_client.call("GET", "/api/models", params={"search": prefix})
+    key = list_cache_key(None, prefix, None, 1, 500)
+    assert await redis.exists(key)
+
+    await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": True})
+
+    resp = await authed_client.call("GET", "/api/models", params={"search": prefix})
+    item = next(i for i in resp.json()["data"]["paginated"] if i["name"] == prefix)
+    assert item["is_enabled"] is True
