@@ -1,5 +1,7 @@
 import pytest
 from typing import Any
+from services.redis import client as redis_client
+from apps.controller.setting import logs_cache_key
 from tests.helpers import clear_setting_state
 
 SETTING_URL = "/api/setting"
@@ -89,3 +91,49 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", LOGS_URL, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_logs_response_is_cached_with_a_ttl(authed_client, db_session):
+    """200 OK; a GET populates the logs cache (keyed by page + page size) in Redis with an expiry."""
+    await clear_setting_state(db_session)
+    await authed_client.call("POST", SETTING_URL, json=_base_payload())
+    redis = redis_client()
+
+    resp = await authed_client.call("GET", LOGS_URL)
+    assert resp.status_code == 200
+    key = logs_cache_key(1, 50)
+    assert await redis.exists(key)
+    assert await redis.ttl(key) > 0
+
+
+@pytest.mark.asyncio
+async def test_changed_save_invalidates_the_logs_cache(authed_client, db_session):
+    """200 OK; a save that actually changes something clears the cached logs page so the new entry shows up."""
+    await clear_setting_state(db_session)
+    await authed_client.call("POST", SETTING_URL, json=_base_payload())
+    await authed_client.call("GET", LOGS_URL)  # warm the cache at totalData == 1
+    redis = redis_client()
+    key = logs_cache_key(1, 50)
+    assert await redis.exists(key)
+
+    await authed_client.call("POST", SETTING_URL, json=_base_payload(admin_view={"see_all_asset": False}))
+
+    resp = await authed_client.call("GET", LOGS_URL)
+    assert resp.json()["data"]["totalData"] == 2
+
+
+@pytest.mark.asyncio
+async def test_unchanged_save_does_not_invalidate_the_logs_cache(authed_client, db_session):
+    """200 OK; saving identical values again adds no log row, so the cached logs page is deliberately left alone."""
+    await clear_setting_state(db_session)
+    payload = _base_payload()
+    await authed_client.call("POST", SETTING_URL, json=payload)
+    await authed_client.call("GET", LOGS_URL)  # warm the cache
+    redis = redis_client()
+    key = logs_cache_key(1, 50)
+    assert await redis.exists(key)
+
+    await authed_client.call("POST", SETTING_URL, json=payload)
+
+    assert await redis.exists(key)

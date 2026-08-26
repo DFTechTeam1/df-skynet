@@ -39,6 +39,38 @@ def _reset_rate_limiter():
     yield
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_all_redis_caches():
+    """Every controller now caches its GET responses in Redis. Tests build
+    state either through the API itself (which invalidates its own cache on
+    every write) or directly via SQLModel factories / raw DB deletes, which
+    bypass that invalidation entirely. A stale cache entry left by an earlier
+    test can then hide a later test's freshly-inserted (or freshly-removed)
+    row, regardless of which file that earlier test lived in. Clearing every
+    known cache namespace before each test keeps the whole suite cache-cold
+    by default — one blanket fix instead of chasing down every individual
+    factory-then-GET combination file by file.
+    """
+    from services.redis import client as redis_client, delete_pattern
+
+    redis = redis_client()
+    for pattern in (
+        "feature_management:list:*",
+        "feature_management:detail:*",
+        "menu_management:list:*",
+        "menu_management:detail:*",
+        "prompt_template:list:*",
+        "prompt_template:detail:*",
+        "model_management:list:*",
+        "api_key_management:list:*",
+        "setting:detail:*",
+        "setting:logs:*",
+        "user_preference:detail:*",
+    ):
+        await delete_pattern(redis, pattern)
+    yield
+
+
 @pytest_asyncio.fixture
 async def db_session():
     async with make_session(DB_ASYNC_URL)() as session:

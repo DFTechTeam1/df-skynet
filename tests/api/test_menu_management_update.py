@@ -6,7 +6,8 @@ from services.mysql.model import DfEngineMenuFeatureMappings
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
-from tests.helpers import find_by_name
+from services.redis import client as redis_client
+from tests.helpers import find_by_name, response_names
 
 URL = "/api/menu-management"
 
@@ -190,3 +191,33 @@ async def test_requires_auth(client, user_id):
         raise_for_status=False,
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_update_invalidates_the_detail_cache(authed_client, user_id):
+    """200 OK; PATCH clears the cached detail so the next GET-by-uid reflects the new name, not the stale cache."""
+    menu = _make_menu(user_id)
+    detail_before = await authed_client.call("GET", f"{URL}/{menu.uid}")
+    assert detail_before.json()["data"]["name"] == menu.name
+
+    renamed = f"{menu.name}-v2"
+    await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": renamed})
+
+    detail_after = await authed_client.call("GET", f"{URL}/{menu.uid}")
+    assert detail_after.json()["data"]["name"] == renamed
+
+
+@pytest.mark.asyncio
+async def test_update_invalidates_the_list_cache(authed_client, user_id):
+    """200 OK; PATCH clears the cached list so a subsequent GET reflects the rename, not the stale cache."""
+    menu = _make_menu(user_id)
+    await authed_client.call("GET", URL)  # warm the unfiltered list cache
+    assert await redis_client().exists("menu_management:list:all")
+
+    renamed = f"{menu.name}-v2"
+    await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": renamed})
+
+    resp = await authed_client.call("GET", URL)
+    found = response_names(resp.json())
+    assert renamed in found
+    assert menu.name not in found

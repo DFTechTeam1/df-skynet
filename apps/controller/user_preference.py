@@ -8,9 +8,20 @@ from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.user_preference import PreferencePayload, CONFIRM_BEFORE_SPENDING_LABELS
 from services.mysql.model import DfEnginePreferences
+from services.redis import get_json, set_json
 from log import logging
 from error import ServiceError, BaseError, DataConflictError
 from utils import local_time
+
+CACHE_TTL_SECONDS = 3600
+
+
+def preference_cache_key(user_id: int) -> str:
+    """Unlike every other cached list/detail in this codebase, this data is
+    per-user, not shared — so `user_id` has to be part of the key itself,
+    not just an input to a shared query.
+    """
+    return f"user_preference:detail:{user_id}"
 
 
 class UserPreferenceController(CoreDependencies):
@@ -24,12 +35,24 @@ class UserPreferenceController(CoreDependencies):
         return data
 
     async def get_preference(self, user_id: int) -> dict[str, Any]:
+        """A user who hasn't saved preferences yet still gets a cached entry —
+        the *resolved* default — so repeat fetches from that user skip the DB
+        too, not just users who already have a row.
+        """
+        cache_key = preference_cache_key(user_id)
+        cached = await get_json(self.redis, cache_key)
+        if cached is not None:
+            return cached
+
         row = await self.get_preference_row(user_id)
         if row is None:
-            return self._format_response(PreferencePayload().model_dump(mode="json"))
-        return self._format_response(
-            PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
-        )
+            result = self._format_response(PreferencePayload().model_dump(mode="json"))
+        else:
+            result = self._format_response(
+                PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
+            )
+        await set_json(self.redis, cache_key, result, ttl=CACHE_TTL_SECONDS)
+        return result
 
     async def upsert_preference(self, user_id: int, schema: PreferencePayload) -> dict[str, Any]:
         row = await self.get_preference_row(user_id)
@@ -48,9 +71,16 @@ class UserPreferenceController(CoreDependencies):
         except IntegrityError:
             raise DataConflictError(message="preference_already_exists")
 
-        return self._format_response(
+        logging.info(f"user={user_id} saved preferences theme={row.theme!r} accent={row.accent!r}")
+
+        result = self._format_response(
             PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
         )
+        # The row we just wrote is already the exact value the cache should
+        # hold — overwrite it directly instead of invalidating and letting
+        # the next GET re-fetch from the DB.
+        await set_json(self.redis, preference_cache_key(user_id), result, ttl=CACHE_TTL_SECONDS)
+        return result
 
     @controller.get(
         "/user-preference",

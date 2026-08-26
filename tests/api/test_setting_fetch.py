@@ -1,5 +1,7 @@
 import pytest
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from services.redis import client as redis_client
+from apps.controller.setting import DETAIL_CACHE_KEY
 from tests.helpers import clear_setting_state
 
 URL = "/api/setting"
@@ -85,3 +87,39 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", URL, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_response_is_cached_with_a_ttl(authed_client, db_session):
+    """200 OK; a GET populates the settings cache (a single global key) in Redis with an expiry."""
+    await clear_setting_state(db_session)
+    redis = redis_client()
+
+    resp = await authed_client.call("GET", URL)
+    assert resp.status_code == 200
+    assert await redis.exists(DETAIL_CACHE_KEY)
+    assert await redis.ttl(DETAIL_CACHE_KEY) > 0
+
+
+@pytest.mark.asyncio
+async def test_post_invalidates_the_detail_cache(authed_client, db_session):
+    """200 OK; a POST clears the cached settings so the next GET reflects the new save, not the stale cache."""
+    await clear_setting_state(db_session)
+    redis = redis_client()
+
+    await authed_client.call("GET", URL)  # warm the cache with the defaults
+    assert await redis.exists(DETAIL_CACHE_KEY)
+
+    payload = {
+        "admin_view": {"see_all_asset": False},
+        "limit": {"generate_per_min": 5, "enhance_per_min": 10},
+        "spend_ceiling": {"daily_ceiling_global_user": 100, "daily_ceiling_per_user": 20},
+        "storyboard": {"max_storyboard_char": 3000, "max_scene_per_storyboard": 50, "max_shot_per_scene": 20},
+        "compose_input": {"max_prompt_char": 2000},
+        "enhancer_model": None,
+        "assistant_model": None,
+    }
+    await authed_client.call("POST", URL, json=payload)
+
+    resp = await authed_client.call("GET", URL)
+    assert resp.json()["data"]["admin_view"] == payload["admin_view"]

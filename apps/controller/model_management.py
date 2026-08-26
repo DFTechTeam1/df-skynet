@@ -6,10 +6,11 @@ from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy import func
 from apps.controller.core import CoreDependencies
-from apps.controller.setting import SETTING_CODE
+from apps.controller.setting import SETTING_CODE, DETAIL_CACHE_KEY
 from schemas.payload.model_management import SetModelEnabledPayload
 from schemas.response import PaginationResponse, Response
 from services.mysql.model import DfEngineModelOptions, DfEngineSettings
+from services.redis import get_json, set_json, delete_pattern
 from log import logging
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from utils import epoch_to_wib, local_time
@@ -30,6 +31,23 @@ model_management_permission = {
     "fetch_df_engine_model_option": "fetch_df_engine_model_option",
     "sync_df_engine_model_option": "sync_df_engine_model_option",
 }
+
+CACHE_TTL_SECONDS = 3600
+LIST_CACHE_PATTERN = "model_management:list:*"
+
+
+def list_cache_key(
+    type: Optional[str], search: Optional[str], is_enabled: Optional[bool], page: int, items_per_page: int
+) -> str:
+    """This list has more filter dimensions than feature/menu management's
+    plain `name` search (type, search, is_enabled, plus pagination), so every
+    dimension is folded into the key — otherwise two different filtered pages
+    would collide on the same cache entry.
+    """
+    type_key = type or "all"
+    search_key = (search or "").strip().lower() or "all"
+    enabled_key = "all" if is_enabled is None else str(is_enabled).lower()
+    return f"model_management:list:type={type_key}:search={search_key}:is_enabled={enabled_key}:page={page}:size={items_per_page}"
 
 
 class ModelManagementController(CoreDependencies):
@@ -57,6 +75,13 @@ class ModelManagementController(CoreDependencies):
         assistant model — null out any `df_engine_settings` row still pointing at
         it, so the setting falls back to the engine's default instead of quietly
         referencing a model that's no longer selectable.
+
+        This writes straight to `df_engine_settings` — it isn't a settings
+        "save" (no `df_engine_setting_logs` entry, see `setting.py`'s own
+        upsert), but `setting.py`'s cached response still embeds whatever
+        `enhancer_model`/`assistant_model` was resolved at cache time, so a
+        clear here must also drop that cache or the settings page keeps
+        showing a model that's no longer selectable until its TTL expires.
         """
         rows = await query(
             db=self.db,
@@ -70,6 +95,53 @@ class ModelManagementController(CoreDependencies):
         for row in rows:
             row.value = None
             row.updated_at = local_time()
+
+        if rows:
+            await self.redis.delete(DETAIL_CACHE_KEY)
+
+    async def get_available_models(
+        self,
+        type: Optional[ModelUsageTypes],
+        search: Optional[str],
+        is_enabled: Optional[bool],
+        page: int,
+        items_per_page: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Raw (pre-`format_response`) page cached in Redis, keyed by every
+        filter/page dimension — cached data has no per-user info, so it's
+        safe to share across requests.
+        """
+        cache_key = list_cache_key(type, search, is_enabled, page, items_per_page)
+        cached = await get_json(self.redis, cache_key)
+        if cached is None:
+            filters: list[Any] = [DfEngineModelOptions.is_available.is_(True)]  # type: ignore
+            if type:
+                filters.append(DfEngineModelOptions.type == type)  # type: ignore
+            if search:
+                filters.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
+            if is_enabled is not None:
+                filters.append(DfEngineModelOptions.is_enabled.is_(is_enabled))  # type: ignore
+            query_filters = tuple(filters)
+
+            total_data = await query(
+                db=self.db,
+                table=DfEngineModelOptions,
+                columns=(func.count(DfEngineModelOptions.id),),  # type: ignore
+                filters=query_filters,
+                fetch_one=True,
+            )
+            records = await query(
+                db=self.db,
+                table=DfEngineModelOptions,
+                filters=query_filters,
+                order_by=(DfEngineModelOptions.type.asc(), DfEngineModelOptions.name.asc()),  # type: ignore
+                limit=items_per_page,
+                offset=(page - 1) * items_per_page,
+            )
+            cached = {"total_data": total_data or 0, "records": serialize(records)}
+            await set_json(self.redis, cache_key, cached, ttl=CACHE_TTL_SECONDS)
+
+        return cached["records"], cached["total_data"]
 
     async def get_model_option(self, uid: UUID) -> DfEngineModelOptions:
         record = await query(
@@ -197,31 +269,7 @@ class ModelManagementController(CoreDependencies):
     ) -> Response:
         response = Response()
         try:
-            filters: list[Any] = [DfEngineModelOptions.is_available.is_(True)]  # type: ignore
-            if type:
-                filters.append(DfEngineModelOptions.type == type)  # type: ignore
-            if search:
-                filters.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
-            if is_enabled is not None:
-                filters.append(DfEngineModelOptions.is_enabled.is_(is_enabled))  # type: ignore
-            query_filters = tuple(filters)
-
-            total_data = await query(
-                db=self.db,
-                table=DfEngineModelOptions,
-                columns=(func.count(DfEngineModelOptions.id),),  # type: ignore
-                filters=query_filters,
-                fetch_one=True,
-            )
-
-            records = await query(
-                db=self.db,
-                table=DfEngineModelOptions,
-                filters=query_filters,
-                order_by=(DfEngineModelOptions.type.asc(), DfEngineModelOptions.name.asc()),  # type: ignore
-                limit=itemsPerPage,
-                offset=(page - 1) * itemsPerPage,
-            )
+            records, total_data = await self.get_available_models(type, search, is_enabled, page, itemsPerPage)
 
             # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
             #     "permissions", []
@@ -229,8 +277,8 @@ class ModelManagementController(CoreDependencies):
             has_sync_permission = True  # will be overide first
 
             response.data = PaginationResponse(
-                paginated=[self.format_response(record, has_sync_permission) for record in serialize(records)],
-                totalData=total_data or 0,
+                paginated=[self.format_response(record, has_sync_permission) for record in records],
+                totalData=total_data,
             )
         except BaseError:
             raise
@@ -284,6 +332,8 @@ class ModelManagementController(CoreDependencies):
                 f"user={self.user['user_id']} model uid={record.uid} model_id={record.model_id} "
                 f"is_enabled={record.is_enabled} is_main={record.is_main}"
             )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
 
             # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
             #     "permissions", []
@@ -359,6 +409,8 @@ class ModelManagementController(CoreDependencies):
                 f"inserted={totals['inserted']} updated={totals['updated']} "
                 f"disabled={totals['disabled']} skipped={totals['skipped']}"
             )
+
+            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
         except BaseError:
             raise
         except Exception:

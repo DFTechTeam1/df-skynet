@@ -20,6 +20,7 @@ from services.mysql.model import (
     PositionBackups,
     Users,
 )
+from services.redis import get_json, set_json, delete_pattern
 from log import logging
 from apps.secret import OPENROUTER_BASE_URL, OPENROUTER_MANAGEMENT_KEY
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
@@ -35,6 +36,9 @@ key_management_permission = {
     "delete_df_engine_key_management": "delete_df_engine_key_management",
     "copy_df_engine_key_management": "copy_df_engine_key_management",
 }
+
+CACHE_TTL_SECONDS = 3600
+LIST_CACHE_KEY = "api_key_management:list:all"
 
 EMPLOYEE_STATUS_RESIGNED = 6
 ALLOWED_PIC_POSITIONS = {"project manager", "assistant project manager"}
@@ -99,17 +103,27 @@ class APIKeyManagementController(CoreDependencies):
         )
 
     async def get_api_keys(self) -> list[dict[str, Any]]:
-        records = (
-            (
-                await self.db.execute(
-                    select(DfEngineApiKeys)
-                    .options(*self.options())  # type: ignore
-                    .order_by(DfEngineApiKeys.created_at.desc())  # type: ignore
+        """Raw (pre-`format_response`) rows are cached in Redis — cached data
+        has no per-user info, so it's safe to share across requests.
+        `format_response` still runs on every call, since `can_*` actions
+        depend on `permissions` (currently overridden, but kept live for when
+        the real per-user permission list is wired back in).
+        """
+        raw = await get_json(self.redis, LIST_CACHE_KEY)
+        if raw is None:
+            records = (
+                (
+                    await self.db.execute(
+                        select(DfEngineApiKeys)
+                        .options(*self.options())  # type: ignore
+                        .order_by(DfEngineApiKeys.created_at.desc())  # type: ignore
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
+            raw = serialize(records)
+            await set_json(self.redis, LIST_CACHE_KEY, raw, ttl=CACHE_TTL_SECONDS)
 
         # permissions = self.user.get("permissions", [])
         permissions = [
@@ -117,8 +131,10 @@ class APIKeyManagementController(CoreDependencies):
             "delete_df_engine_key_management",
             "copy_df_engine_key_management",
         ]  # overidden
-        employee_ids_with_main = {row.employee_id for row in records if row.is_main and row.employee_id is not None}
-        return [self.format_response(row, permissions, employee_ids_with_main) for row in serialize(records)]
+        employee_ids_with_main = {
+            row["employee_id"] for row in raw if row["is_main"] and row["employee_id"] is not None
+        }
+        return [self.format_response(row, permissions, employee_ids_with_main) for row in raw]
 
     async def get_employee(self, employee_uid: UUID) -> Employees:
         employee = (
@@ -384,6 +400,7 @@ class APIKeyManagementController(CoreDependencies):
                 f"user={self.user['user_id']} created api key uid={api_key.uid} "
                 f"name={api_key.name!r} employee_id={employee.id} is_main={api_key.is_main}"
             )
+            await self.redis.delete(LIST_CACHE_KEY)
             response.data = await self.get_api_keys()
         except BaseError:
             raise
@@ -550,6 +567,7 @@ class APIKeyManagementController(CoreDependencies):
                 f"user={self.user['user_id']} rotate summary: "
                 f"rotated={total_rotated} failed={total_failed} partial={total_partial}"
             )
+            await self.redis.delete(LIST_CACHE_KEY)
             response.data = await self.get_api_keys()
         except BaseError:
             raise
@@ -625,6 +643,7 @@ class APIKeyManagementController(CoreDependencies):
                     f"user={self.user['user_id']} deleted api key uid={record_uid} "
                     f"name={record_name!r} reason=missing_hash"
                 )
+                await self.redis.delete(LIST_CACHE_KEY)
                 response.data = await self.get_api_keys()
                 return response
 
@@ -636,6 +655,7 @@ class APIKeyManagementController(CoreDependencies):
                     f"user={self.user['user_id']} deleted api key uid={record_uid} "
                     f"name={record_name!r} reason=invalid_hash"
                 )
+                await self.redis.delete(LIST_CACHE_KEY)
                 response.data = await self.get_api_keys()
                 return response
 
@@ -661,6 +681,7 @@ class APIKeyManagementController(CoreDependencies):
                 f"name={record_name!r} reason=revoked_on_openrouter"
             )
 
+            await self.redis.delete(LIST_CACHE_KEY)
             response.data = await self.get_api_keys()
 
         except BaseError:
@@ -694,6 +715,11 @@ class APIKeyManagementController(CoreDependencies):
             examples=["8d96ff4e-5c35-4329-bd5d-827e2c68599d"],
         ),
     ) -> Response:
+        # Deliberately not cached: this is the one endpoint that hands back an
+        # unmasked secret key. Every call is already an audited reveal event
+        # (logged below) — storing that plaintext in Redis too would widen its
+        # exposure for no benefit, since reveals aren't meant to be repeated
+        # rapidly like a list/detail fetch.
         response = Response()
         try:
             record = await self.get_api_key(uid)
@@ -795,6 +821,7 @@ class APIKeyManagementController(CoreDependencies):
                 f"user={self.user['user_id']} updated api key uid={record.uid} "
                 f"name={record.name!r} openrouter_synced={trigger_update} is_main={record.is_main}"
             )
+            await self.redis.delete(LIST_CACHE_KEY)
             response.data = await self.get_api_keys()
         except BaseError:
             raise

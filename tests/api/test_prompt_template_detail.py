@@ -2,6 +2,7 @@ import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from services.redis import client as redis_client
 from tests.helpers import expected_user
 
 URL = "/api/prompt-management"
@@ -102,3 +103,16 @@ async def test_fetch_detail_not_found_message_respects_accept_language(authed_cl
     assert en_resp.json()["message"] == resolve_message("prompt_template_not_found", "en")
     assert id_resp.json()["message"] == resolve_message("prompt_template_not_found", "id")
     assert en_resp.json()["message"] != id_resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_detail_response_is_cached_with_a_ttl(authed_client, user_id):
+    """200 OK; GET-by-uid populates `prompt_template:detail:<uid>` in Redis with an expiry."""
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    redis = redis_client()
+
+    resp = await authed_client.call("GET", f"{URL}/{row.uid}")
+    assert resp.status_code == 200
+    key = f"prompt_template:detail:{row.uid}"
+    assert await redis.exists(key)
+    assert await redis.ttl(key) > 0

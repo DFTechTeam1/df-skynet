@@ -1,4 +1,6 @@
 import pytest
+from services.redis import client as redis_client
+from apps.controller.user_preference import preference_cache_key
 from tests.helpers import clear_preference_row
 
 URL = "/api/user-preference"
@@ -67,3 +69,28 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("POST", URL, json={}, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_post_overwrites_the_cache_with_the_saved_value(authed_client, db_session, user_id):
+    """200 OK; POST writes the fresh value straight into the per-user cache key, so an immediate
+    GET reflects it without needing to fall back to the DB."""
+    await clear_preference_row(db_session, user_id)
+    redis = redis_client()
+    key = preference_cache_key(int(user_id))
+
+    payload = {
+        "theme": "light",
+        "accent": "violet",
+        "language": "indonesia",
+        "default_aspect_ratio": "1:1",
+        "default_size": "2K",
+        "confirm_before_spending": "over_0.1",
+    }
+    resp = await authed_client.call("POST", URL, json=payload)
+    assert resp.status_code == 200
+    assert await redis.exists(key)
+    assert await redis.ttl(key) > 0
+
+    fetch = await authed_client.call("GET", URL)
+    assert fetch.json()["data"]["theme"] == "light"

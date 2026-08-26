@@ -6,6 +6,7 @@ from services.mysql.model import DfEngineMenuFeatureMappings
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+from services.redis import client as redis_client
 from tests.helpers import response_names
 
 URL = "/api/menu-management"
@@ -68,3 +69,17 @@ async def test_requires_auth(client, user_id):
     menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     resp = await client.call("DELETE", f"{URL}/{menu.uid}", raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_invalidates_the_list_cache(authed_client, user_id):
+    """200 OK; DELETE clears the cached list so a subsequent GET no longer shows the deleted menu."""
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    warm = await authed_client.call("GET", URL)
+    assert menu.name in response_names(warm.json())
+    assert await redis_client().exists("menu_management:list:all")
+
+    await authed_client.call("DELETE", f"{URL}/{menu.uid}")
+
+    resp = await authed_client.call("GET", URL)
+    assert menu.name not in response_names(resp.json())

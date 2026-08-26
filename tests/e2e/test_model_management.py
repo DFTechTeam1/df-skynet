@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import update
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.model import DfEngineModelOptions
+from services.redis import client as redis_client, delete_pattern
 
 URL = "/api/models"
 
@@ -54,6 +55,11 @@ async def test_disable_cascades_then_unavailable_blocks_actions_journey(authed_c
         update(DfEngineModelOptions).where(DfEngineModelOptions.id == row.id).values(is_available=False)  # type: ignore
     )
     await db_session.commit()
+    # A real sync always ends by invalidating the list cache (see
+    # `model_management_to_sync_available_models`) — this raw UPDATE is
+    # standing in for that whole flow, so it has to model that side effect
+    # too, or step 1/2's cached search-by-name page hides this change.
+    await delete_pattern(redis_client(), "model_management:list:*")
 
     # 4. gone from the default fetch view entirely
     resp = await authed_client.call("GET", URL, params={"search": row.name})

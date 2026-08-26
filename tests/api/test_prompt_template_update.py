@@ -6,9 +6,11 @@ from services.mysql.model import DfEngineFeaturePromptMappings
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
-from tests.helpers import expected_user, find_by_name
+from services.redis import client as redis_client
+from tests.helpers import expected_user, find_by_name, response_names
 
 URL = "/api/prompt-management"
+FEATURE_MANAGEMENT_URL = "/api/feature-management"
 
 
 @pytest.mark.asyncio
@@ -147,3 +149,58 @@ async def test_requires_auth(client, user_id):
         raise_for_status=False,
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_update_invalidates_the_detail_cache(authed_client, user_id):
+    """200 OK; PATCH clears the cached detail so the next GET-by-uid reflects the new name, not the stale cache."""
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    detail_before = await authed_client.call("GET", f"{URL}/{row.uid}")
+    assert detail_before.json()["data"]["name"] == row.name
+
+    renamed = f"{row.name}-v2"
+    await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"name": renamed, "prompt": row.prompt})
+
+    detail_after = await authed_client.call("GET", f"{URL}/{row.uid}")
+    assert detail_after.json()["data"]["name"] == renamed
+
+
+@pytest.mark.asyncio
+async def test_update_invalidates_the_list_cache(authed_client, user_id):
+    """200 OK; PATCH clears the cached list so a subsequent GET reflects the rename, not the stale cache."""
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    await authed_client.call("GET", URL)  # warm the unfiltered list cache
+    assert await redis_client().exists("prompt_template:list:all")
+
+    renamed = f"{row.name}-v2"
+    await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"name": renamed, "prompt": row.prompt})
+
+    resp = await authed_client.call("GET", URL)
+    found = response_names(resp.json())
+    assert renamed in found
+    assert row.name not in found
+
+
+@pytest.mark.asyncio
+async def test_deactivating_invalidates_feature_managements_list_cache(authed_client, user_id):
+    """200 OK; deactivating unlinks the template from every feature (see this endpoint's own docstring) —
+    feature_management's cached `templates` arrays embed that same join table, so this has to reach into
+    that controller's cache too, or a deactivated template can keep showing up there until its own TTL expires."""
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    template = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    DfEngineFeaturePromptMappingsFactory.create(df_engine_features=feature, df_engine_prompt_templates=template)
+
+    warm = await authed_client.call("GET", FEATURE_MANAGEMENT_URL)
+    item = find_by_name(warm.json()["data"], feature.name)
+    assert template.uid in {t["template_uid"] for t in item["templates"]}
+    assert await redis_client().exists("feature_management:list:all")
+
+    await authed_client.call(
+        "PATCH",
+        f"{URL}/{template.uid}",
+        json={"name": template.name, "prompt": template.prompt, "is_active": False},
+    )
+
+    refreshed = await authed_client.call("GET", FEATURE_MANAGEMENT_URL)
+    item = find_by_name(refreshed.json()["data"], feature.name)
+    assert item["templates"] == []

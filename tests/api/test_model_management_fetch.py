@@ -1,6 +1,8 @@
 import pytest
 from uuid import uuid4
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from services.redis import client as redis_client
+from apps.controller.model_management import list_cache_key
 
 URL = "/api/models"
 
@@ -165,3 +167,17 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", URL, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_list_response_is_cached_with_a_ttl(authed_client):
+    """200 OK; a GET populates the model_management list cache, keyed by every filter/page dimension, with an expiry."""
+    prefix = f"Cache{uuid4().hex[:8]}"
+    DfEngineModelOptionsFactory.create(name=prefix, type="text", is_available=True, is_enabled=False, is_main=False)
+    redis = redis_client()
+
+    resp = await authed_client.call("GET", URL, params={"search": prefix})
+    assert resp.status_code == 200
+    key = list_cache_key(None, prefix, None, 1, 500)
+    assert await redis.exists(key)
+    assert await redis.ttl(key) > 0

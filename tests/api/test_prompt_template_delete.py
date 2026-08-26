@@ -4,6 +4,7 @@ from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from services.redis import client as redis_client
 from tests.helpers import response_names
 
 URL = "/api/prompt-management"
@@ -85,3 +86,17 @@ async def test_not_found_message_respects_accept_language(authed_client):
     assert en_resp.json()["message"] == resolve_message("prompt_template_not_found", "en")
     assert id_resp.json()["message"] == resolve_message("prompt_template_not_found", "id")
     assert en_resp.json()["message"] != id_resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_delete_invalidates_the_list_cache(authed_client, user_id):
+    """200 OK; DELETE clears the cached list so a subsequent GET no longer shows the deleted template."""
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    warm = await authed_client.call("GET", URL)
+    assert row.name in response_names(warm.json())
+    assert await redis_client().exists("prompt_template:list:all")
+
+    await authed_client.call("DELETE", f"{URL}/{row.uid}")
+
+    resp = await authed_client.call("GET", URL)
+    assert row.name not in response_names(resp.json())
