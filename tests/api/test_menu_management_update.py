@@ -2,44 +2,27 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import (
-    DfEngineFeatures,
-    DfEngineMenuFeatureMappings,
-    DfEngineMenus,
-)
-from tests.helpers import create_record, find_by_name
+from services.mysql.model import DfEngineMenuFeatureMappings
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
+from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+from tests.helpers import find_by_name
 
 URL = "/api/menu-management"
 
 
-async def _make_menu(db_session, user_id):
-    return await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+def _make_menu(user_id):
+    return DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
 
 
-async def _make_feature(db_session, user_id):
-    return await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+def _make_feature(user_id):
+    return DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
 
 
 @pytest.mark.asyncio
-async def test_update_replaces_name_description_and_active(authed_client, db_session, user_id):
+async def test_update_replaces_name_description_and_active(authed_client, user_id):
     """200 OK; PATCH is a full replace of name/description/is_active, not a partial diff."""
-    menu = await _make_menu(db_session, user_id)
+    menu = _make_menu(user_id)
     renamed = f"{menu.name}-v2"
 
     resp = await authed_client.call(
@@ -54,23 +37,15 @@ async def test_update_replaces_name_description_and_active(authed_client, db_ses
 
 
 @pytest.mark.asyncio
-async def test_update_add_and_remove_features_in_one_call(authed_client, db_session, user_id):
+async def test_update_add_and_remove_features_in_one_call(authed_client, user_id):
     """200 OK; process diffs feature_uids against existing mappings — unlinks removed, links added, in one call."""
-    menu = await _make_menu(db_session, user_id)
-    kept = await _make_feature(db_session, user_id)
-    removed = await _make_feature(db_session, user_id)
-    added = await _make_feature(db_session, user_id)
+    menu = _make_menu(user_id)
+    kept = _make_feature(user_id)
+    removed = _make_feature(user_id)
+    added = _make_feature(user_id)
 
-    await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=kept.id, menu_id=menu.id),
-    )
-    await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=removed.id, menu_id=menu.id),
-    )
+    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=kept)
+    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=removed)
 
     resp = await authed_client.call(
         "PATCH",
@@ -89,13 +64,9 @@ async def test_update_add_and_remove_features_in_one_call(authed_client, db_sess
 @pytest.mark.asyncio
 async def test_update_preserves_mapping_uid_for_unchanged_feature(authed_client, db_session, user_id):
     """200 OK; process leaves an unchanged mapping row untouched instead of deleting and recreating it."""
-    menu = await _make_menu(db_session, user_id)
-    feature = await _make_feature(db_session, user_id)
-    mapping = await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, menu_id=menu.id),
-    )
+    menu = _make_menu(user_id)
+    feature = _make_feature(user_id)
+    mapping = DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
@@ -116,15 +87,11 @@ async def test_update_preserves_mapping_uid_for_unchanged_feature(authed_client,
 
 
 @pytest.mark.asyncio
-async def test_update_empty_feature_uids_unlinks_everything(authed_client, db_session, user_id):
+async def test_update_empty_feature_uids_unlinks_everything(authed_client, user_id):
     """200 OK; passing an empty feature_uids list unlinks every currently-mapped feature."""
-    menu = await _make_menu(db_session, user_id)
-    feature = await _make_feature(db_session, user_id)
-    await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, menu_id=menu.id),
-    )
+    menu = _make_menu(user_id)
+    feature = _make_feature(user_id)
+    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
@@ -139,13 +106,9 @@ async def test_update_empty_feature_uids_unlinks_everything(authed_client, db_se
 @pytest.mark.asyncio
 async def test_update_deactivating_removes_its_own_feature_mappings(authed_client, db_session, user_id):
     """200 OK; setting is_active False on the menu deletes its own df_engine_menu_feature_mappings rows."""
-    menu = await _make_menu(db_session, user_id)
-    feature = await _make_feature(db_session, user_id)
-    await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, menu_id=menu.id),
-    )
+    menu = _make_menu(user_id)
+    feature = _make_feature(user_id)
+    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
@@ -183,9 +146,9 @@ async def test_update_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_update_unknown_feature_uid_is_422(authed_client, db_session, user_id):
+async def test_update_unknown_feature_uid_is_422(authed_client, user_id):
     """422; process rejects the whole update if a given feature_uid doesn't exist."""
-    menu = await _make_menu(db_session, user_id)
+    menu = _make_menu(user_id)
     unknown_uid = str(uuid4())
 
     resp = await authed_client.call(
@@ -201,10 +164,10 @@ async def test_update_unknown_feature_uid_is_422(authed_client, db_session, user
 
 
 @pytest.mark.asyncio
-async def test_update_rename_into_collision_is_409(authed_client, db_session, user_id):
+async def test_update_rename_into_collision_is_409(authed_client, user_id):
     """409 when renaming a menu to a name another menu already has."""
-    existing = await _make_menu(db_session, user_id)
-    other = await _make_menu(db_session, user_id)
+    existing = _make_menu(user_id)
+    other = _make_menu(user_id)
 
     resp = await authed_client.call(
         "PATCH",
@@ -217,9 +180,9 @@ async def test_update_rename_into_collision_is_409(authed_client, db_session, us
 
 
 @pytest.mark.asyncio
-async def test_requires_auth(client, db_session, user_id):
+async def test_requires_auth(client, user_id):
     """401 when the request carries no bearer token."""
-    menu = await _make_menu(db_session, user_id)
+    menu = _make_menu(user_id)
     resp = await client.call(
         "PATCH",
         f"{URL}/{menu.uid}",

@@ -1,14 +1,12 @@
 import pytest
 from datetime import timedelta
 from uuid import uuid4
-from services.mysql.model import (
-    DfEngineFeatures,
-    DfEngineMenuFeatureMappings,
-    DfEngineMenus,
-)
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
+from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from utils import local_time
 from middlewares.lang import resolve_message
-from tests.helpers import create_record, expected_user, find_by_name, response_names
+from tests.helpers import expected_user, find_by_name, response_names
 
 URL = "/api/menu-management"
 
@@ -24,17 +22,10 @@ async def test_fetch_all_menus(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_includes_inactive_menus(authed_client, db_session, user_id):
+async def test_fetch_includes_inactive_menus(authed_client, user_id):
     """200 OK; list includes inactive menus too."""
-    inactive = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            is_active=False,
-            created_by=int(user_id),
-        ),
+    inactive = DfEngineMenusFactory.create(
+        is_active=False, created_by=int(user_id), df_engine_menu_feature_mapping=None
     )
     resp = await authed_client.call("GET", URL)
     body = resp.json()
@@ -44,28 +35,20 @@ async def test_fetch_includes_inactive_menus(authed_client, db_session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_newest_first_ordering(authed_client, db_session, user_id):
+async def test_newest_first_ordering(authed_client, user_id):
     """200 OK; list is ordered by created_at descending, newest menu first."""
     now = local_time()
-    older = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Order {uuid4().hex[:8]}-older",
-            created_by=int(user_id),
-            created_at=now - timedelta(seconds=5),
-        ),
+    older = DfEngineMenusFactory.create(
+        name=f"Order {uuid4().hex[:8]}-older",
+        created_by=int(user_id),
+        created_at=now - timedelta(seconds=5),
+        df_engine_menu_feature_mapping=None,
     )
-    newer = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Order {uuid4().hex[:8]}-newer",
-            created_by=int(user_id),
-            created_at=now,
-        ),
+    newer = DfEngineMenusFactory.create(
+        name=f"Order {uuid4().hex[:8]}-newer",
+        created_by=int(user_id),
+        created_at=now,
+        df_engine_menu_feature_mapping=None,
     )
 
     resp = await authed_client.call("GET", URL)
@@ -74,27 +57,13 @@ async def test_newest_first_ordering(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id):
+async def test_name_search_is_a_prefix_match(authed_client, user_id):
     """200 OK; `name` filter matches only menus whose name starts with it, not mid-string occurrences."""
     prefix = f"Search{uuid4().hex[:8]}"
-    matching = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"{prefix}-one",
-            created_by=int(user_id),
-        ),
+    matching = DfEngineMenusFactory.create(
+        name=f"{prefix}-one", created_by=int(user_id), df_engine_menu_feature_mapping=None
     )
-    await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"other-{prefix}",
-            created_by=int(user_id),
-        ),
-    )
+    DfEngineMenusFactory.create(name=f"other-{prefix}", created_by=int(user_id), df_engine_menu_feature_mapping=None)
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
     found = response_names(resp.json())
@@ -121,15 +90,7 @@ async def test_name_search_empty_string_is_a_validation_error(authed_client):
 @pytest.mark.asyncio
 async def test_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
     """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creator/updater are exposed instead."""
-    row = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     creator = await expected_user(db_session, user_id)
 
     resp = await authed_client.call("GET", URL)
@@ -146,17 +107,9 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
 
 
 @pytest.mark.asyncio
-async def test_action_flags_reflect_current_users_real_permissions(authed_client, db_session, user_id):
+async def test_action_flags_reflect_current_users_real_permissions(authed_client, user_id):
     """200 OK; each item's action block has exactly the fetch-detail/update/delete flags, all booleans."""
-    row = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     assert set(item["action"].keys()) == {
@@ -168,48 +121,20 @@ async def test_action_flags_reflect_current_users_real_permissions(authed_client
 
 
 @pytest.mark.asyncio
-async def test_features_array_is_empty_when_unlinked(authed_client, db_session, user_id):
+async def test_features_array_is_empty_when_unlinked(authed_client, user_id):
     """200 OK; `features` is an empty list for a menu with no df_engine_menu_feature_mappings rows."""
-    row = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     assert item["features"] == []
 
 
 @pytest.mark.asyncio
-async def test_features_array_reflects_linked_rows(authed_client, db_session, user_id):
+async def test_features_array_reflects_linked_rows(authed_client, user_id):
     """200 OK; `features` nests the mapped feature's own fields via the join table."""
-    menu = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, menu_id=menu.id),
-    )
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], menu.name)
@@ -221,32 +146,13 @@ async def test_features_array_reflects_linked_rows(authed_client, db_session, us
 
 
 @pytest.mark.asyncio
-async def test_features_array_excludes_inactive_mapped_features(authed_client, db_session, user_id):
+async def test_features_array_excludes_inactive_mapped_features(authed_client, user_id):
     """200 OK; `features` omits a mapped feature whose is_active is False, even though the mapping row still exists."""
-    menu = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    inactive_feature = DfEngineFeaturesFactory.create(
+        is_active=False, created_by=int(user_id), df_engine_feature_prompt_mapping=None
     )
-    inactive_feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            is_active=False,
-            created_by=int(user_id),
-        ),
-    )
-    await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=inactive_feature.id, menu_id=menu.id),
-    )
+    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=inactive_feature)
 
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], menu.name)
@@ -254,17 +160,9 @@ async def test_features_array_excludes_inactive_mapped_features(authed_client, d
 
 
 @pytest.mark.asyncio
-async def test_detail_by_uid_returns_full_shape(authed_client, db_session, user_id):
+async def test_detail_by_uid_returns_full_shape(authed_client, user_id):
     """200 OK; GET /menu-management/{uid} returns the same shape as a list entry."""
-    row = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     resp = await authed_client.call("GET", f"{URL}/{row.uid}")
     assert resp.status_code == 200
     assert resp.json()["data"]["name"] == row.name

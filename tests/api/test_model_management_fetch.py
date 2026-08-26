@@ -1,34 +1,19 @@
 import pytest
-from typing import Any
 from uuid import uuid4
-from services.mysql.model import DfEngineModelOptions
-from tests.helpers import create_record
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 
 URL = "/api/models"
 
 
-def _model_option_data(**overrides: Any) -> dict[str, Any]:
-    unique = uuid4().hex[:10]
-    data = dict(
-        uid=str(uuid4()),
-        model_id=f"test-vendor/test-model-{unique}",
-        name=f"FetchTest-{unique}",
-        type="text",
-        is_available=True,
-        is_enabled=False,
-        is_main=False,
-    )
-    data.update(overrides)
-    return data
-
-
 @pytest.mark.asyncio
-async def test_fetch_excludes_unavailable_models(authed_client, db_session):
+async def test_fetch_excludes_unavailable_models(authed_client):
     """200 OK; a row flagged is_available=False never shows up, even matched by search."""
     prefix = f"Unavail{uuid4().hex[:8]}"
-    visible = await create_record(db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-visible"))
-    hidden = await create_record(
-        db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-hidden", is_available=False)
+    visible = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-visible", type="text", is_available=True, is_enabled=False, is_main=False
+    )
+    hidden = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-hidden", type="text", is_available=False, is_enabled=False, is_main=False
     )
 
     resp = await authed_client.call("GET", URL, params={"search": prefix})
@@ -38,14 +23,14 @@ async def test_fetch_excludes_unavailable_models(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_filter_by_type(authed_client, db_session):
+async def test_fetch_filter_by_type(authed_client):
     """200 OK; `type` restricts results to that one usage type only."""
     prefix = f"TypeFilter{uuid4().hex[:8]}"
-    text_row = await create_record(
-        db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-text", type="text")
+    text_row = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-text", type="text", is_available=True, is_enabled=False, is_main=False
     )
-    image_row = await create_record(
-        db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-image", type="image")
+    image_row = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-image", type="image", is_available=True, is_enabled=False, is_main=False
     )
 
     resp = await authed_client.call("GET", URL, params={"search": prefix, "type": "text"})
@@ -55,11 +40,15 @@ async def test_fetch_filter_by_type(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_search_is_a_prefix_match(authed_client, db_session):
+async def test_fetch_search_is_a_prefix_match(authed_client):
     """200 OK; `search` matches names starting with it, not mid-string occurrences."""
     prefix = f"Search{uuid4().hex[:8]}"
-    matching = await create_record(db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-one"))
-    await create_record(db_session, DfEngineModelOptions, _model_option_data(name=f"other-{prefix}"))
+    matching = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-one", type="text", is_available=True, is_enabled=False, is_main=False
+    )
+    DfEngineModelOptionsFactory.create(
+        name=f"other-{prefix}", type="text", is_available=True, is_enabled=False, is_main=False
+    )
 
     resp = await authed_client.call("GET", URL, params={"search": prefix})
     names = [item["name"] for item in resp.json()["data"]["paginated"]]
@@ -68,14 +57,14 @@ async def test_fetch_search_is_a_prefix_match(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_filter_by_is_enabled(authed_client, db_session):
+async def test_fetch_filter_by_is_enabled(authed_client):
     """200 OK; `is_enabled` restricts to only-enabled or only-disabled rows."""
     prefix = f"EnabledFilter{uuid4().hex[:8]}"
-    enabled_row = await create_record(
-        db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-on", is_enabled=True)
+    enabled_row = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-on", type="text", is_available=True, is_enabled=True, is_main=False
     )
-    disabled_row = await create_record(
-        db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-off", is_enabled=False)
+    disabled_row = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-off", type="text", is_available=True, is_enabled=False, is_main=False
     )
 
     enabled_resp = await authed_client.call("GET", URL, params={"search": prefix, "is_enabled": True})
@@ -90,14 +79,14 @@ async def test_fetch_filter_by_is_enabled(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_no_is_enabled_filter_returns_both(authed_client, db_session):
+async def test_fetch_no_is_enabled_filter_returns_both(authed_client):
     """200 OK; omitting `is_enabled` includes both enabled and disabled rows."""
     prefix = f"NoFilter{uuid4().hex[:8]}"
-    enabled_row = await create_record(
-        db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-on", is_enabled=True)
+    enabled_row = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-on", type="text", is_available=True, is_enabled=True, is_main=False
     )
-    disabled_row = await create_record(
-        db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-off", is_enabled=False)
+    disabled_row = DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-off", type="text", is_available=True, is_enabled=False, is_main=False
     )
 
     resp = await authed_client.call("GET", URL, params={"search": prefix})
@@ -107,9 +96,9 @@ async def test_fetch_no_is_enabled_filter_returns_both(authed_client, db_session
 
 
 @pytest.mark.asyncio
-async def test_response_shape_strips_id_and_keeps_uid(authed_client, db_session):
+async def test_response_shape_strips_id_and_keeps_uid(authed_client):
     """200 OK; internal `id` is stripped, `uid` is exposed, dates are formatted strings."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data())
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
@@ -119,11 +108,15 @@ async def test_response_shape_strips_id_and_keeps_uid(authed_client, db_session)
 
 
 @pytest.mark.asyncio
-async def test_pagination_shape_and_total_data(authed_client, db_session):
+async def test_pagination_shape_and_total_data(authed_client):
     """200 OK; `totalData` reflects the full filtered count, `paginated` respects `itemsPerPage`."""
     prefix = f"Page{uuid4().hex[:8]}"
-    await create_record(db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-a"))
-    await create_record(db_session, DfEngineModelOptions, _model_option_data(name=f"{prefix}-b"))
+    DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-a", type="text", is_available=True, is_enabled=False, is_main=False
+    )
+    DfEngineModelOptionsFactory.create(
+        name=f"{prefix}-b", type="text", is_available=True, is_enabled=False, is_main=False
+    )
 
     resp = await authed_client.call("GET", URL, params={"search": prefix, "itemsPerPage": 1, "page": 1})
     body = resp.json()["data"]
@@ -136,9 +129,9 @@ async def test_pagination_shape_and_total_data(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_action_flags_available_enabled_not_main(authed_client, db_session):
+async def test_action_flags_available_enabled_not_main(authed_client):
     """200 OK; an available, enabled, non-main model can both be toggled and set main."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=True, is_main=False))
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
@@ -146,11 +139,11 @@ async def test_action_flags_available_enabled_not_main(authed_client, db_session
 
 
 @pytest.mark.asyncio
-async def test_action_flags_already_main_can_set_main_again(authed_client, db_session):
+async def test_action_flags_already_main_can_set_main_again(authed_client):
     """200 OK; a usage type can have more than one main model, so a model
     that's already main still shows can_set_main=True (setting it again is
     an idempotent no-op)."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=True, is_main=True))
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
@@ -158,9 +151,9 @@ async def test_action_flags_already_main_can_set_main_again(authed_client, db_se
 
 
 @pytest.mark.asyncio
-async def test_action_flags_disabled_cannot_set_main(authed_client, db_session):
+async def test_action_flags_disabled_cannot_set_main(authed_client):
     """200 OK; a disabled model shows can_set_main=False (not eligible until enabled)."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=False))
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]

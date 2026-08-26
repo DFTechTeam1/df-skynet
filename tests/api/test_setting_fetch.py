@@ -1,25 +1,8 @@
 import pytest
-from typing import Any
-from uuid import uuid4
-from services.mysql.model import DfEngineModelOptions
-from tests.helpers import create_record, clear_setting_state
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from tests.helpers import clear_setting_state
 
 URL = "/api/setting"
-
-
-def _model_option_data(**overrides: Any) -> dict[str, Any]:
-    unique = uuid4().hex[:10]
-    data = dict(
-        uid=str(uuid4()),
-        model_id=f"test-vendor/test-model-{unique}",
-        name=f"SettingFetchTest-{unique}",
-        type="text",
-        is_available=True,
-        is_enabled=True,
-        is_main=False,
-    )
-    data.update(overrides)
-    return data
 
 
 @pytest.mark.asyncio
@@ -71,8 +54,12 @@ async def test_fetch_returns_saved_values(authed_client, db_session):
 async def test_fetch_resolves_enhancer_and_assistant_model_info(authed_client, db_session):
     """200 OK; enhancer_model/assistant_model come back as full model info, not a bare UID."""
     await clear_setting_state(db_session)
-    enhancer = await create_record(db_session, DfEngineModelOptions, _model_option_data(name="Enhancer-A"))
-    assistant = await create_record(db_session, DfEngineModelOptions, _model_option_data(name="Assistant-A"))
+    enhancer = DfEngineModelOptionsFactory.create(
+        name="Enhancer-A", type="text", is_available=True, is_enabled=True, is_main=False
+    )
+    assistant = DfEngineModelOptionsFactory.create(
+        name="Assistant-A", type="text", is_available=True, is_enabled=True, is_main=False
+    )
 
     payload = {
         "admin_view": {},

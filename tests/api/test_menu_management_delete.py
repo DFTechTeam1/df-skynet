@@ -2,55 +2,26 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import (
-    DfEngineFeatures,
-    DfEngineMenuFeatureMappings,
-    DfEngineMenus,
-)
-from tests.helpers import create_record, response_names
+from services.mysql.model import DfEngineMenuFeatureMappings
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
+from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+from tests.helpers import response_names
 
 URL = "/api/menu-management"
 
 
-async def _make_menu_with_mapping(db_session, user_id):
-    menu = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    mapping = await create_record(
-        db_session,
-        DfEngineMenuFeatureMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, menu_id=menu.id),
-    )
+def _make_menu_with_mapping(user_id):
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    mapping = DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
     return menu, feature, mapping
 
 
 @pytest.mark.asyncio
-async def test_delete_success(authed_client, db_session, user_id):
+async def test_delete_success(authed_client, user_id):
     """200 OK; deleted menu no longer appears in the refreshed list."""
-    menu = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     resp = await authed_client.call("DELETE", f"{URL}/{menu.uid}")
     assert resp.status_code == 200
     assert menu.name not in response_names(resp.json())
@@ -59,7 +30,7 @@ async def test_delete_success(authed_client, db_session, user_id):
 @pytest.mark.asyncio
 async def test_delete_cascades_to_mappings(authed_client, db_session, user_id):
     """200 OK; process deletes the menu's df_engine_menu_feature_mappings rows too, not just the menu."""
-    menu, feature, mapping = await _make_menu_with_mapping(db_session, user_id)
+    menu, feature, mapping = _make_menu_with_mapping(user_id)
     resp = await authed_client.call("DELETE", f"{URL}/{menu.uid}")
     assert resp.status_code == 200
     await db_session.commit()
@@ -73,17 +44,9 @@ async def test_delete_cascades_to_mappings(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_delete_twice_is_404_on_the_second_call(authed_client, db_session, user_id):
+async def test_delete_twice_is_404_on_the_second_call(authed_client, user_id):
     """First delete is 200 OK; repeating it is 404 menu_not_found since the row is already gone."""
-    menu = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     first = await authed_client.call("DELETE", f"{URL}/{menu.uid}")
     assert first.status_code == 200
     second = await authed_client.call("DELETE", f"{URL}/{menu.uid}", raise_for_status=False)
@@ -100,16 +63,8 @@ async def test_delete_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_requires_auth(client, db_session, user_id):
+async def test_requires_auth(client, user_id):
     """401 when the request carries no bearer token."""
-    menu = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     resp = await client.call("DELETE", f"{URL}/{menu.uid}", raise_for_status=False)
     assert resp.status_code == 401

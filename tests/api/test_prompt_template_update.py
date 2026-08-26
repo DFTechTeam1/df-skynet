@@ -2,8 +2,11 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineFeaturePromptMappings, DfEngineFeatures, DfEnginePromptTemplates
-from tests.helpers import create_record, expected_user, find_by_name
+from services.mysql.model import DfEngineFeaturePromptMappings
+from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from tests.helpers import expected_user, find_by_name
 
 URL = "/api/prompt-management"
 
@@ -11,16 +14,7 @@ URL = "/api/prompt-management"
 @pytest.mark.asyncio
 async def test_update_full_replace(authed_client, db_session, user_id):
     """200 OK; PATCH replaces name/prompt/is_active and sets updated_by to the current user."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     updater = await expected_user(db_session, user_id)
     new_name = f"Updated {uuid4().hex[:8]}"
 
@@ -42,18 +36,9 @@ async def test_update_full_replace(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_update_deactivating_keeps_it_in_the_list(authed_client, db_session, user_id):
+async def test_update_deactivating_keeps_it_in_the_list(authed_client, user_id):
     """200 OK; setting is_active False keeps the template in the refreshed list, now flagged inactive."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
 
     resp = await authed_client.call(
         "PATCH",
@@ -68,30 +53,9 @@ async def test_update_deactivating_keeps_it_in_the_list(authed_client, db_sessio
 @pytest.mark.asyncio
 async def test_update_deactivating_removes_its_feature_mappings(authed_client, db_session, user_id):
     """200 OK; setting is_active False deletes the template's df_engine_feature_prompt_mappings rows."""
-    feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    template = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
-    await create_record(
-        db_session,
-        DfEngineFeaturePromptMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, template_id=template.id),
-    )
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    template = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    DfEngineFeaturePromptMappingsFactory.create(df_engine_features=feature, df_engine_prompt_templates=template)
 
     resp = await authed_client.call(
         "PATCH",
@@ -114,18 +78,9 @@ async def test_update_deactivating_removes_its_feature_mappings(authed_client, d
 
 
 @pytest.mark.asyncio
-async def test_update_renaming_to_its_own_current_name_succeeds(authed_client, db_session, user_id):
+async def test_update_renaming_to_its_own_current_name_succeeds(authed_client, user_id):
     """200 OK; renaming a template to its own current name doesn't trip the uniqueness conflict."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
 
     resp = await authed_client.call(
         "PATCH",
@@ -151,28 +106,10 @@ async def test_update_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_update_rename_into_collision_is_409(authed_client, db_session, user_id):
+async def test_update_rename_into_collision_is_409(authed_client, user_id):
     """409 when renaming a template to a name another template already has."""
-    target = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
-    other = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    target = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    other = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
 
     resp = await authed_client.call(
         "PATCH",
@@ -190,18 +127,9 @@ async def test_update_rename_into_collision_is_409(authed_client, db_session, us
     [{"name": ""}, {"prompt": ""}],
     ids=["empty_name", "empty_prompt"],
 )
-async def test_update_validation_errors(authed_client, db_session, user_id, overrides):
+async def test_update_validation_errors(authed_client, user_id, overrides):
     """422 for each individually invalid field: empty name, empty prompt."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     payload = {"name": "valid name", "prompt": "valid prompt"}
     payload.update(overrides)
     resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json=payload, raise_for_status=False)
@@ -209,18 +137,9 @@ async def test_update_validation_errors(authed_client, db_session, user_id, over
 
 
 @pytest.mark.asyncio
-async def test_requires_auth(client, db_session, user_id):
+async def test_requires_auth(client, user_id):
     """401 when the request carries no bearer token."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await client.call(
         "PATCH",
         f"{URL}/{row.uid}",

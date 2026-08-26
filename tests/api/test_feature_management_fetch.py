@@ -1,13 +1,11 @@
 import pytest
 from datetime import timedelta
 from uuid import uuid4
-from services.mysql.model import (
-    DfEngineFeaturePromptMappings,
-    DfEngineFeatures,
-    DfEnginePromptTemplates,
-)
+from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
 from utils import local_time
-from tests.helpers import create_record, expected_user, find_by_name, response_names
+from tests.helpers import expected_user, find_by_name, response_names
 
 URL = "/api/feature-management"
 
@@ -23,17 +21,10 @@ async def test_fetch_all_features(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_includes_inactive_features(authed_client, db_session, user_id):
+async def test_fetch_includes_inactive_features(authed_client, user_id):
     """200 OK; list includes inactive features too, unlike the prompt-template list."""
-    inactive = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            is_active=False,
-            created_by=int(user_id),
-        ),
+    inactive = DfEngineFeaturesFactory.create(
+        is_active=False, created_by=int(user_id), df_engine_feature_prompt_mapping=None
     )
     resp = await authed_client.call("GET", URL)
     body = resp.json()
@@ -43,31 +34,23 @@ async def test_fetch_includes_inactive_features(authed_client, db_session, user_
 
 
 @pytest.mark.asyncio
-async def test_newest_first_ordering(authed_client, db_session, user_id):
+async def test_newest_first_ordering(authed_client, user_id):
     """200 OK; list is ordered by created_at descending, newest feature first."""
     # `created_at` is DATETIME(0) in MySQL (no fractional seconds), so two
     # rows created back-to-back can land on the same wall-clock second —
     # pass explicit, clearly-ordered timestamps instead of relying on that.
     now = local_time()
-    older = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Order {uuid4().hex[:8]}-older",
-            created_by=int(user_id),
-            created_at=now - timedelta(seconds=5),
-        ),
+    older = DfEngineFeaturesFactory.create(
+        name=f"Order {uuid4().hex[:8]}-older",
+        created_by=int(user_id),
+        created_at=now - timedelta(seconds=5),
+        df_engine_feature_prompt_mapping=None,
     )
-    newer = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Order {uuid4().hex[:8]}-newer",
-            created_by=int(user_id),
-            created_at=now,
-        ),
+    newer = DfEngineFeaturesFactory.create(
+        name=f"Order {uuid4().hex[:8]}-newer",
+        created_by=int(user_id),
+        created_at=now,
+        df_engine_feature_prompt_mapping=None,
     )
 
     resp = await authed_client.call("GET", URL)
@@ -76,27 +59,15 @@ async def test_newest_first_ordering(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id):
+async def test_name_search_is_a_prefix_match(authed_client, user_id):
     """200 OK; `name` filter matches only features whose name starts with it, not mid-string occurrences."""
     prefix = f"Search{uuid4().hex[:8]}"
-    matching = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"{prefix}-one",
-            created_by=int(user_id),
-        ),
+    matching = DfEngineFeaturesFactory.create(
+        name=f"{prefix}-one", created_by=int(user_id), df_engine_feature_prompt_mapping=None
     )
     # prefix appears mid-string, shouldn't match
-    await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"other-{prefix}",
-            created_by=int(user_id),
-        ),
+    DfEngineFeaturesFactory.create(
+        name=f"other-{prefix}", created_by=int(user_id), df_engine_feature_prompt_mapping=None
     )
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
@@ -124,15 +95,7 @@ async def test_name_search_empty_string_is_a_validation_error(authed_client):
 @pytest.mark.asyncio
 async def test_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
     """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creator/updater are exposed instead."""
-    row = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     creator = await expected_user(db_session, user_id)
 
     resp = await authed_client.call("GET", URL)
@@ -149,17 +112,9 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
 
 
 @pytest.mark.asyncio
-async def test_action_flags_reflect_current_users_real_permissions(authed_client, db_session, user_id):
+async def test_action_flags_reflect_current_users_real_permissions(authed_client, user_id):
     """200 OK; each item's action block has exactly the fetch-detail/update/delete flags, all booleans."""
-    row = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     assert set(item["action"].keys()) == {
@@ -171,48 +126,21 @@ async def test_action_flags_reflect_current_users_real_permissions(authed_client
 
 
 @pytest.mark.asyncio
-async def test_templates_array_is_empty_when_unlinked(authed_client, db_session, user_id):
+async def test_templates_array_is_empty_when_unlinked(authed_client, user_id):
     """200 OK; `templates` is an empty list for a feature with no df_engine_feature_prompt_mappings rows."""
-    row = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     assert item["templates"] == []
 
 
 @pytest.mark.asyncio
-async def test_templates_array_reflects_linked_rows(authed_client, db_session, user_id):
+async def test_templates_array_reflects_linked_rows(authed_client, user_id):
     """200 OK; `templates` nests the mapped prompt template's own fields via the join table."""
-    feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    template = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
-    mapping = await create_record(
-        db_session,
-        DfEngineFeaturePromptMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, template_id=template.id),
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    template = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    mapping = DfEngineFeaturePromptMappingsFactory.create(
+        df_engine_features=feature, df_engine_prompt_templates=template
     )
 
     resp = await authed_client.call("GET", URL)
@@ -225,32 +153,14 @@ async def test_templates_array_reflects_linked_rows(authed_client, db_session, u
 
 
 @pytest.mark.asyncio
-async def test_templates_array_excludes_inactive_mapped_templates(authed_client, db_session, user_id):
+async def test_templates_array_excludes_inactive_mapped_templates(authed_client, user_id):
     """200 OK; `templates` omits a mapped template whose is_active is False, even though the mapping row still exists."""
-    feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    inactive_template = DfEnginePromptTemplatesFactory.create(
+        prompt="a prompt", is_active=False, created_by=int(user_id)
     )
-    inactive_template = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            is_active=False,
-            created_by=int(user_id),
-        ),
-    )
-    await create_record(
-        db_session,
-        DfEngineFeaturePromptMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, template_id=inactive_template.id),
+    DfEngineFeaturePromptMappingsFactory.create(
+        df_engine_features=feature, df_engine_prompt_templates=inactive_template
     )
 
     resp = await authed_client.call("GET", URL)

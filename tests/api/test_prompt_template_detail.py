@@ -1,25 +1,16 @@
 import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEnginePromptTemplates
-from tests.helpers import create_record, expected_user
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from tests.helpers import expected_user
 
 URL = "/api/prompt-management"
 
 
 @pytest.mark.asyncio
-async def test_fetch_detail_success(authed_client, db_session, user_id):
+async def test_fetch_detail_success(authed_client, user_id):
     """200 OK; returns the single template's own name/prompt/is_active by uid."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await authed_client.call("GET", f"{URL}/{row.uid}")
     body = resp.json()
     assert resp.status_code == 200
@@ -32,16 +23,7 @@ async def test_fetch_detail_success(authed_client, db_session, user_id):
 @pytest.mark.asyncio
 async def test_fetch_detail_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
     """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creator/updater are exposed instead."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     creator = await expected_user(db_session, user_id)
 
     resp = await authed_client.call("GET", f"{URL}/{row.uid}")
@@ -58,18 +40,9 @@ async def test_fetch_detail_response_shape_has_creater_not_created_by_user(authe
 
 
 @pytest.mark.asyncio
-async def test_fetch_detail_action_flags_reflect_current_users_real_permissions(authed_client, db_session, user_id):
+async def test_fetch_detail_action_flags_reflect_current_users_real_permissions(authed_client, user_id):
     """200 OK; action block has exactly the fetch/update/delete flags, all booleans."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await authed_client.call("GET", f"{URL}/{row.uid}")
     item = resp.json()["data"]
     assert set(item["action"].keys()) == {
@@ -89,37 +62,18 @@ async def test_fetch_detail_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_detail_inactive_row_is_still_fetchable(authed_client, db_session, user_id):
+async def test_fetch_detail_inactive_row_is_still_fetchable(authed_client, user_id):
     """200 OK; detail serves inactive templates too, same as the list endpoint — needed to view one before reactivating it."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            is_active=False,
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", is_active=False, created_by=int(user_id))
     resp = await authed_client.call("GET", f"{URL}/{row.uid}")
     assert resp.status_code == 200
     assert resp.json()["data"]["is_active"] is False
 
 
 @pytest.mark.asyncio
-async def test_fetch_detail_requires_auth(client, db_session, user_id):
+async def test_fetch_detail_requires_auth(client, user_id):
     """401 when the request carries no bearer token."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await client.call("GET", f"{URL}/{row.uid}", raise_for_status=False)
     assert resp.status_code == 401
 
