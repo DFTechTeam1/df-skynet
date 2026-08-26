@@ -161,7 +161,7 @@ Table df_engine_api_keys {
     employee_name varchar(255) [default: null]
     is_main boolean [not null, default: False, note: "This table supports multi employee_id and multi api_keys, create constraint is_main only can be choose 1 per api"]
     updated_at timestamp [default: null]
-    created_by integer [not null]
+    created_by integer [default: null]
     updated_by integer [default: null]
 }
 
@@ -179,7 +179,7 @@ Table df_engine_api_snapshots {
     employee_id integer [default: null, note: "Denormalized copy, no FK — archival record must survive employee deletion"]
     employee_name varchar(255) [default: null]
     updated_at timestamp [default: null]
-    created_by integer [not null]
+    created_by integer [default: null]
     updated_by integer [default: null]
 }
 
@@ -221,7 +221,7 @@ Table df_engine_menus {
     name varchar(255) [not null, unique]
     description text [default: null]
     is_active boolean [not null, default: true]
-    created_by integer [not null]
+    created_by integer [default: null]
     updated_by integer [default: null]
 }
 
@@ -234,7 +234,7 @@ Table df_engine_features {
     name varchar(255) [not null, unique]
     description text [default: null]
     is_active boolean [not null, default: true]
-    created_by integer [not null]
+    created_by integer [default: null]
     updated_by integer [default: null]
 }
 
@@ -268,7 +268,7 @@ Table df_engine_prompt_templates {
     name varchar(255) [not null, unique]
     prompt text [not null, unique]
     description text [default: null]
-    created_by integer [not null]
+    created_by integer [default: null]
     updated_by integer [default: null]
 }
 
@@ -283,7 +283,7 @@ Table df_engine_preferences {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
-    user_id bigint [not null, unique]
+    user_id bigint [unique, default: null]
     theme theme_types [not null, default: "dark"]
     accent accent_types [not null, default: "teal"]
     language language_types [not null, default: "english"]

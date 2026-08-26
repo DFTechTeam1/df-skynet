@@ -6,28 +6,12 @@ cascade wired through model_management.
 
 import pytest
 from typing import Any
-from uuid import uuid4
-from services.mysql.model import DfEngineModelOptions
-from tests.helpers import create_record, clear_setting_state
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from tests.helpers import clear_setting_state
 
 SETTING_URL = "/api/setting"
 LOGS_URL = "/api/setting/logs"
 MODELS_URL = "/api/models"
-
-
-def _model_option_data(**overrides: Any) -> dict[str, Any]:
-    unique = uuid4().hex[:10]
-    data = dict(
-        uid=str(uuid4()),
-        model_id=f"test-vendor/test-model-{unique}",
-        name=f"SettingJourney-{unique}",
-        type="text",
-        is_available=True,
-        is_enabled=True,
-        is_main=False,
-    )
-    data.update(overrides)
-    return data
 
 
 def _base_payload(**overrides: Any) -> dict[str, Any]:
@@ -47,7 +31,7 @@ def _base_payload(**overrides: Any) -> dict[str, Any]:
 @pytest.mark.asyncio
 async def test_setting_lifecycle_journey(authed_client, db_session):
     await clear_setting_state(db_session)
-    model = await create_record(db_session, DfEngineModelOptions, _model_option_data())
+    model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     # 1. nothing saved yet — GET returns defaults, no logs
     initial = await authed_client.call("GET", SETTING_URL)

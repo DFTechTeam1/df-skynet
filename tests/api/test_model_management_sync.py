@@ -25,25 +25,10 @@ from typing import Any
 from uuid import uuid4
 from sqlalchemy import select
 from services.mysql.model import DfEngineModelOptions
-from tests.helpers import create_record
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from apps.controller.model_management import ModelManagementController
 
 URL = "/api/models"
-
-
-def _model_option_data(**overrides: Any) -> dict[str, Any]:
-    unique = uuid4().hex[:10]
-    data = dict(
-        uid=str(uuid4()),
-        model_id=f"test-vendor/test-model-{unique}",
-        name=f"SyncTest-{unique}",
-        type="text",
-        is_available=True,
-        is_enabled=False,
-        is_main=False,
-    )
-    data.update(overrides)
-    return data
 
 
 def _item_from_row(row: DfEngineModelOptions) -> dict[str, Any]:
@@ -173,21 +158,31 @@ async def test_sync_flags_missing_model_unavailable(db_session, user_id):
     available. `kept`/`dropped` are created and committed normally first (safe —
     brand-new, uniquely-named rows); only the sync call itself runs inside a
     SAVEPOINT (never committed), since sync_model_type also mass-disables every
-    other real row of the type as a side effect. `create_record` calls
-    `.commit()` internally, which can't happen inside `begin_nested()`."""
-    kept = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_available=True))
-    dropped = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_available=True))
+    other real row of the type as a side effect. The factory commits via its
+    own sync session, which can't happen inside `begin_nested()`."""
+    kept_id = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False).id
+    dropped_id = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False).id
 
     async with db_session.begin_nested():
         ctrl = _controller(db_session, user_id)
-        result = await ctrl.sync_model_type("text", [{"id": kept.model_id, "name": "Kept Renamed"}])
+        kept_model_id = (
+            await db_session.execute(select(DfEngineModelOptions.model_id).where(DfEngineModelOptions.id == kept_id))  # type: ignore
+        ).scalar_one()
+        result = await ctrl.sync_model_type("text", [{"id": kept_model_id, "name": "Kept Renamed"}])
         await db_session.flush()
 
         assert result["updated"] >= 1
         assert result["disabled"] >= 1
 
-        await db_session.refresh(kept)
-        await db_session.refresh(dropped)
+        # `kept`/`dropped` were created via the factory's own sync session, so
+        # re-select them through `db_session` instead of `db_session.refresh(...)`
+        # (SQLAlchemy rejects refreshing an instance owned by another session).
+        kept = (
+            await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == kept_id))  # type: ignore
+        ).scalar_one()
+        dropped = (
+            await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == dropped_id))  # type: ignore
+        ).scalar_one()
         assert kept.is_available is True
         assert kept.name == "Kept Renamed"
         assert dropped.is_available is False

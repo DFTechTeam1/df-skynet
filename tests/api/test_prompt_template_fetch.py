@@ -1,9 +1,9 @@
 import pytest
 from datetime import timedelta
 from uuid import uuid4
-from services.mysql.model import DfEnginePromptTemplates
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
 from utils import local_time
-from tests.helpers import create_record, expected_user, find_by_name, response_names
+from tests.helpers import expected_user, find_by_name, response_names
 
 URL = "/api/prompt-management"
 
@@ -19,19 +19,9 @@ async def test_fetch_all_prompt_templates(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_prompt_templates_includes_inactive_row(authed_client, db_session, user_id):
+async def test_fetch_prompt_templates_includes_inactive_row(authed_client, user_id):
     """200 OK; inactive templates are included in the unfiltered list, same as feature-management's list."""
-    inactive = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            is_active=False,
-            created_by=int(user_id),
-        ),
-    )
+    inactive = DfEnginePromptTemplatesFactory.create(prompt="a prompt", is_active=False, created_by=int(user_id))
     resp = await authed_client.call("GET", URL)
     body = resp.json()
     assert resp.status_code == 200
@@ -41,33 +31,23 @@ async def test_fetch_prompt_templates_includes_inactive_row(authed_client, db_se
 
 
 @pytest.mark.asyncio
-async def test_newest_first_ordering(authed_client, db_session, user_id):
+async def test_newest_first_ordering(authed_client, user_id):
     """200 OK; list is ordered by created_at descending, newest template first."""
     # `created_at` is DATETIME(0) in MySQL (no fractional seconds), so two
     # rows created back-to-back can land on the same wall-clock second —
     # pass explicit, clearly-ordered timestamps instead of relying on that.
     now = local_time()
-    older = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Order {uuid4().hex[:8]}-older",
-            prompt="a prompt",
-            created_by=int(user_id),
-            created_at=now - timedelta(seconds=5),
-        ),
+    older = DfEnginePromptTemplatesFactory.create(
+        name=f"Order {uuid4().hex[:8]}-older",
+        prompt="a prompt",
+        created_by=int(user_id),
+        created_at=now - timedelta(seconds=5),
     )
-    newer = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Order {uuid4().hex[:8]}-newer",
-            prompt="a prompt",
-            created_by=int(user_id),
-            created_at=now,
-        ),
+    newer = DfEnginePromptTemplatesFactory.create(
+        name=f"Order {uuid4().hex[:8]}-newer",
+        prompt="a prompt",
+        created_by=int(user_id),
+        created_at=now,
     )
 
     resp = await authed_client.call("GET", URL)
@@ -76,30 +56,12 @@ async def test_newest_first_ordering(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id):
+async def test_name_search_is_a_prefix_match(authed_client, user_id):
     """200 OK; `name` filter matches only templates whose name starts with it, not mid-string occurrences."""
     prefix = f"Search{uuid4().hex[:8]}"
-    matching = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"{prefix}-one",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    matching = DfEnginePromptTemplatesFactory.create(name=f"{prefix}-one", prompt="a prompt", created_by=int(user_id))
     # prefix appears mid-string, shouldn't match
-    await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"other-{prefix}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    DfEnginePromptTemplatesFactory.create(name=f"other-{prefix}", prompt="a prompt", created_by=int(user_id))
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
     found = response_names(resp.json())
@@ -108,30 +70,14 @@ async def test_name_search_is_a_prefix_match(authed_client, db_session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_name_search_includes_inactive_rows(authed_client, db_session, user_id):
+async def test_name_search_includes_inactive_rows(authed_client, user_id):
     """200 OK; `name` filter still matches inactive templates, same as active ones."""
     prefix = f"Report{uuid4().hex[:8]}"
-    active = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"{prefix}-active",
-            prompt="a prompt",
-            is_active=True,
-            created_by=int(user_id),
-        ),
+    active = DfEnginePromptTemplatesFactory.create(
+        name=f"{prefix}-active", prompt="a prompt", is_active=True, created_by=int(user_id)
     )
-    inactive = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"{prefix}-inactive",
-            prompt="a prompt",
-            is_active=False,
-            created_by=int(user_id),
-        ),
+    inactive = DfEnginePromptTemplatesFactory.create(
+        name=f"{prefix}-inactive", prompt="a prompt", is_active=False, created_by=int(user_id)
     )
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
@@ -159,16 +105,7 @@ async def test_name_search_empty_string_is_a_validation_error(authed_client):
 @pytest.mark.asyncio
 async def test_response_shape_has_creater_not_created_by_user(authed_client, db_session, user_id):
     """200 OK; internal columns (id, created_by_user, etc.) are stripped, resolved creator/updater are exposed instead."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     creator = await expected_user(db_session, user_id)
 
     resp = await authed_client.call("GET", URL)
@@ -185,18 +122,9 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
 
 
 @pytest.mark.asyncio
-async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id):
+async def test_no_sensitive_user_fields_leak(authed_client, user_id):
     """200 OK; `creator` is whitelisted to exactly {image, nickname}, no other user fields leak."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     # creator is whitelisted to exactly {image, nickname} — no password,
@@ -205,18 +133,9 @@ async def test_no_sensitive_user_fields_leak(authed_client, db_session, user_id)
 
 
 @pytest.mark.asyncio
-async def test_action_flags_reflect_current_users_real_permissions(authed_client, db_session, user_id):
+async def test_action_flags_reflect_current_users_real_permissions(authed_client, user_id):
     """200 OK; each item's action block has exactly the fetch/update/delete flags, all booleans."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
     assert set(item["action"].keys()) == {

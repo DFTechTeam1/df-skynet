@@ -1,22 +1,15 @@
 import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineFeatures, DfEngineMenus
-from tests.helpers import create_record, expected_user, find_by_name
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+from tests.helpers import expected_user, find_by_name
 
 URL = "/api/menu-management"
 
 
-async def _make_feature(db_session, user_id):
-    return await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+def _make_feature(user_id):
+    return DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
 
 
 @pytest.mark.asyncio
@@ -53,10 +46,10 @@ async def test_create_defaults_is_active_true_and_no_features_required(authed_cl
 
 
 @pytest.mark.asyncio
-async def test_create_with_linked_features(authed_client, db_session, user_id):
+async def test_create_with_linked_features(authed_client, user_id):
     """200 OK; process links every given feature_uid via a new df_engine_menu_feature_mappings row in the same call."""
-    feature_a = await _make_feature(db_session, user_id)
-    feature_b = await _make_feature(db_session, user_id)
+    feature_a = _make_feature(user_id)
+    feature_b = _make_feature(user_id)
     name = f"Create Linked {uuid4().hex[:8]}"
 
     resp = await authed_client.call(
@@ -108,17 +101,9 @@ async def test_create_missing_required_name(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_create_duplicate_name_conflict(authed_client, db_session, user_id):
+async def test_create_duplicate_name_conflict(authed_client, user_id):
     """409 when `name` already belongs to another menu."""
-    existing = await create_record(
-        db_session,
-        DfEngineMenus,
-        dict(
-            uid=str(uuid4()),
-            name=f"Menu {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    existing = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     resp = await authed_client.call(
         "POST",
         URL,

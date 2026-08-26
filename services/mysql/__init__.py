@@ -1,13 +1,14 @@
 from functools import lru_cache
 from typing import Any, AsyncGenerator, Optional
 from apps.secret import DB_ASYNC_URL
-from sqlalchemy import select
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
     AsyncEngine,
     AsyncSession,
 )
+from sqlalchemy.orm import Session, scoped_session, sessionmaker
 from sqlmodel import SQLModel
 
 
@@ -26,6 +27,20 @@ def make_session(db_url: str) -> async_sessionmaker[AsyncSession]:
         autoflush=False,
         expire_on_commit=False,
     )
+
+
+@lru_cache
+def sync_engine(db_url: str) -> Engine:
+    """Sync counterpart to `engine()` — needed by SQLAlchemyModelFactory (see
+    services/mysql/factory/base.py), which requires a sync Session to persist.
+    The app itself stays async-only; this pool exists only for factories/tests.
+    """
+    return create_engine(db_url, pool_recycle=1800)
+
+
+@lru_cache
+def make_sync_session(db_url: str) -> scoped_session[Session]:
+    return scoped_session(sessionmaker(bind=sync_engine(db_url), autoflush=False, expire_on_commit=False))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

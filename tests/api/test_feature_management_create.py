@@ -1,23 +1,15 @@
 import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineFeatures, DfEnginePromptTemplates
-from tests.helpers import create_record, expected_user, find_by_name
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from tests.helpers import expected_user, find_by_name
 
 URL = "/api/feature-management"
 
 
-async def _make_template(db_session, user_id):
-    return await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+def _make_template(user_id):
+    return DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
 
 
 @pytest.mark.asyncio
@@ -56,10 +48,10 @@ async def test_create_defaults_is_active_true_and_no_templates_required(
 
 
 @pytest.mark.asyncio
-async def test_create_with_linked_templates(authed_client, db_session, user_id):
+async def test_create_with_linked_templates(authed_client, user_id):
     """200 OK; process links every given template_uid via a new df_engine_feature_prompt_mappings row in the same call."""
-    template_a = await _make_template(db_session, user_id)
-    template_b = await _make_template(db_session, user_id)
+    template_a = _make_template(user_id)
+    template_b = _make_template(user_id)
     name = f"Create Linked {uuid4().hex[:8]}"
 
     resp = await authed_client.call(
@@ -111,17 +103,9 @@ async def test_create_missing_required_name(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_create_duplicate_name_conflict(authed_client, db_session, user_id):
+async def test_create_duplicate_name_conflict(authed_client, user_id):
     """409 when `name` already belongs to another feature."""
-    existing = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
+    existing = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     resp = await authed_client.call(
         "POST",
         URL,

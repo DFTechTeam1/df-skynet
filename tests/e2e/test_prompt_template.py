@@ -1,11 +1,11 @@
 import pytest
 from uuid import uuid4
-from services.mysql.model import (
-    DfEngineFeaturePromptMappings,
-    DfEngineFeatures,
-    DfEnginePromptTemplates,
-)
-from tests.helpers import create_record, response_names
+from sqlalchemy import delete
+from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from services.mysql.model import DfEngineFeaturePromptMappings
+from tests.helpers import response_names
 
 
 URL = "/api/prompt-management"
@@ -100,31 +100,12 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 @pytest.mark.asyncio
 async def test_delete_blocked_then_succeeds_after_unmapping(authed_client, db_session, user_id):
     """409 prompt_template_in_use while mapped to a feature; delete succeeds once the mapping row is removed out-of-band."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Journey {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
+    row = DfEnginePromptTemplatesFactory.create(
+        name=f"Journey {uuid4().hex[:8]}", prompt="a prompt", created_by=int(user_id)
     )
 
-    feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    mapping = await create_record(
-        db_session,
-        DfEngineFeaturePromptMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, template_id=row.id),
-    )
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    mapping = DfEngineFeaturePromptMappingsFactory.create(df_engine_features=feature, df_engine_prompt_templates=row)
 
     blocked = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
     assert blocked.status_code == 409
@@ -136,8 +117,13 @@ async def test_delete_blocked_then_succeeds_after_unmapping(authed_client, db_se
     list_resp = await authed_client.call("GET", URL)
     assert row.name in response_names(list_resp.json())
 
-    # an admin removes the dependency out-of-band (no unmap API exists yet)
-    await db_session.delete(mapping)
+    # an admin removes the dependency out-of-band (no unmap API exists yet).
+    # `mapping` belongs to the factory's own sync session, so delete it via a
+    # plain DELETE on `db_session` rather than `db_session.delete(mapping)`
+    # (SQLAlchemy rejects operating on an instance owned by another session).
+    await db_session.execute(
+        delete(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.id == mapping.id)
+    )  # type: ignore
     await db_session.commit()
 
     unblocked = await authed_client.call("DELETE", f"{URL}/{row.uid}")
@@ -166,17 +152,10 @@ async def test_search_matches_regardless_of_active_status(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_clone_template_under_a_new_name(authed_client, db_session, user_id):
+async def test_clone_template_under_a_new_name(authed_client, user_id):
     """200 OK; cloning (same prompt content, new name) succeeds since only `name`, not `prompt`, must be unique."""
-    original = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Original {uuid4().hex[:8]}",
-            prompt="shared body",
-            created_by=int(user_id),
-        ),
+    original = DfEnginePromptTemplatesFactory.create(
+        name=f"Original {uuid4().hex[:8]}", prompt="shared body", created_by=int(user_id)
     )
     clone_name = f"{original.name}-clone"
 

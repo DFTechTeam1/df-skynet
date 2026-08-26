@@ -2,25 +2,10 @@ import pytest
 from typing import Any
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineModelOptions
-from tests.helpers import create_record, clear_setting_state
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from tests.helpers import clear_setting_state
 
 URL = "/api/setting"
-
-
-def _model_option_data(**overrides: Any) -> dict[str, Any]:
-    unique = uuid4().hex[:10]
-    data = dict(
-        uid=str(uuid4()),
-        model_id=f"test-vendor/test-model-{unique}",
-        name=f"SettingPostTest-{unique}",
-        type="text",
-        is_available=True,
-        is_enabled=True,
-        is_main=False,
-    )
-    data.update(overrides)
-    return data
 
 
 def _base_payload(**overrides: Any) -> dict[str, Any]:
@@ -67,7 +52,7 @@ async def test_post_updates_existing_settings_instead_of_duplicating(authed_clie
 async def test_post_accepts_enabled_available_text_model(authed_client, db_session):
     """200 OK; a model that is type=text, is_enabled, is_available can be saved as enhancer_model."""
     await clear_setting_state(db_session)
-    model = await create_record(db_session, DfEngineModelOptions, _model_option_data())
+    model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("POST", URL, json=_base_payload(enhancer_model=model.uid))
     assert resp.status_code == 200
@@ -101,7 +86,7 @@ async def test_post_rejects_unknown_model_uid(authed_client, db_session):
 async def test_post_rejects_non_text_model(authed_client, db_session):
     """422 setting_engine_model_must_be_text when the model isn't a text model."""
     await clear_setting_state(db_session)
-    model = await create_record(db_session, DfEngineModelOptions, _model_option_data(type="image"))
+    model = DfEngineModelOptionsFactory.create(type="image", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("POST", URL, json=_base_payload(enhancer_model=model.uid), raise_for_status=False)
     assert resp.status_code == 422
@@ -112,7 +97,7 @@ async def test_post_rejects_non_text_model(authed_client, db_session):
 async def test_post_rejects_disabled_model(authed_client, db_session):
     """422 setting_engine_model_must_be_enabled when the model isn't enabled."""
     await clear_setting_state(db_session)
-    model = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=False))
+    model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
 
     resp = await authed_client.call("POST", URL, json=_base_payload(assistant_model=model.uid), raise_for_status=False)
     assert resp.status_code == 422
@@ -123,7 +108,7 @@ async def test_post_rejects_disabled_model(authed_client, db_session):
 async def test_post_rejects_unavailable_model(authed_client, db_session):
     """422 setting_engine_model_must_be_available when the model isn't available."""
     await clear_setting_state(db_session)
-    model = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_available=False))
+    model = DfEngineModelOptionsFactory.create(type="text", is_available=False, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("POST", URL, json=_base_payload(enhancer_model=model.uid), raise_for_status=False)
     assert resp.status_code == 422

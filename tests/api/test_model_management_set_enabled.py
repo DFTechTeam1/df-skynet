@@ -1,32 +1,15 @@
 import pytest
-from typing import Any
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineModelOptions
-from tests.helpers import create_record
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 
 URL = "/api/models"
 
 
-def _model_option_data(**overrides: Any) -> dict[str, Any]:
-    unique = uuid4().hex[:10]
-    data = dict(
-        uid=str(uuid4()),
-        model_id=f"test-vendor/test-model-{unique}",
-        name=f"SetEnabledTest-{unique}",
-        type="text",
-        is_available=True,
-        is_enabled=False,
-        is_main=False,
-    )
-    data.update(overrides)
-    return data
-
-
 @pytest.mark.asyncio
-async def test_enable_disabled_available_model(authed_client, db_session):
+async def test_enable_disabled_available_model(authed_client):
     """200 OK; enabling an available, disabled model flips is_enabled true."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=False))
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
 
     resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": True})
     assert resp.status_code == 200
@@ -35,9 +18,9 @@ async def test_enable_disabled_available_model(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_disable_enabled_model(authed_client, db_session):
+async def test_disable_enabled_model(authed_client):
     """200 OK; disabling an enabled, non-main model just flips is_enabled false."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=True, is_main=False))
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": False})
     assert resp.status_code == 200
@@ -46,9 +29,9 @@ async def test_disable_enabled_model(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_disabling_main_model_clears_is_main(authed_client, db_session):
+async def test_disabling_main_model_clears_is_main(authed_client):
     """200 OK; disabling a model that currently holds is_main also clears is_main in the same call."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_enabled=True, is_main=True))
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
 
     resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": False})
     assert resp.status_code == 200
@@ -59,9 +42,9 @@ async def test_disabling_main_model_clears_is_main(authed_client, db_session):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target_state", [True, False], ids=["enable", "disable"])
-async def test_set_enabled_rejected_when_unavailable(authed_client, db_session, target_state):
+async def test_set_enabled_rejected_when_unavailable(authed_client, target_state):
     """422 model_option_unavailable_cannot_set_enabled; neither direction is allowed once is_available=False."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data(is_available=False))
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=False, is_enabled=False, is_main=False)
 
     resp = await authed_client.call(
         "PATCH", f"{URL}/{row.uid}", json={"is_enabled": target_state}, raise_for_status=False
@@ -79,16 +62,16 @@ async def test_set_enabled_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_set_enabled_missing_body_is_a_validation_error(authed_client, db_session):
+async def test_set_enabled_missing_body_is_a_validation_error(authed_client):
     """422 when the required `is_enabled` field is omitted from the body."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data())
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
     resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json={}, raise_for_status=False)
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_requires_auth(client, db_session):
+async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
-    row = await create_record(db_session, DfEngineModelOptions, _model_option_data())
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
     resp = await client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": True}, raise_for_status=False)
     assert resp.status_code == 401

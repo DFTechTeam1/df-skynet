@@ -1,8 +1,8 @@
 import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEnginePromptTemplates
-from tests.helpers import create_record, expected_user, find_by_name
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from tests.helpers import expected_user, find_by_name
 
 URL = "/api/prompt-management"
 
@@ -88,18 +88,9 @@ async def test_create_missing_required_field(authed_client, missing):
 
 
 @pytest.mark.asyncio
-async def test_create_duplicate_name_conflict(authed_client, db_session, user_id):
+async def test_create_duplicate_name_conflict(authed_client, user_id):
     """409 when `name` already belongs to another prompt template."""
-    existing = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    existing = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await authed_client.call(
         "POST",
         URL,

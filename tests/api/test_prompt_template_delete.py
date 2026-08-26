@@ -1,47 +1,27 @@
 import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
-from services.mysql.model import (
-    DfEngineFeaturePromptMappings,
-    DfEngineFeatures,
-    DfEnginePromptTemplates,
-)
-from tests.helpers import create_record, response_names
+from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from tests.helpers import response_names
 
 URL = "/api/prompt-management"
 
 
 @pytest.mark.asyncio
-async def test_delete_success(authed_client, db_session, user_id):
+async def test_delete_success(authed_client, user_id):
     """200 OK; deleted template no longer appears in the refreshed list."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await authed_client.call("DELETE", f"{URL}/{row.uid}")
     assert resp.status_code == 200
     assert row.name not in response_names(resp.json())
 
 
 @pytest.mark.asyncio
-async def test_delete_twice_is_404_on_the_second_call(authed_client, db_session, user_id):
+async def test_delete_twice_is_404_on_the_second_call(authed_client, user_id):
     """First delete is 200 OK; repeating it is 404 prompt_template_not_found since the row is already gone."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     first = await authed_client.call("DELETE", f"{URL}/{row.uid}")
     assert first.status_code == 200
     second = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
@@ -58,32 +38,11 @@ async def test_delete_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_delete_blocked_while_mapped_to_a_feature(authed_client, db_session, user_id):
+async def test_delete_blocked_while_mapped_to_a_feature(authed_client, user_id):
     """409 prompt_template_in_use when the template is still referenced by a df_engine_feature_prompt_mappings row; template stays in the list."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
-    feature = await create_record(
-        db_session,
-        DfEngineFeatures,
-        dict(
-            uid=str(uuid4()),
-            name=f"Feature {uuid4().hex[:8]}",
-            created_by=int(user_id),
-        ),
-    )
-    await create_record(
-        db_session,
-        DfEngineFeaturePromptMappings,
-        dict(uid=str(uuid4()), feature_id=feature.id, template_id=row.id),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    DfEngineFeaturePromptMappingsFactory.create(df_engine_features=feature, df_engine_prompt_templates=row)
 
     resp = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
     assert resp.status_code == 409
@@ -95,18 +54,9 @@ async def test_delete_blocked_while_mapped_to_a_feature(authed_client, db_sessio
 
 
 @pytest.mark.asyncio
-async def test_requires_auth(client, db_session, user_id):
+async def test_requires_auth(client, user_id):
     """401 when the request carries no bearer token."""
-    row = await create_record(
-        db_session,
-        DfEnginePromptTemplates,
-        dict(
-            uid=str(uuid4()),
-            name=f"Prompt {uuid4().hex[:8]}",
-            prompt="a prompt",
-            created_by=int(user_id),
-        ),
-    )
+    row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
     assert resp.status_code == 401
 
