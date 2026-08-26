@@ -198,32 +198,12 @@ class APIKeyManagementController(CoreDependencies):
             updated_by=record.updated_by,
         )
 
-    async def revoke_and_archive_key(
-        self, record: DfEngineApiKeys, record_uid: str, new_uid: Optional[str] = None
-    ) -> bool:
-        """Revoke `record` on OpenRouter, archive it to snapshots, and delete the
-        local row. Records a DfEngineApiKeyRotationIssues incident and returns
-        False on any failure; returns True once both steps succeed. `new_uid`,
-        when given, is attached to the incident so a reconciliation job knows
-        which replacement key this old key's cleanup was blocking.
+    async def archive_key(self, record: DfEngineApiKeys, record_uid: str, new_uid: Optional[str] = None) -> bool:
+        """Archive an already-revoked `record` to snapshots and delete the local
+        row. Records a DfEngineApiKeyRotationIssues incident and returns False on
+        failure. `new_uid`, when given, is attached to the incident so a
+        reconciliation job knows which replacement key this cleanup was blocking.
         """
-        try:
-            await self.call_openrouter("DELETE", f"/keys/{record.hash}")
-        except Exception as exc:
-            self.db.add(
-                DfEngineApiKeyRotationIssues(
-                    old_uid=record_uid,
-                    new_uid=new_uid,
-                    issue_type="old_key_not_revoked",
-                    detail=str(exc),
-                )
-            )
-            await self.db.flush()
-            logging.error(
-                f"rotate: old uid={record_uid} could not be revoked on OpenRouter ({exc}) — needs manual cleanup"
-            )
-            return False
-
         """
         TODO: generation_prompts.key_id currently points at this row's
         df_engine_api_keys.id. Before archiving, add a SQLModel for
@@ -259,6 +239,31 @@ class APIKeyManagementController(CoreDependencies):
             return False
 
         return True
+
+    async def revoke_and_archive_key(
+        self, record: DfEngineApiKeys, record_uid: str, new_uid: Optional[str] = None
+    ) -> bool:
+        """Revoke `record` on OpenRouter, then archive+delete it locally via
+        archive_key. Returns False on any failure; True once both steps succeed.
+        """
+        try:
+            await self.call_openrouter("DELETE", f"/keys/{record.hash}")
+        except Exception as exc:
+            self.db.add(
+                DfEngineApiKeyRotationIssues(
+                    old_uid=record_uid,
+                    new_uid=new_uid,
+                    issue_type="old_key_not_revoked",
+                    detail=str(exc),
+                )
+            )
+            await self.db.flush()
+            logging.error(
+                f"rotate: old uid={record_uid} could not be revoked on OpenRouter ({exc}) — needs manual cleanup"
+            )
+            return False
+
+        return await self.archive_key(record, record_uid, new_uid)
 
     async def call_openrouter(
         self,
@@ -444,10 +449,10 @@ class APIKeyManagementController(CoreDependencies):
                     continue
 
                 """
-                Whether record having employee_id or not, we should validate them,
-                if invalid directly remove, otherwise it will be saved to snapshot
+                Revoke directly on OpenRouter — a 404/error response means the
+                hash is already invalid there, so just drop the local row.
                 """
-                openrouter_response = await self.call_openrouter("GET", f"/keys/{record.hash}")
+                openrouter_response = await self.call_openrouter("DELETE", f"/keys/{record.hash}")
                 if openrouter_response.get("error"):
                     await self.db.delete(record)
                     await self.db.flush()
@@ -458,7 +463,9 @@ class APIKeyManagementController(CoreDependencies):
                     )
                     continue
 
-                # TODO: behavior will like the delete action, just direct hit into delete api, instead GET first.
+                if not await self.archive_key(record, record_uid):
+                    total_partial += 1
+                    continue
 
                 if record.expires_at is None:
                     new_expires_at = None
@@ -466,13 +473,8 @@ class APIKeyManagementController(CoreDependencies):
                     original_duration = record.expires_at - record.created_at
                     new_expires_at = local_time() + max(original_duration, timedelta(days=ROTATION_INTERVAL_DAYS))
 
-                """
-                After record deleted, we will re create the API key with same configuration.
-                Expectation will be returning new API key from Openrouter with different API key.
-
-                Create the replacement before touching the old key — never leave
-                a PIC with zero working keys if OpenRouter rejects the new one.
-                """
+                """The old key is revoked and archived; create its replacement with
+                the same configuration."""
                 try:
                     new_openrouter_response = await self.call_openrouter(
                         "POST",
@@ -488,9 +490,18 @@ class APIKeyManagementController(CoreDependencies):
                     if new_openrouter_response.get("error"):
                         raise ValueError(new_openrouter_response["error"].get("message", "create_failed"))
                 except Exception as exc:
-                    total_failed += 1
-                    logging.warning(
-                        f"rotate: failed to create replacement for uid={record_uid} name={record_name!r}: {exc}"
+                    total_partial += 1
+                    self.db.add(
+                        DfEngineApiKeyRotationIssues(
+                            old_uid=record_uid,
+                            issue_type="new_key_not_created",
+                            detail=str(exc),
+                        )
+                    )
+                    await self.db.flush()
+                    logging.error(
+                        f"rotate: old uid={record_uid} name={record_name!r} was revoked but replacement "
+                        f"creation failed ({exc}) — PIC has no working key until this is fixed manually"
                     )
                     continue
 
@@ -527,10 +538,6 @@ class APIKeyManagementController(CoreDependencies):
                         f"rotate: created replacement on OpenRouter for uid={record_uid} but couldn't save it "
                         f"locally (hash={new_openrouter_response['data']['hash']}) — needs manual reconciliation"
                     )
-                    continue
-
-                if not await self.revoke_and_archive_key(record, record_uid, new_uid=new_key.uid):
-                    total_partial += 1
                     continue
 
                 total_rotated += 1
@@ -621,7 +628,7 @@ class APIKeyManagementController(CoreDependencies):
                 response.data = await self.get_api_keys()
                 return response
 
-            openrouter_response = await self.call_openrouter("GET", f"/keys/{record.hash}")
+            openrouter_response = await self.call_openrouter("DELETE", f"/keys/{record.hash}")
             if openrouter_response.get("error"):
                 await self.db.delete(record)
                 await self.db.flush()
@@ -632,10 +639,7 @@ class APIKeyManagementController(CoreDependencies):
                 response.data = await self.get_api_keys()
                 return response
 
-            # TODO: will be direct delete, if 404 then invalid hash, otherwise valid, when invalid proceed only delete record
-
-            """Proceed deleting valid API key"""
-            await self.call_openrouter("DELETE", f"/keys/{record.hash}")
+            """Key was revoked on OpenRouter above; archive it locally."""
             self.db.add(await self.to_snapshot(record))
 
             """
