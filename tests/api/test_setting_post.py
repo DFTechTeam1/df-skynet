@@ -15,6 +15,7 @@ def _base_payload(**overrides: Any) -> dict[str, Any]:
         "spend_ceiling": {"daily_ceiling_global_user": 0, "daily_ceiling_per_user": 0},
         "storyboard": {"max_storyboard_char": 4000, "max_scene_per_storyboard": 100, "max_shot_per_scene": 100},
         "compose_input": {"max_prompt_char": 4000},
+        "chat_assistant": {"max_previous_conversation": 0},
         "enhancer_model": None,
         "assistant_model": None,
     }

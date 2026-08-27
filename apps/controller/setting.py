@@ -15,6 +15,7 @@ from schemas.payload.setting import (
     UserSpendCeiling,
     UserStoryboard,
     UserComposeInput,
+    ChatAssistant,
 )
 from log import logging
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
@@ -66,6 +67,7 @@ class SettingController(CoreDependencies):
             "spend_ceiling": self._parse_group(rows, "spend_ceiling", UserSpendCeiling),
             "storyboard": self._parse_group(rows, "storyboard", UserStoryboard),
             "compose_input": self._parse_group(rows, "compose_input", UserComposeInput),
+            "chat_assistant": self._parse_group(rows, "chat_assistant", ChatAssistant),
             "enhancer_model": enhancer_row.value if enhancer_row and enhancer_row.value else None,
             "assistant_model": assistant_row.value if assistant_row and assistant_row.value else None,
         }
@@ -130,6 +132,7 @@ class SettingController(CoreDependencies):
             "spend_ceiling": self._parse_group(rows, "spend_ceiling", UserSpendCeiling),
             "storyboard": self._parse_group(rows, "storyboard", UserStoryboard),
             "compose_input": self._parse_group(rows, "compose_input", UserComposeInput),
+            "chat_assistant": self._parse_group(rows, "chat_assistant", ChatAssistant),
             "enhancer_model": serialize(enhancer_model) if enhancer_model else None,
             "assistant_model": serialize(assistant_model) if assistant_model else None,
         }
@@ -169,6 +172,7 @@ class SettingController(CoreDependencies):
             "spend_ceiling": schema.spend_ceiling.model_dump(mode="json"),
             "storyboard": schema.storyboard.model_dump(mode="json"),
             "compose_input": schema.compose_input.model_dump(mode="json"),
+            "chat_assistant": schema.chat_assistant.model_dump(mode="json"),
             "enhancer_model": enhancer_model.uid if enhancer_model else None,
             "assistant_model": assistant_model.uid if assistant_model else None,
         }
@@ -179,6 +183,7 @@ class SettingController(CoreDependencies):
             "spend_ceiling": json.dumps(incoming_snapshot["spend_ceiling"]),
             "storyboard": json.dumps(incoming_snapshot["storyboard"]),
             "compose_input": json.dumps(incoming_snapshot["compose_input"]),
+            "chat_assistant": json.dumps(incoming_snapshot["chat_assistant"]),
             "enhancer_model": incoming_snapshot["enhancer_model"],
             "assistant_model": incoming_snapshot["assistant_model"],
         }
@@ -271,7 +276,8 @@ class SettingController(CoreDependencies):
             "asset library shows every user's assets or just each user's own, the "
             "generate/enhance rate limits, the daily spend ceilings, the maximum prompt "
             "length, the storyboard limits (script length per scene, scenes per "
-            "storyboard, shots per scene), and which model currently powers the prompt "
+            "storyboard, shots per scene), how many earlier chat messages the assistant "
+            "gets as context, and which model currently powers the prompt "
             "enhancer and the assistant (returned with the model's full info, not just "
             "its UID, so the page can show what it actually is). Nothing needs to be "
             "saved first — if no settings have been saved yet, the default values are "

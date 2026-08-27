@@ -3,6 +3,20 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class ChatAssistant(BaseModel):
+    """How much of the earlier conversation the assistant is given as context."""
+
+    max_previous_conversation: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many of the most recent messages from the same chat to include as "
+            "context when the assistant answers. 0 means each message is answered on "
+            "its own, with no memory of what was said earlier in the chat."
+        ),
+    )
+
+
 class AdminView(BaseModel):
     """Controls whose assets show up in the Library for an admin."""
 
@@ -87,6 +101,7 @@ class AdminSettingPayload(BaseModel):
     spend_ceiling: UserSpendCeiling
     storyboard: UserStoryboard
     compose_input: UserComposeInput
+    chat_assistant: ChatAssistant
     enhancer_model: Optional[UUID] = Field(
         default=None,
         description="UID of the enabled text model to use as the prompt enhancer. Leave blank/null to use the engine's default.",
