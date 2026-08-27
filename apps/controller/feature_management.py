@@ -1,14 +1,15 @@
 import traceback
 from typing import Any, Optional
 from uuid import uuid4, UUID
-from fastapi import status, Depends, Path, Query
+from fastapi import status, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import select, delete
+from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.feature_management import FeaturePayload
+from services.mysql import query
 from services.mysql.model import (
     DfEngineFeaturePromptMappings,
     DfEngineFeatures,
@@ -17,12 +18,12 @@ from services.mysql.model import (
     Users,
     Employees,
 )
-from services.redis import get_json, set_json, delete_pattern
+from services.redis import get_json, set_json
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
+from utils import local_time
 from utils.serializer import serialize
 from utils.formatter import format_datetime, format_user_employees
-# from apps.dependency.permission import require_permissions
 
 
 feature_permission = {
@@ -32,19 +33,16 @@ feature_permission = {
 }
 
 CACHE_TTL_SECONDS = 3600
-LIST_CACHE_PATTERN = "feature_management:list:*"
-
-
-def list_cache_key(name: Optional[str]) -> str:
-    return f"feature_management:list:{(name or '').strip().lower() or 'all'}"
-
-
-def detail_cache_key(uid: str) -> str:
-    return f"feature_management:detail:{uid}"
 
 
 class FeatureManagementController(CoreDependencies):
-    def query_options(self):
+    def list_cache_key(self, name: Optional[str] = None) -> str:
+        return f"feature_management:list:{(name or '').strip().lower() or 'all'}"
+
+    def detail_cache_key(self, uid: UUID) -> str:
+        return f"feature_management:detail:{uid}"
+
+    def options(self):
         return (
             selectinload(DfEngineFeatures.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
@@ -68,19 +66,24 @@ class FeatureManagementController(CoreDependencies):
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEngineFeatures.df_engine_menu_feature_mappings).load_only(DfEngineMenuFeatureMappings.id),  # type: ignore  # type: ignore
         )
 
-    def format_response(self, feature: dict[str, Any], permissions: list[str]) -> dict[str, Any]:
-        feature["created_at"] = format_datetime(feature["created_at"])
-        feature["updated_at"] = format_datetime(feature["updated_at"])
-        feature["creator"] = format_user_employees(feature["created_by_user"])
-        feature["updater"] = format_user_employees(feature["updated_by_user"])
+    def format(self, record: dict[str, Any]) -> dict[str, Any]:
+        user_permissions = [
+            "update_df_engine_feature",
+            "fetch_df_engine_features",
+            "delete_df_engine_feature",
+        ]  # will be overriden first later will be using actual user permissions
+
+        record["created_at"] = format_datetime(record["created_at"])
+        record["updated_at"] = format_datetime(record["updated_at"])
+        record["creator"] = format_user_employees(record["created_by_user"])
+        record["updater"] = format_user_employees(record["updated_by_user"])
 
         templates = []
-        for mapping in feature.get("df_engine_feature_prompt_mappings", []):
+        for mapping in record.get("df_engine_feature_prompt_mappings", []):
             template = mapping.get("df_engine_prompt_templates", {})
-            if not template.get("is_active"):
-                continue
             templates.append(
                 {
                     "created_at": format_datetime(template.get("created_at")),
@@ -94,126 +97,55 @@ class FeatureManagementController(CoreDependencies):
                     "updater": format_user_employees(template.get("updated_by_user")),
                 }
             )
-        feature["templates"] = templates
-        feature["action"] = {
-            "can_fetch_detail": feature_permission["fetch_df_engine_features"] in permissions,
-            "can_update_feature": feature_permission["update_df_engine_feature"] in permissions,
-            "can_delete_feature": feature_permission["delete_df_engine_feature"] in permissions,
+        record["templates"] = templates
+        record["action"] = {
+            "can_fetch_detail": feature_permission["fetch_df_engine_features"] in user_permissions,
+            "can_update": feature_permission["update_df_engine_feature"] in user_permissions,
+            "can_delete": feature_permission["delete_df_engine_feature"] in user_permissions
+            and not record["df_engine_menu_feature_mappings"],
         }
 
-        feature.pop("id", None)
-        feature.pop("created_by_user", None)
-        feature.pop("updated_by_user", None)
-        feature.pop("created_by", None)
-        feature.pop("updated_by", None)
-        feature.pop("df_engine_feature_prompt_mappings", None)
-        return feature
-
-    async def get_features(self, name: Optional[str] = None) -> list[dict[str, Any]]:
-        """Will fetch all features available if name not provided, ordered by latest to oldest.
-
-        Raw (pre-`format_response`) rows are cached in Redis keyed by the
-        normalized `name` filter — cached data has no per-user info, so it's
-        safe to share across requests. `format_response` still runs on every
-        call to compute the requesting user's own `action` permissions.
-        """
-        cache_key = list_cache_key(name)
-        raw = await get_json(self.redis, cache_key)
-        if raw is None:
-            query = select(DfEngineFeatures)
-            if name:
-                query = query.where(DfEngineFeatures.name.ilike(f"{name}%"))  # type: ignore
-            records = (
-                (
-                    await self.db.execute(
-                        query.options(*self.query_options()).order_by(  # type: ignore
-                            DfEngineFeatures.created_at.desc()  # type: ignore
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            raw = serialize(records)
-            await set_json(self.redis, cache_key, raw, ttl=CACHE_TTL_SECONDS)
-
-        permissions = self.user.get("permissions", [])
-        return [self.format_response(feature, permissions) for feature in raw]
-
-    async def get_feature_detail(self, uid: UUID) -> dict[str, Any]:
-        cache_key = detail_cache_key(str(uid))
-        raw = await get_json(self.redis, cache_key)
-        if raw is None:
-            record = (
-                await self.db.execute(
-                    select(DfEngineFeatures)
-                    .where(DfEngineFeatures.uid == str(uid))  # type: ignore
-                    .options(*self.query_options())  # type: ignore
-                )
-            ).scalar_one_or_none()
-            if record is None:
-                raise DataNotFoundError(message="feature_not_found")
-            raw = serialize(record)
-            await set_json(self.redis, cache_key, raw, ttl=CACHE_TTL_SECONDS)
-
-        permissions = self.user.get("permissions", [])
-        return self.format_response(raw, permissions)
-
-    async def get_feature(self, uid: UUID) -> DfEngineFeatures:
-        record = (
-            await self.db.execute(
-                select(DfEngineFeatures).where(DfEngineFeatures.uid == str(uid))  # type: ignore
-            )
-        ).scalar_one_or_none()
-        if record is None:
-            raise DataNotFoundError(message="feature_not_found")
+        record.pop("id", None)
+        record.pop("created_by_user", None)
+        record.pop("updated_by_user", None)
+        record.pop("created_by", None)
+        record.pop("updated_by", None)
+        record.pop("df_engine_feature_prompt_mappings", None)
+        record.pop("df_engine_menu_feature_mappings", None)
         return record
 
-    async def get_templates_by_uid(self, template_uids: list[str]) -> dict[str, int]:
-        if not template_uids:
-            return {}
-
-        templates = (
-            await self.db.execute(
-                select(DfEnginePromptTemplates.id, DfEnginePromptTemplates.uid).where(  # type: ignore
-                    DfEnginePromptTemplates.uid.in_(template_uids)  # type: ignore
-                )
-            )
-        ).all()
-        map_template: dict[str, int] = {uid: id_ for id_, uid in templates}
-
-        if len(map_template) != len(template_uids):
-            error = {
-                f"template_uids.{idx}": ["prompt_template_not_found"]
-                for idx, template_uid in enumerate(template_uids)
-                if template_uid not in map_template
-            }
-            raise DataValidationError(message="feature_template_not_found", error=error)
-
-        return map_template
+    async def rebuild_response(self) -> list[dict[str, Any]]:
+        """Full, newest-first feature list from the DB — used to repopulate the
+        `:all` cache whenever a write finds it cold."""
+        results = await query(
+            db=self.db,
+            table=DfEngineFeatures,
+            options=self.options(),
+            order_by=(DfEngineFeatures.created_at.desc(),),  # type: ignore
+        )
+        records = [self.format(record) for record in serialize(results)]
+        logging.info(f"user={self.user['user_id']} rebuilt feature list cache count={len(records)}")
+        return records
 
     @controller.get(
         "/feature-management",
         summary="List or search features.",
         description=(
             "Returns features (`df_engine_features` rows), newest first — both active and "
-            "inactive, since this screen manages and toggles inactive features too, unlike "
-            "prompt templates. Pass `name` to search — only features whose name contains "
-            "that text (case-insensitive) are returned, in the exact same shape as the "
+            "inactive, since this screen manages and toggles inactive features too. Pass "
+            "`name` to search — only features whose name starts with that text "
+            "(case-insensitive prefix match) are returned, in the exact same shape as the "
             "unfiltered list. Each feature includes a nested `templates` array built from "
-            "`df_engine_feature_prompt_mappings`, filtered to active templates only (inactive ones "
-            "are still mapped internally but omitted from this array) — one feature can "
-            "list many templates, and the same template can appear under many different "
-            "features. Each feature also "
-            "includes its resolved `creator` / `updater` and an `action` block reflecting "
-            "which feature-management actions the current user is permitted to perform."
+            "`df_engine_feature_prompt_mappings` — every linked prompt template, active or "
+            "inactive, each carrying its own `is_active` flag. One feature can list many "
+            "templates, and the same template can be linked to many different features. "
+            "Each feature also includes its resolved `creator` / `updater` and an `action` "
+            "block reflecting which feature-management actions the current user is "
+            "permitted to perform."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["fetch_features"])) # Will be enabled later
-        # ]
     )
     async def feature_management_to_fetch_features(
         self,
@@ -226,7 +158,27 @@ class FeatureManagementController(CoreDependencies):
     ) -> Response:
         response = Response()
         try:
-            response.data = await self.get_features(name=name)
+            list_cache_key = self.list_cache_key(name)
+            cached_list = await get_json(self.redis, list_cache_key)
+            if cached_list:
+                logging.info(
+                    f"user={self.user['user_id']} listed features source=cache name={name!r} count={len(cached_list)}"
+                )
+                response.data = cached_list
+                return response
+
+            results = await query(
+                db=self.db,
+                table=DfEngineFeatures,
+                options=self.options(),
+                filters=(DfEngineFeatures.name.ilike(f"{name}%"),) if name else None,  # type: ignore
+                order_by=(DfEngineFeatures.created_at.desc(),),  # type: ignore
+            )
+            records = [self.format(record) for record in serialize(results)]
+            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+
+            logging.info(f"user={self.user['user_id']} listed features source=db name={name!r} count={len(records)}")
+            response.data = records
         except BaseError:
             raise
         except Exception:
@@ -246,11 +198,8 @@ class FeatureManagementController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["fetch_features"])) # Will be enabled later
-        # ]
     )
-    async def feature_management_with_uid_to_fetch_detail_features(
+    async def feature_management_with_uid_to_fetch_detail_feature(
         self,
         uid: UUID = Path(
             description="Feature UID.",
@@ -259,7 +208,45 @@ class FeatureManagementController(CoreDependencies):
     ) -> Response:
         response = Response()
         try:
-            response.data = await self.get_feature_detail(uid)
+            list_cache_key = self.list_cache_key()
+            cached_global = await get_json(self.redis, list_cache_key)
+            if cached_global:
+                feature = None
+                for record in cached_global:
+                    if record["uid"] == str(uid):
+                        feature = record
+
+                if not feature:
+                    raise DataNotFoundError(message="feature_not_found")
+
+                logging.info(f"user={self.user['user_id']} fetched feature uid={uid} source=list_cache")
+                response.data = feature
+                return response
+
+            detail_cache_key = self.detail_cache_key(uid)
+            cached_detail = await get_json(self.redis, detail_cache_key)
+            if cached_detail:
+                logging.info(f"user={self.user['user_id']} fetched feature uid={uid} source=detail_cache")
+                response.data = cached_detail
+                return response
+
+            result = await query(
+                db=self.db,
+                table=DfEngineFeatures,
+                options=self.options(),
+                filters=(DfEngineFeatures.uid == str(uid),),  # type: ignore
+                fetch_one=True,
+            )
+
+            if result is None:
+                raise DataNotFoundError(message="feature_not_found")
+
+            serialized_record = serialize(result)
+            formatted_response = self.format(serialized_record)
+            await set_json(self.redis, detail_cache_key, formatted_response, ttl=CACHE_TTL_SECONDS)
+
+            logging.info(f"user={self.user['user_id']} fetched feature uid={uid} source=db")
+            response.data = formatted_response
         except BaseError:
             raise
         except Exception:
@@ -273,25 +260,40 @@ class FeatureManagementController(CoreDependencies):
         description=(
             "Registers a new feature (`df_engine_features` row) and, in the same call, "
             "links it to the prompt templates given in `template_uids` — every uid must "
-            "reference an existing prompt template, or the whole request fails. "
-            "`template_uids` has no minimum length: omit it (or pass an empty list) to "
-            "create a feature with no linked template yet, or pass one or many to wire "
-            "them up immediately. `name` must be unique across all existing features. The "
-            "record's `created_by` is taken from the authenticated user resolved from the "
-            "bearer token, not from the request body. Returns the full, up-to-date list of "
-            "features, so the frontend can refresh its list without a separate re-fetch."
+            "reference an existing prompt template, or the whole request fails with a 422 "
+            "listing the offending indices. `template_uids` has no minimum length: omit it "
+            "(or pass an empty list) to create a feature with no linked template yet, or "
+            "pass one or many to wire them up immediately. `name` must be unique across "
+            "all existing features. The record's `created_by` is taken from the "
+            "authenticated user resolved from the bearer token, not from the request body. "
+            "Returns the full, up-to-date list of features, so the frontend can refresh "
+            "its list without a separate re-fetch."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["create_feature"])) # Will be enabled later
-        # ]
     )
     async def feature_management_to_create_feature(self, schema: FeaturePayload) -> Response:
         response = Response()
         try:
-            map_template = await self.get_templates_by_uid(schema.template_uids)
+            map_template: dict[str, int] = {}
+            if schema.template_uids:
+                templates = await query(
+                    db=self.db,
+                    table=DfEnginePromptTemplates,
+                    columns=(DfEnginePromptTemplates.id, DfEnginePromptTemplates.uid),  # type: ignore
+                    filters=(DfEnginePromptTemplates.uid.in_(schema.template_uids),),  # type: ignore
+                )
+                map_template = {uid: id_ for id_, uid in templates}
+                if len(map_template) != len(schema.template_uids):
+                    raise DataValidationError(
+                        message="feature_template_not_found",
+                        error={
+                            f"template_uids.{idx}": ["prompt_template_not_found"]
+                            for idx, uid in enumerate(schema.template_uids)
+                            if uid not in map_template
+                        },
+                    )
 
             feature = DfEngineFeatures(
                 uid=str(uuid4()),
@@ -321,8 +323,36 @@ class FeatureManagementController(CoreDependencies):
                 f"name={feature.name!r} is_active={feature.is_active} template_count={len(map_template)}"
             )
 
-            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
-            response.data = await self.get_features()
+            new_record = self.format(
+                serialize(
+                    await query(
+                        db=self.db,
+                        table=DfEngineFeatures,
+                        options=self.options(),
+                        filters=(DfEngineFeatures.uid == str(feature.uid),),  # type: ignore
+                        fetch_one=True,
+                    )
+                )
+            )
+            await set_json(
+                self.redis,
+                self.detail_cache_key(feature.uid),  # type: ignore
+                new_record,
+                ttl=CACHE_TTL_SECONDS,
+            )
+
+            list_cache_key = self.list_cache_key()
+            cached_list = await get_json(self.redis, list_cache_key)
+            if cached_list is not None:
+                records = [new_record, *cached_list]
+                logging.info(
+                    f"user={self.user['user_id']} appended feature uid={feature.uid} to list cache count={len(records)}"
+                )
+            else:
+                records = await self.rebuild_response()
+
+            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            response.data = records
         except BaseError:
             raise
         except Exception:
@@ -338,21 +368,18 @@ class FeatureManagementController(CoreDependencies):
             "record (`name`, `description`, `is_active`, `template_uids`), not a partial "
             "diff. `template_uids` is the complete desired set of linked prompt templates: "
             "any currently linked template missing from the list is unlinked, any new uid "
-            "is linked, and unchanged ones are left untouched (their `mapping_uid` is "
-            "preserved). It has no minimum length — pass an empty list to unlink every "
-            "template from the feature. `name` must remain unique across all existing "
-            "features. The record's `updated_by` is taken from the authenticated user "
-            "resolved from the bearer token, not from the request body. Setting `is_active` "
-            "to `false` also removes any `df_engine_menu_feature_mappings` rows linking this "
-            "feature to menus, so it stops appearing in menu-management's feature lists. "
-            "Returns the full, up-to-date list of features."
+            "is linked, and unchanged ones keep their existing mapping row (not deleted "
+            "and recreated). It has no minimum length — pass an empty list to unlink every "
+            "template. Every uid must reference an existing prompt template or the request "
+            "fails with a 422. `name` must remain unique across all existing features. The "
+            "record's `updated_by` is taken from the authenticated user resolved from the "
+            "bearer token, not from the request body. Deactivating a feature (`is_active` = "
+            "`false`) keeps it in the list, flagged inactive, and does not touch its "
+            "template or menu links. Returns the full, up-to-date list of features."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["update_feature"])) # Will be enabled later
-        # ]
     )
     async def feature_management_to_update_feature(
         self,
@@ -365,20 +392,40 @@ class FeatureManagementController(CoreDependencies):
     ) -> Response:
         response = Response()
         try:
-            feature = await self.get_feature(uid)
-            map_template = await self.get_templates_by_uid(schema.template_uids)
+            map_template: dict[str, int] = {}
+            if schema.template_uids:
+                templates = await query(
+                    db=self.db,
+                    table=DfEnginePromptTemplates,
+                    columns=(DfEnginePromptTemplates.id, DfEnginePromptTemplates.uid),  # type: ignore
+                    filters=(DfEnginePromptTemplates.uid.in_(schema.template_uids),),  # type: ignore
+                )
+                map_template = {uid: id_ for id_, uid in templates}
+                if len(map_template) != len(schema.template_uids):
+                    raise DataValidationError(
+                        message="feature_template_not_found",
+                        error={
+                            f"template_uids.{idx}": ["prompt_template_not_found"]
+                            for idx, uid in enumerate(schema.template_uids)
+                            if uid not in map_template
+                        },
+                    )
+
+            feature = await query(
+                db=self.db,
+                table=DfEngineFeatures,
+                options=self.options(),
+                filters=(DfEngineFeatures.uid == str(uid),),  # type: ignore
+                fetch_one=True,
+            )
+            if feature is None:
+                raise DataNotFoundError(message="feature_not_found")
 
             feature.name = schema.name
             feature.description = schema.description
             feature.is_active = schema.is_active
             feature.updated_by = int(self.user["user_id"])
-
-            if not schema.is_active:
-                await self.db.execute(
-                    delete(DfEngineMenuFeatureMappings).where(
-                        DfEngineMenuFeatureMappings.feature_id == feature.id  # type: ignore
-                    )
-                )
+            feature.updated_at = local_time()
 
             try:
                 await self.db.flush()
@@ -387,16 +434,10 @@ class FeatureManagementController(CoreDependencies):
 
             desired_ids = set(map_template.values())
 
-            existing_mappings = (
-                (
-                    await self.db.execute(
-                        select(DfEngineFeaturePromptMappings).where(
-                            DfEngineFeaturePromptMappings.feature_id == feature.id  # type: ignore
-                        )
-                    )
-                )
-                .scalars()
-                .all()
+            existing_mappings = await query(
+                db=self.db,
+                table=DfEngineFeaturePromptMappings,
+                filters=(DfEngineFeaturePromptMappings.feature_id == feature.id,),  # type: ignore
             )
             existing_by_template_id = {mapping.template_id: mapping for mapping in existing_mappings}
             unlinked_count = len(existing_by_template_id.keys() - desired_ids)
@@ -424,9 +465,38 @@ class FeatureManagementController(CoreDependencies):
                 f"templates_linked={linked_count} templates_unlinked={unlinked_count}"
             )
 
-            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
-            await self.redis.delete(detail_cache_key(str(uid)))
-            response.data = await self.get_features()
+            self.db.expire(feature)
+            updated_feature = self.format(
+                serialize(
+                    await query(
+                        db=self.db,
+                        table=DfEngineFeatures,
+                        options=self.options(),
+                        filters=(DfEngineFeatures.uid == str(uid),),  # type: ignore
+                        fetch_one=True,
+                    )
+                )
+            )
+
+            await set_json(
+                self.redis,
+                self.detail_cache_key(uid),
+                updated_feature,
+                ttl=CACHE_TTL_SECONDS,
+            )
+
+            list_cache_key = self.list_cache_key()
+            cached_list = await get_json(self.redis, list_cache_key)
+            if cached_list is not None:
+                records = [updated_feature if r["uid"] == str(uid) else r for r in cached_list]
+                logging.info(
+                    f"user={self.user['user_id']} updated feature uid={uid} in list cache count={len(records)}"
+                )
+            else:
+                records = await self.rebuild_response()
+
+            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            response.data = records
         except BaseError:
             raise
         except Exception:
@@ -439,17 +509,16 @@ class FeatureManagementController(CoreDependencies):
         summary="Delete a feature.",
         description=(
             "Permanently deletes the feature identified by `uid`, along with every "
-            "`df_engine_feature_prompt_mappings` row linking it to a prompt template and "
-            "every `df_engine_menu_feature_mappings` row linking it to a menu — there's no "
-            "separate unlink step, deleting a feature removes it entirely. Returns the "
-            "full, up-to-date list of remaining features."
+            "`df_engine_feature_prompt_mappings` row linking it to a prompt template — "
+            "there's no separate unlink step for templates. Fails with a 409 conflict if "
+            "the feature is still linked to a menu by a `df_engine_menu_feature_mappings` "
+            "row (i.e. `action.can_delete` is `false`) — unmap it in menu management "
+            "first. 404s if no feature matches `uid`. Returns the full, up-to-date list of "
+            "remaining features."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["delete_feature"])) # Will be enabled later
-        # ]
     )
     async def feature_management_to_delete_feature(
         self,
@@ -461,47 +530,44 @@ class FeatureManagementController(CoreDependencies):
     ) -> Response:
         response = Response()
         try:
-            feature = await self.get_feature(uid)
-
-            mappings = (
-                (
-                    await self.db.execute(
-                        select(DfEngineFeaturePromptMappings).where(
-                            DfEngineFeaturePromptMappings.feature_id == feature.id  # type: ignore
-                        )
-                    )
-                )
-                .scalars()
-                .all()
+            feature = await query(
+                db=self.db,
+                table=DfEngineFeatures,
+                options=self.options(),
+                filters=(DfEngineFeatures.uid == str(uid),),  # type: ignore
+                fetch_one=True,
             )
-            for mapping in mappings:
-                await self.db.delete(mapping)
+            if feature is None:
+                raise DataNotFoundError(message="feature_not_found")
 
-            menu_mappings = (
-                (
-                    await self.db.execute(
-                        select(DfEngineMenuFeatureMappings).where(
-                            DfEngineMenuFeatureMappings.feature_id == feature.id  # type: ignore
-                        )
-                    )
+            formatted_feature = self.format(serialize(feature))
+            if formatted_feature.get("action", {}).get("can_delete", False) is False:
+                raise DataConflictError(message="feature_in_use")
+
+            await self.db.execute(
+                delete(DfEngineFeaturePromptMappings).where(
+                    DfEngineFeaturePromptMappings.feature_id == feature.id  # type: ignore
                 )
-                .scalars()
-                .all()
             )
-            for mapping in menu_mappings:
-                await self.db.delete(mapping)
-
             await self.db.delete(feature)
             await self.db.flush()
 
-            logging.info(
-                f"user={self.user['user_id']} deleted feature uid={feature.uid} "
-                f"name={feature.name!r} mapping_count={len(mappings)} menu_mapping_count={len(menu_mappings)}"
-            )
+            logging.info(f"user={self.user['user_id']} deleted feature uid={feature.uid} name={feature.name!r}")
 
-            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
-            await self.redis.delete(detail_cache_key(str(uid)))
-            response.data = await self.get_features()
+            await self.redis.delete(self.detail_cache_key(uid))
+
+            list_cache_key = self.list_cache_key()
+            cached_list = await get_json(self.redis, list_cache_key)
+            if cached_list is not None:
+                records = [r for r in cached_list if r["uid"] != str(uid)]
+                logging.info(
+                    f"user={self.user['user_id']} removed feature uid={uid} from list cache count={len(records)}"
+                )
+            else:
+                records = await self.rebuild_response()
+
+            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            response.data = records
         except BaseError:
             raise
         except Exception:

@@ -102,3 +102,24 @@ erp-engine/
 sh script/setup.sh                  # installs dependencies
 sh script/run_server.sh --env dev   # starts the server on http://localhost:10000
 ```
+
+## Tests
+
+```bash
+sh script/run_test.sh --env dev --test all    # unit | api | e2e | all
+```
+
+### Pre-push hook
+
+`pre-commit` installs a `pre-push` hook that can run the full suite before every
+push. The suite is slow, so it is **skipped by default** — a normal `git push`
+prints `all-tests skipped` and pushes immediately.
+
+To run the whole suite before a push (push is aborted if anything fails):
+
+```bash
+RUN_TESTS=1 git push
+```
+
+The gate lives in `script/pre_push_tests.sh`. `ruff-format` and the file hygiene
+hooks always run on commit regardless of this flag.

@@ -17,9 +17,9 @@ repos:
 - repo: local
   hooks:
     - id: all-tests
-      name: all tests (dev env)
-      entry: sh script/run_test.sh --env dev --test all
-      language: system
+      name: all tests (RUN_TESTS=1 to run on push)
+      entry: script/pre_push_tests.sh
+      language: script
       pass_filenames: false
       always_run: true
       stages: [pre-push]

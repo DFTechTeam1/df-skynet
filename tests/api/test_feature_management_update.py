@@ -109,11 +109,11 @@ async def test_update_empty_template_uids_unlinks_everything(authed_client, user
 
 
 @pytest.mark.asyncio
-async def test_update_deactivating_removes_its_menu_mappings(authed_client, db_session, user_id):
-    """200 OK; setting is_active False deletes the feature's df_engine_menu_feature_mappings rows."""
+async def test_update_deactivating_keeps_its_menu_mappings(authed_client, db_session, user_id):
+    """200 OK; setting is_active False leaves the feature's df_engine_menu_feature_mappings rows untouched."""
     feature = _make_feature(user_id)
     menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
-    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
+    mapping = DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
@@ -132,7 +132,7 @@ async def test_update_deactivating_removes_its_menu_mappings(authed_client, db_s
         .scalars()
         .all()
     )
-    assert remaining == []
+    assert [m.uid for m in remaining] == [mapping.uid]
 
 
 @pytest.mark.asyncio

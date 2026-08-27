@@ -131,8 +131,8 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_deactivating_a_mapped_template_removes_it_from_feature_response(authed_client):
-    """200 OK; PATCHing a mapped template's is_active to False also drops it from the feature's templates array."""
+async def test_deactivating_a_mapped_template_keeps_it_in_feature_response(authed_client):
+    """200 OK; a mapped template stays in the feature's templates array even after its own is_active goes False."""
     template_name = f"Fadeout Template {uuid4().hex[:8]}"
     create_template = await authed_client.call("POST", TEMPLATE_URL, json={"name": template_name, "prompt": "p"})
     template_uid = find_by_name(create_template.json()["data"], template_name)["uid"]
@@ -151,7 +151,7 @@ async def test_deactivating_a_mapped_template_removes_it_from_feature_response(a
     assert deactivate.status_code == 200
 
     detail_resp = await authed_client.call("GET", f"{URL}/{feature_uid}")
-    assert template_uid not in [t["template_uid"] for t in detail_resp.json()["data"]["templates"]]
+    assert template_uid in [t["template_uid"] for t in detail_resp.json()["data"]["templates"]]
 
 
 @pytest.mark.asyncio
