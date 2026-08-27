@@ -5,6 +5,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from log import logging
+from utils import get_project_root
 from apps.secret import JWT_PUBLIC_KEY, JWT_ISSUER, JWT_AUDIENCE
 from error import (
     AuthenticationError,
@@ -36,7 +37,20 @@ def _assert_canonical_jwt(token: str) -> None:
             raise AuthenticationError()
 
 
-CENTRALIZED_PUBLIC_KEY: Optional[str] = base64.b64decode(JWT_PUBLIC_KEY).decode("utf-8") if JWT_PUBLIC_KEY else None
+# Centralized RS256 public key: base64-encoded PEM from the JWT_PUBLIC_KEY env,
+# or the raw PEM file installed by `make oauth-keys` (secrets/oauth/public.key).
+_PUBLIC_KEY_FILE = get_project_root() / "secrets" / "oauth" / "public.key"
+
+
+def _load_centralized_public_key() -> Optional[str]:
+    if JWT_PUBLIC_KEY:
+        return base64.b64decode(JWT_PUBLIC_KEY).decode("utf-8")
+    if _PUBLIC_KEY_FILE.exists():
+        return _PUBLIC_KEY_FILE.read_text()
+    return None
+
+
+CENTRALIZED_PUBLIC_KEY: Optional[str] = _load_centralized_public_key()
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
