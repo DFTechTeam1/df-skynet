@@ -423,7 +423,7 @@ class PromptTemplateController(CoreDependencies):
                 raise DataNotFoundError(message="prompt_template_not_found")
 
             formatted_template = self.format(serialize(template))
-            if formatted_template.get("action", {}).get("can_delete") is False:
+            if formatted_template.get("action", {}).get("can_delete", False) is False:
                 raise DataConflictError(message="prompt_template_in_use")
 
             await self.db.delete(template)
