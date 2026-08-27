@@ -2,13 +2,14 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, SQLModel
-from sqlalchemy import CHAR, DateTime, Integer, JSON, String, Text
+from sqlalchemy import CHAR, DateTime, Index, Integer, JSON, String, Text
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
 class DfEngineOpenrouterLogs(SQLModel, table=True):
     __tablename__ = "df_engine_openrouter_logs"  # type: ignore
+    __table_args__ = (Index("ix_df_engine_openrouter_logs_created_at_id", "created_at", "id"),)
 
     id: int = Field(
         default=None,
