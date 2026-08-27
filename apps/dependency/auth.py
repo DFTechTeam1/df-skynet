@@ -54,14 +54,22 @@ async def get_user(
     Raises:
         AuthenticationError: missing/invalid/expired token, or key not configured.
     """
+    route = f"{request.method} {request.url.path}"
+    client_ip = request.client.host if request.client else "unknown"
     try:
         if CENTRALIZED_PUBLIC_KEY is None:
+            logging.error(f"auth: JWT public key not configured — rejecting {route} from {client_ip}")
             raise AuthenticationError(message="auth_not_configured")
 
         if not credential or not credential.credentials:
+            logging.info(f"auth: no bearer token on {route} from {client_ip}")
             raise AuthenticationError(message="auth_unauthenticated")
 
-        _assert_canonical_jwt(credential.credentials)
+        try:
+            _assert_canonical_jwt(credential.credentials)
+        except AuthenticationError:
+            logging.warning(f"auth: non-canonical JWT encoding on {route} from {client_ip}")
+            raise
 
         try:
             claims = jwt.decode(
@@ -73,11 +81,12 @@ async def get_user(
                 options={"require_exp": True, "require_iat": True},
             )
         except JWTError as e:
-            logging.warning(f"Centralized token rejected: {e}")
+            logging.warning(f"auth: token rejected on {route} from {client_ip}: {e}")
             raise AuthenticationError()
 
         user_id = claims.get("sub")
         if not user_id:
+            logging.warning(f"auth: valid token with no 'sub' claim on {route} from {client_ip}")
             raise AuthenticationError()
 
         user = {
@@ -86,10 +95,11 @@ async def get_user(
             "permissions": claims.get("permissions", []),
         }
         request.state.user = user
+        logging.info(f"auth: user={user_id} authenticated on {route} from {client_ip}")
         return user
 
     except BaseError:
         raise
     except Exception:
-        logging.error(traceback.format_exc())
+        logging.error(f"auth: unexpected failure on {route} from {client_ip}\n{traceback.format_exc()}")
         raise ServiceError()
