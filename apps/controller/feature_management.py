@@ -1,6 +1,6 @@
 import traceback
 from typing import Any, Optional
-from uuid import uuid4, UUID
+from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy import delete
@@ -296,7 +296,6 @@ class FeatureManagementController(CoreDependencies):
                     )
 
             feature = DfEngineFeatures(
-                uid=str(uuid4()),
                 name=schema.name,
                 description=schema.description,
                 is_active=schema.is_active,
@@ -311,7 +310,6 @@ class FeatureManagementController(CoreDependencies):
             for template_id in map_template.values():
                 self.db.add(
                     DfEngineFeaturePromptMappings(
-                        uid=str(uuid4()),
                         feature_id=feature.id,
                         template_id=template_id,
                     )
@@ -451,7 +449,6 @@ class FeatureManagementController(CoreDependencies):
                 if template_id not in existing_by_template_id:
                     self.db.add(
                         DfEngineFeaturePromptMappings(
-                            uid=str(uuid4()),
                             feature_id=feature.id,
                             template_id=template_id,
                         )

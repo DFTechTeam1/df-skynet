@@ -119,8 +119,8 @@ async def test_action_flags_reflect_current_users_real_permissions(authed_client
     item = find_by_name(resp.json()["data"], row.name)
     assert set(item["action"].keys()) == {
         "can_fetch_detail",
-        "can_update_menu",
-        "can_delete_menu",
+        "can_update",
+        "can_delete",
     }
     assert all(isinstance(v, bool) for v in item["action"].values())
 
@@ -151,8 +151,8 @@ async def test_features_array_reflects_linked_rows(authed_client, user_id):
 
 
 @pytest.mark.asyncio
-async def test_features_array_excludes_inactive_mapped_features(authed_client, user_id):
-    """200 OK; `features` omits a mapped feature whose is_active is False, even though the mapping row still exists."""
+async def test_features_array_includes_inactive_mapped_features(authed_client, user_id):
+    """200 OK; `features` still lists a mapped feature whose is_active is False, flagged inactive."""
     menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     inactive_feature = DfEngineFeaturesFactory.create(
         is_active=False, created_by=int(user_id), df_engine_feature_prompt_mapping=None
@@ -161,7 +161,9 @@ async def test_features_array_excludes_inactive_mapped_features(authed_client, u
 
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], menu.name)
-    assert item["features"] == []
+    assert len(item["features"]) == 1
+    assert item["features"][0]["feature_uid"] == inactive_feature.uid
+    assert item["features"][0]["is_active"] is False
 
 
 @pytest.mark.asyncio

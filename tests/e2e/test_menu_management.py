@@ -63,9 +63,9 @@ async def test_full_menu_lifecycle(authed_client, db_session):
     updated = find_by_name(update_resp.json()["data"], renamed)
     assert updated["is_active"] is False
     assert updated["description"] == "v2 desc"
-    # confirms the self-cascade: deactivating the menu wipes its own mappings,
-    # so even the feature that would otherwise still be linked (A) is gone.
-    assert updated["features"] == []
+    # deactivating the menu doesn't touch its feature links — B was dropped by
+    # the feature_uids diff, A stays linked.
+    assert {f["feature_uid"] for f in updated["features"]} == {feature_a_uid}
     assert menu_name not in response_names(update_resp.json())
 
     # 5. list reflects the latest state (both active and inactive menus show up)
@@ -131,8 +131,8 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_deactivating_a_mapped_feature_removes_it_from_menu_response(authed_client, db_session):
-    """200 OK; PATCHing a mapped feature's is_active to False drops it from the menu's features array (menu format filters inactive), but the mapping row itself is left intact."""
+async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_client, db_session):
+    """200 OK; a mapped feature stays in the menu's features array even after its own is_active goes False, and the mapping row is left intact."""
     feature_name = f"Fadeout Feature {uuid4().hex[:8]}"
     create_feature = await authed_client.call("POST", FEATURE_URL, json={"name": feature_name})
     feature_uid = find_by_name(create_feature.json()["data"], feature_name)["uid"]
@@ -160,7 +160,7 @@ async def test_deactivating_a_mapped_feature_removes_it_from_menu_response(authe
     assert deactivate.status_code == 200
 
     detail_resp = await authed_client.call("GET", f"{URL}/{menu_uid}")
-    assert feature_uid not in [f["feature_uid"] for f in detail_resp.json()["data"]["features"]]
+    assert feature_uid in [f["feature_uid"] for f in detail_resp.json()["data"]["features"]]
 
     remaining_mapping = (
         await db_session.execute(
