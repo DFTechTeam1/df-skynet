@@ -143,11 +143,7 @@ async def test_action_flags_reflect_current_users_real_permissions(authed_client
     row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], row.name)
-    assert set(item["action"].keys()) == {
-        "can_fetch_df_engine_prompt_templates",
-        "can_delete_df_engine_prompt_template",
-        "can_update_df_engine_prompt_template",
-    }
+    assert set(item["action"].keys()) == {"can_fetch_detail", "can_delete", "can_update"}
     assert all(isinstance(v, bool) for v in item["action"].values())
 
 

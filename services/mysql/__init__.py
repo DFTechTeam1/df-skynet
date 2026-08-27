@@ -95,10 +95,10 @@ async def query(
     if options:
         stmt = stmt.options(*options)
 
-    if filters:
+    if filters is not None:
         stmt = stmt.where(*filters)
 
-    if order_by:
+    if order_by is not None:
         stmt = stmt.order_by(*order_by)
 
     if limit is None and fetch_one:
