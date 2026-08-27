@@ -105,11 +105,11 @@ async def test_update_empty_feature_uids_unlinks_everything(authed_client, user_
 
 
 @pytest.mark.asyncio
-async def test_update_deactivating_removes_its_own_feature_mappings(authed_client, db_session, user_id):
-    """200 OK; setting is_active False on the menu deletes its own df_engine_menu_feature_mappings rows."""
+async def test_update_deactivating_keeps_its_feature_mappings(authed_client, db_session, user_id):
+    """200 OK; setting is_active False leaves the menu's df_engine_menu_feature_mappings rows untouched."""
     menu = _make_menu(user_id)
     feature = _make_feature(user_id)
-    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
+    mapping = DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
@@ -119,6 +119,7 @@ async def test_update_deactivating_removes_its_own_feature_mappings(authed_clien
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], menu.name)
     assert item["is_active"] is False
+    assert {f["feature_uid"] for f in item["features"]} == {feature.uid}
     await db_session.commit()
 
     remaining = (
@@ -130,7 +131,7 @@ async def test_update_deactivating_removes_its_own_feature_mappings(authed_clien
         .scalars()
         .all()
     )
-    assert remaining == []
+    assert [m.uid for m in remaining] == [mapping.uid]
 
 
 @pytest.mark.asyncio
