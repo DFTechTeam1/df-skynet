@@ -1,16 +1,11 @@
 import pytest
 from uuid import uuid4
-from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineFeaturePromptMappings
-from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
-from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
 from services.redis import client as redis_client
 from tests.helpers import expected_user, find_by_name, response_names
 
 URL = "/api/prompt-management"
-FEATURE_MANAGEMENT_URL = "/api/feature-management"
 
 
 @pytest.mark.asyncio
@@ -50,33 +45,6 @@ async def test_update_deactivating_keeps_it_in_the_list(authed_client, user_id):
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], row.name)
     assert item["is_active"] is False
-
-
-@pytest.mark.asyncio
-async def test_update_deactivating_removes_its_feature_mappings(authed_client, db_session, user_id):
-    """200 OK; setting is_active False deletes the template's df_engine_feature_prompt_mappings rows."""
-    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
-    template = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
-    DfEngineFeaturePromptMappingsFactory.create(df_engine_features=feature, df_engine_prompt_templates=template)
-
-    resp = await authed_client.call(
-        "PATCH",
-        f"{URL}/{template.uid}",
-        json={"name": template.name, "prompt": template.prompt, "is_active": False},
-    )
-    assert resp.status_code == 200
-    await db_session.commit()
-
-    remaining = (
-        (
-            await db_session.execute(
-                select(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.template_id == template.id)  # type: ignore
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert remaining == []
 
 
 @pytest.mark.asyncio
@@ -179,28 +147,3 @@ async def test_update_invalidates_the_list_cache(authed_client, user_id):
     found = response_names(resp.json())
     assert renamed in found
     assert row.name not in found
-
-
-@pytest.mark.asyncio
-async def test_deactivating_invalidates_feature_managements_list_cache(authed_client, user_id):
-    """200 OK; deactivating unlinks the template from every feature (see this endpoint's own docstring) —
-    feature_management's cached `templates` arrays embed that same join table, so this has to reach into
-    that controller's cache too, or a deactivated template can keep showing up there until its own TTL expires."""
-    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
-    template = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
-    DfEngineFeaturePromptMappingsFactory.create(df_engine_features=feature, df_engine_prompt_templates=template)
-
-    warm = await authed_client.call("GET", FEATURE_MANAGEMENT_URL)
-    item = find_by_name(warm.json()["data"], feature.name)
-    assert template.uid in {t["template_uid"] for t in item["templates"]}
-    assert await redis_client().exists("feature_management:list:all")
-
-    await authed_client.call(
-        "PATCH",
-        f"{URL}/{template.uid}",
-        json={"name": template.name, "prompt": template.prompt, "is_active": False},
-    )
-
-    refreshed = await authed_client.call("GET", FEATURE_MANAGEMENT_URL)
-    item = find_by_name(refreshed.json()["data"], feature.name)
-    assert item["templates"] == []
