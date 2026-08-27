@@ -24,6 +24,7 @@ async def test_fetch_returns_defaults_when_nothing_saved_yet(authed_client, db_s
         "max_shot_per_scene": 100,
     }
     assert body["compose_input"] == {"max_prompt_char": 4000}
+    assert body["chat_assistant"] == {"max_previous_conversation": 0}
     assert body["enhancer_model"] is None
     assert body["assistant_model"] is None
 
@@ -38,6 +39,7 @@ async def test_fetch_returns_saved_values(authed_client, db_session):
         "spend_ceiling": {"daily_ceiling_global_user": 100, "daily_ceiling_per_user": 20},
         "storyboard": {"max_storyboard_char": 3000, "max_scene_per_storyboard": 50, "max_shot_per_scene": 20},
         "compose_input": {"max_prompt_char": 2000},
+        "chat_assistant": {"max_previous_conversation": 6},
         "enhancer_model": None,
         "assistant_model": None,
     }
@@ -46,6 +48,7 @@ async def test_fetch_returns_saved_values(authed_client, db_session):
     resp = await authed_client.call("GET", URL)
     body = resp.json()["data"]
     assert body["admin_view"] == payload["admin_view"]
+    assert body["chat_assistant"] == payload["chat_assistant"]
     assert body["limit"] == payload["limit"]
     assert body["spend_ceiling"] == payload["spend_ceiling"]
     assert body["storyboard"] == payload["storyboard"]
@@ -69,6 +72,7 @@ async def test_fetch_resolves_enhancer_and_assistant_model_info(authed_client, d
         "spend_ceiling": {},
         "storyboard": {},
         "compose_input": {},
+        "chat_assistant": {},
         "enhancer_model": enhancer.uid,
         "assistant_model": assistant.uid,
     }
@@ -116,6 +120,7 @@ async def test_post_invalidates_the_detail_cache(authed_client, db_session):
         "spend_ceiling": {"daily_ceiling_global_user": 100, "daily_ceiling_per_user": 20},
         "storyboard": {"max_storyboard_char": 3000, "max_scene_per_storyboard": 50, "max_shot_per_scene": 20},
         "compose_input": {"max_prompt_char": 2000},
+        "chat_assistant": {"max_previous_conversation": 0},
         "enhancer_model": None,
         "assistant_model": None,
     }
