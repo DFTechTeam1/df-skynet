@@ -3,9 +3,16 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
+from apps.controller.api_key_management import LOGS_CACHE_PATTERN as OPENROUTER_LOGS_CACHE_PATTERN
 from apps.controller.setting import DETAIL_CACHE_KEY, LOGS_CACHE_PATTERN
 from apps.controller.user_preference import preference_cache_key
-from services.mysql.model import DfEnginePreferences, DfEngineSettingLogs, DfEngineSettings, Users
+from services.mysql.model import (
+    DfEngineOpenrouterLogs,
+    DfEnginePreferences,
+    DfEngineSettingLogs,
+    DfEngineSettings,
+    Users,
+)
 from services.redis import client as redis_client, delete_pattern
 from utils.formatter import format_user_employees
 from utils.serializer import serialize
@@ -65,6 +72,17 @@ async def clear_setting_state(db_session: AsyncSession) -> None:
     redis = redis_client()
     await redis.delete(DETAIL_CACHE_KEY)
     await delete_pattern(redis, LOGS_CACHE_PATTERN)
+
+
+async def clear_openrouter_logs(db_session: AsyncSession) -> None:
+    """Deletes every `df_engine_openrouter_logs` row so a log test starts from an
+    empty table regardless of what an earlier run (or a real OpenRouter call)
+    left behind, and clears the cached logs pages so a later fetch doesn't
+    still serve rows this just removed.
+    """
+    await db_session.execute(delete(DfEngineOpenrouterLogs))
+    await db_session.commit()
+    await delete_pattern(redis_client(), OPENROUTER_LOGS_CACHE_PATTERN)
 
 
 def find_by_name(items: list[dict[str, Any]], name: str) -> dict[str, Any]:

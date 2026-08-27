@@ -1,15 +1,17 @@
+import re
 import time
 import traceback
 from uuid import UUID
 from datetime import timedelta
 from typing import Any, Optional
-from fastapi import status, Path
+from fastapi import status, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
-from schemas.response import Response
+from schemas.response import PaginationResponse, Response
+from services.mysql import query
 from schemas.payload.api_key_management import CreateApiKeyPayload, UpdateApiKeyPayload
 from services.mysql.model import (
     DfEngineApiKeyRotationIssues,
@@ -39,18 +41,54 @@ key_management_permission = {
 
 CACHE_TTL_SECONDS = 3600
 LIST_CACHE_KEY = "api_key_management:list:all"
+LOGS_CACHE_PATTERN = "api_key_management:logs:*"
 
 EMPLOYEE_STATUS_RESIGNED = 6
+ROTATION_INTERVAL_DAYS = 7
 ALLOWED_PIC_POSITIONS = {"project manager", "assistant project manager"}
 
-ROTATION_INTERVAL_DAYS = 7
+
+def openrouter_logs_cache_key(page: int, items_per_page: int) -> str:
+    return f"api_key_management:logs:page={page}:size={items_per_page}"
+
+
+def mask_secret(value: str) -> str:
+    if len(value) <= 12:
+        return "*" * len(value)
+    return f"{value[:8]}{'*' * 8}{value[-4:]}"
+
+
+_HASH_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _scrub_hashes(value: Any) -> Any:
+    if isinstance(value, str):
+        return _HASH_RE.sub(lambda m: mask_secret(m.group()), value)
+    if isinstance(value, dict):
+        return {k: _scrub_hashes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_hashes(v) for v in value]
+    return value
+
+
+def redact_openrouter_log_fields(record: dict[str, Any]) -> dict[str, Any]:
+    """Mask the OpenRouter secret key (`response_body.key`) and every key hash
+    found anywhere in the log's endpoint / headers / body, in place. Everything
+    else is kept as-is.
+    """
+    body = record.get("response_body")
+    if isinstance(body, dict) and isinstance(body.get("key"), str):
+        body["key"] = mask_secret(body["key"])
+
+    for field in ("endpoint", "response_headers", "response_body", "request_payload"):
+        if record.get(field) is not None:
+            record[field] = _scrub_hashes(record[field])
+    return record
 
 
 class APIKeyManagementController(CoreDependencies):
     def mask_key(self, key: str) -> str:
-        if len(key) <= 12:
-            return "*" * len(key)
-        return f"{key[:8]}{'*' * 8}{key[-4:]}"
+        return mask_secret(key)
 
     def format_response(
         self, record: dict[str, Any], user_permissions: list[str], employee_ids_with_main: set[int]
@@ -316,21 +354,30 @@ class APIKeyManagementController(CoreDependencies):
             raise
         finally:
             try:
+                safe = redact_openrouter_log_fields(
+                    {
+                        "endpoint": endpoint,
+                        "request_payload": json_payload,
+                        "response_headers": response_headers,
+                        "response_body": response_body or None,
+                    }
+                )
                 self.db.add(
                     DfEngineOpenrouterLogs(
                         name=await self.get_nickname(self.user["user_id"]),
                         method=method,
-                        endpoint=endpoint,
+                        endpoint=safe["endpoint"],
                         request_headers=request_headers,
-                        request_payload=json_payload,
+                        request_payload=safe["request_payload"],
                         response_status_code=response_status_code,
-                        response_headers=response_headers,
-                        response_body=response_body or None,
+                        response_headers=safe["response_headers"],
+                        response_body=safe["response_body"],
                         error_message=error_message,
                         duration_ms=int((time.perf_counter() - started_at) * 1000),
                     )
                 )
                 await self.db.commit()
+                await delete_pattern(self.redis, LOGS_CACHE_PATTERN)
             except Exception:
                 await self.db.rollback()
                 logging.error(f"call_openrouter: failed to persist audit log for {method} {endpoint}")
@@ -596,6 +643,72 @@ class APIKeyManagementController(CoreDependencies):
         response = Response()
         try:
             response.data = await self.get_api_keys()
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/key-management/logs",
+        summary="View the log of calls this service made to OpenRouter.",
+        description=(
+            "Returns the OpenRouter call history, newest first: every time this service "
+            "contacted OpenRouter to create, update, delete, or rotate an API key, this "
+            "records who triggered it, the HTTP method and endpoint, the request body "
+            "that was sent, OpenRouter's status code, response headers and response "
+            "body, how long the call took, and any error. The outgoing request headers "
+            "are deliberately left out because they carry the OpenRouter management "
+            "credential. Paginated — pass `page` and `itemsPerPage` to page through the "
+            "history."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["API Key Management"],
+        response_model=Response,
+    )
+    async def api_key_management_to_fetch_openrouter_logs(
+        self,
+        page: int = Query(default=1, ge=1, description="1-indexed page number to fetch."),
+        itemsPerPage: int = Query(default=50, ge=1, le=200, description="Number of records to return per page."),
+    ) -> Response:
+        response = Response()
+        try:
+            cache_key = openrouter_logs_cache_key(page, itemsPerPage)
+            cached = await get_json(self.redis, cache_key)
+            if cached is not None:
+                response.data = PaginationResponse(paginated=cached["logs"], totalData=cached["total_data"])
+                return response
+
+            total_data = await query(
+                db=self.db,
+                table=DfEngineOpenrouterLogs,
+                columns=(func.count(DfEngineOpenrouterLogs.id),),  # type: ignore
+                fetch_one=True,
+            )
+
+            records = await query(
+                db=self.db,
+                table=DfEngineOpenrouterLogs,
+                order_by=(DfEngineOpenrouterLogs.created_at.desc(), DfEngineOpenrouterLogs.id.desc()),  # type: ignore
+                limit=itemsPerPage,
+                offset=(page - 1) * itemsPerPage,
+            )
+
+            logs = []
+            for record in serialize(records):
+                # request_headers carries the OpenRouter management key — never expose it.
+                record.pop("request_headers", None)
+                record.pop("id", None)
+                # Defense in depth: newer rows are already redacted on write, but
+                # older rows may still hold a plaintext key/hash.
+                redact_openrouter_log_fields(record)
+                record["created_at"] = format_datetime(record["created_at"])
+                logs.append(record)
+
+            total_data = total_data or 0
+            await set_json(self.redis, cache_key, {"logs": logs, "total_data": total_data}, ttl=CACHE_TTL_SECONDS)
+            response.data = PaginationResponse(paginated=logs, totalData=total_data)
         except BaseError:
             raise
         except Exception:
