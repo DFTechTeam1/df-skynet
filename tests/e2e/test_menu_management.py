@@ -132,7 +132,7 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 
 @pytest.mark.asyncio
 async def test_deactivating_a_mapped_feature_removes_it_from_menu_response(authed_client, db_session):
-    """200 OK; PATCHing a mapped feature's is_active to False also drops it from the menu's features array, and the underlying mapping row is actually deleted."""
+    """200 OK; PATCHing a mapped feature's is_active to False drops it from the menu's features array (menu format filters inactive), but the mapping row itself is left intact."""
     feature_name = f"Fadeout Feature {uuid4().hex[:8]}"
     create_feature = await authed_client.call("POST", FEATURE_URL, json={"name": feature_name})
     feature_uid = find_by_name(create_feature.json()["data"], feature_name)["uid"]
@@ -167,7 +167,7 @@ async def test_deactivating_a_mapped_feature_removes_it_from_menu_response(authe
             select(DfEngineMenuFeatureMappings).where(DfEngineMenuFeatureMappings.uid == mapping_uid)
         )
     ).scalar_one_or_none()
-    assert remaining_mapping is None
+    assert remaining_mapping is not None
 
 
 @pytest.mark.asyncio

@@ -49,22 +49,23 @@ async def test_delete_cascades_to_mappings(authed_client, db_session, user_id):
 
 
 @pytest.mark.asyncio
-async def test_delete_also_cascades_menu_feature_mappings(authed_client, db_session, user_id):
-    """200 OK; process also deletes the feature's df_engine_menu_feature_mappings rows (its menu links)."""
+async def test_delete_blocked_while_linked_to_a_menu(authed_client, db_session, user_id):
+    """409 feature_in_use; a feature still linked to a menu cannot be deleted, and its rows survive."""
     feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     menu_mapping = DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
-    resp = await authed_client.call("DELETE", f"{URL}/{feature.uid}")
-    assert resp.status_code == 200
+    resp = await authed_client.call("DELETE", f"{URL}/{feature.uid}", raise_for_status=False)
+    assert resp.status_code == 409
+    assert resp.json()["message"] == resolve_message("feature_in_use", "en")
     await db_session.commit()
 
-    remaining = (
+    still_there = (
         await db_session.execute(
             select(DfEngineMenuFeatureMappings).where(DfEngineMenuFeatureMappings.uid == menu_mapping.uid)  # type: ignore
         )
     ).scalar_one_or_none()
-    assert remaining is None
+    assert still_there is not None
 
 
 @pytest.mark.asyncio

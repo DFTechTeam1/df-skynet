@@ -124,8 +124,8 @@ async def test_action_flags_reflect_current_users_real_permissions(authed_client
     item = find_by_name(resp.json()["data"], row.name)
     assert set(item["action"].keys()) == {
         "can_fetch_detail",
-        "can_update_feature",
-        "can_delete_feature",
+        "can_update",
+        "can_delete",
     }
     assert all(isinstance(v, bool) for v in item["action"].values())
 
@@ -158,8 +158,8 @@ async def test_templates_array_reflects_linked_rows(authed_client, user_id):
 
 
 @pytest.mark.asyncio
-async def test_templates_array_excludes_inactive_mapped_templates(authed_client, user_id):
-    """200 OK; `templates` omits a mapped template whose is_active is False, even though the mapping row still exists."""
+async def test_templates_array_includes_inactive_mapped_templates(authed_client, user_id):
+    """200 OK; `templates` still lists a mapped template whose is_active is False, flagged inactive."""
     feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     inactive_template = DfEnginePromptTemplatesFactory.create(
         prompt="a prompt", is_active=False, created_by=int(user_id)
@@ -170,7 +170,9 @@ async def test_templates_array_excludes_inactive_mapped_templates(authed_client,
 
     resp = await authed_client.call("GET", URL)
     item = find_by_name(resp.json()["data"], feature.name)
-    assert item["templates"] == []
+    assert len(item["templates"]) == 1
+    assert item["templates"][0]["template_uid"] == inactive_template.uid
+    assert item["templates"][0]["is_active"] is False
 
 
 @pytest.mark.asyncio
