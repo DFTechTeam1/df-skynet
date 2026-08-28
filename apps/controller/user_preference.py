@@ -1,87 +1,19 @@
 import traceback
-from typing import Any, Optional
 from fastapi import status
 from fastapi_controller import controller
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.user_preference import PreferencePayload, CONFIRM_BEFORE_SPENDING_LABELS
+from services.mysql import query
+from utils.serializer import serialize
 from services.mysql.model import DfEnginePreferences
-from services.redis import get_json, set_json
+from services.redis import get_json, set_json, CacheKeys
 from log import logging
-from error import ServiceError, BaseError, DataConflictError
+from error import ServiceError, BaseError
 from utils import local_time
-
-CACHE_TTL_SECONDS = 3600
-
-
-def preference_cache_key(user_id: int) -> str:
-    """Unlike every other cached list/detail in this codebase, this data is
-    per-user, not shared — so `user_id` has to be part of the key itself,
-    not just an input to a shared query.
-    """
-    return f"user_preference:detail:{user_id}"
 
 
 class UserPreferenceController(CoreDependencies):
-    async def get_preference_row(self, user_id: int) -> Optional[DfEnginePreferences]:
-        return (
-            await self.db.execute(select(DfEnginePreferences).where(DfEnginePreferences.user_id == user_id))  # type: ignore
-        ).scalar_one_or_none()
-
-    def _format_response(self, data: dict[str, Any]) -> dict[str, Any]:
-        data["confirm_before_spending"] = CONFIRM_BEFORE_SPENDING_LABELS[data["confirm_before_spending"]]
-        return data
-
-    async def get_preference(self, user_id: int) -> dict[str, Any]:
-        """A user who hasn't saved preferences yet still gets a cached entry —
-        the *resolved* default — so repeat fetches from that user skip the DB
-        too, not just users who already have a row.
-        """
-        cache_key = preference_cache_key(user_id)
-        cached = await get_json(self.redis, cache_key)
-        if cached is not None:
-            return cached
-
-        row = await self.get_preference_row(user_id)
-        if row is None:
-            result = self._format_response(PreferencePayload().model_dump(mode="json"))
-        else:
-            result = self._format_response(
-                PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
-            )
-        await set_json(self.redis, cache_key, result, ttl=CACHE_TTL_SECONDS)
-        return result
-
-    async def upsert_preference(self, user_id: int, schema: PreferencePayload) -> dict[str, Any]:
-        row = await self.get_preference_row(user_id)
-        values = schema.model_dump(mode="json")
-
-        if row is None:
-            row = DfEnginePreferences(user_id=user_id, **values)
-            self.db.add(row)
-        else:
-            for field, value in values.items():
-                setattr(row, field, value)
-            row.updated_at = local_time()
-
-        try:
-            await self.db.flush()
-        except IntegrityError:
-            raise DataConflictError(message="preference_already_exists")
-
-        logging.info(f"user={user_id} saved preferences theme={row.theme!r} accent={row.accent!r}")
-
-        result = self._format_response(
-            PreferencePayload.model_validate(row, from_attributes=True).model_dump(mode="json")
-        )
-        # The row we just wrote is already the exact value the cache should
-        # hold — overwrite it directly instead of invalidating and letting
-        # the next GET re-fetch from the DB.
-        await set_json(self.redis, preference_cache_key(user_id), result, ttl=CACHE_TTL_SECONDS)
-        return result
-
     @controller.get(
         "/user-preference",
         summary="Fetch the current user's preferences.",
@@ -89,7 +21,8 @@ class UserPreferenceController(CoreDependencies):
             "Returns the authenticated user's saved preferences (theme, accent, language, "
             "default aspect ratio, default size, confirm-before-spending threshold). If the "
             "user has never saved preferences yet, returns the default values without "
-            "creating a row."
+            "creating a row. The resolved result is cached per user id, so repeat fetches "
+            "skip the DB even for users still on the defaults."
         ),
         status_code=status.HTTP_200_OK,
         tags=["User Preference"],
@@ -98,7 +31,35 @@ class UserPreferenceController(CoreDependencies):
     async def user_preferences_to_fetch_user_preference(self) -> Response:
         response = Response()
         try:
-            response.data = await self.get_preference(int(self.user["user_id"]))
+            user_id = int(self.user["user_id"])
+            cache_key = CacheKeys().user_preference(user_id)
+
+            cached = await get_json(self.redis, cache_key)
+            if cached is not None:
+                logging.info(f"user={user_id} fetched user preference source=cache")
+                response.data = cached
+                return response
+
+            record = await query(
+                db=self.db,
+                table=DfEnginePreferences,
+                filters=(DfEnginePreferences.user_id == user_id,),  # type: ignore
+                fetch_one=True,
+            )
+            if record:
+                record = serialize(record)
+                record.pop("id", None)
+                record.pop("user_id", None)
+                record.pop("created_at", None)
+                record.pop("updated_at", None)
+                logging.info(f"user={user_id} fetched user preference source=db")
+            else:
+                record = PreferencePayload().model_dump(mode="json")
+                logging.info(f"user={user_id} fetched user preference source=default")
+
+            record["confirm_before_spending"] = CONFIRM_BEFORE_SPENDING_LABELS[record["confirm_before_spending"]]
+            await set_json(self.redis, cache_key, record)
+            response.data = record
         except BaseError:
             raise
         except Exception:
@@ -113,7 +74,8 @@ class UserPreferenceController(CoreDependencies):
             "Replaces the authenticated user's preferences with the full payload given — "
             "inserts a new row if the user has none yet, otherwise updates the existing "
             "one. Not a partial diff: every field must be supplied, though each has a "
-            "sensible default."
+            "sensible default. The freshly saved value is written straight into the "
+            "per-user cache, so an immediate fetch reflects it without a DB round-trip."
         ),
         status_code=status.HTTP_200_OK,
         tags=["User Preference"],
@@ -122,7 +84,37 @@ class UserPreferenceController(CoreDependencies):
     async def user_preferences_to_update_user_preference(self, schema: PreferencePayload) -> Response:
         response = Response()
         try:
-            response.data = await self.upsert_preference(int(self.user["user_id"]), schema)
+            user_id = int(self.user["user_id"])
+            values = schema.model_dump(mode="json")
+
+            row = await query(
+                db=self.db,
+                table=DfEnginePreferences,
+                filters=(DfEnginePreferences.user_id == user_id,),  # type: ignore
+                fetch_one=True,
+            )
+            if row:
+                for field, value in values.items():
+                    setattr(row, field, value)
+                row.updated_at = local_time()
+                action = "updated"
+            else:
+                row = DfEnginePreferences(user_id=user_id, **values)
+                self.db.add(row)
+                action = "created"
+
+            await self.db.flush()
+
+            logging.info(f"user={user_id} {action} user preference theme={row.theme!r} accent={row.accent!r}")
+
+            record = serialize(row)
+            record.pop("id", None)
+            record.pop("user_id", None)
+            record.pop("created_at", None)
+            record.pop("updated_at", None)
+            record["confirm_before_spending"] = CONFIRM_BEFORE_SPENDING_LABELS[record["confirm_before_spending"]]
+            await set_json(self.redis, CacheKeys().user_preference(user_id), record)
+            response.data = record
         except BaseError:
             raise
         except Exception:

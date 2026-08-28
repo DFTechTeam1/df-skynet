@@ -65,7 +65,7 @@ async def _clear_all_redis_caches():
         "api_key_management:list:*",
         "setting:detail:*",
         "setting:logs:*",
-        "user_preference:detail:*",
+        "user_preference:*",
     ):
         await delete_pattern(redis, pattern)
     yield

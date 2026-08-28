@@ -1,11 +1,11 @@
 import pytest
 from sqlalchemy import select
 from services.mysql.model import DfEnginePreferences
-from services.redis import client as redis_client
-from apps.controller.user_preference import preference_cache_key
+from services.redis import client as redis_client, CacheKeys
 from tests.helpers import clear_preference_row
 
 URL = "/api/user-preference"
+cache_key = CacheKeys()
 
 
 @pytest.mark.asyncio
@@ -56,7 +56,7 @@ async def test_response_is_cached_per_user_with_a_ttl(authed_client, db_session,
     """200 OK; a GET populates a Redis key keyed by this user's own id (even for the resolved default), with an expiry."""
     await clear_preference_row(db_session, user_id)
     redis = redis_client()
-    key = preference_cache_key(int(user_id))
+    key = cache_key.user_preference(int(user_id))
 
     resp = await authed_client.call("GET", URL)
     assert resp.status_code == 200
@@ -68,5 +68,5 @@ async def test_response_is_cached_per_user_with_a_ttl(authed_client, db_session,
 async def test_preference_cache_key_is_scoped_per_user():
     """The cache key must differ per user_id — this is what makes the per-user
     design safe; two different users must never collide on the same key."""
-    assert preference_cache_key(1) != preference_cache_key(2)
-    assert str(1) in preference_cache_key(1)
+    assert cache_key.user_preference(1) != cache_key.user_preference(2)
+    assert str(1) in cache_key.user_preference(1)
