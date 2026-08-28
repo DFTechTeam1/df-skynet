@@ -4,8 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
 from apps.controller.api_key_management import LOGS_CACHE_PATTERN as OPENROUTER_LOGS_CACHE_PATTERN
-from apps.controller.setting import DETAIL_CACHE_KEY, LOGS_CACHE_PATTERN
 from services.redis import CacheKeys
+
+SETTING_DETAIL_CACHE_KEY = CacheKeys().setting_detail("admin_setting")
+SETTING_LOGS_CACHE_PATTERN = "setting:logs:*"
 from services.mysql.model import (
     DfEngineOpenrouterLogs,
     DfEnginePreferences,
@@ -65,8 +67,8 @@ async def clear_setting_state(db_session: AsyncSession) -> None:
     await db_session.execute(delete(DfEngineSettingLogs))
     await db_session.commit()
     redis = redis_client()
-    await redis.delete(DETAIL_CACHE_KEY)
-    await delete_pattern(redis, LOGS_CACHE_PATTERN)
+    await redis.delete(SETTING_DETAIL_CACHE_KEY)
+    await delete_pattern(redis, SETTING_LOGS_CACHE_PATTERN)
 
 
 async def clear_openrouter_logs(db_session: AsyncSession) -> None:

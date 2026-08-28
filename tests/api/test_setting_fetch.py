@@ -1,8 +1,7 @@
 import pytest
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.redis import client as redis_client
-from apps.controller.setting import DETAIL_CACHE_KEY
-from tests.helpers import clear_setting_state
+from tests.helpers import SETTING_DETAIL_CACHE_KEY, clear_setting_state
 
 URL = "/api/setting"
 
@@ -56,8 +55,8 @@ async def test_fetch_returns_saved_values(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_resolves_enhancer_and_assistant_model_info(authed_client, db_session):
-    """200 OK; enhancer_model/assistant_model come back as full model info, not a bare UID."""
+async def test_fetch_returns_enhancer_and_assistant_model_name(authed_client, db_session):
+    """200 OK; enhancer_model/assistant_model come back as the model name, not a bare UID."""
     await clear_setting_state(db_session)
     enhancer = DfEngineModelOptionsFactory.create(
         name="Enhancer-A", type="text", is_available=True, is_enabled=True, is_main=False
@@ -80,10 +79,8 @@ async def test_fetch_resolves_enhancer_and_assistant_model_info(authed_client, d
 
     resp = await authed_client.call("GET", URL)
     body = resp.json()["data"]
-    assert body["enhancer_model"]["uid"] == enhancer.uid
-    assert body["enhancer_model"]["name"] == enhancer.name
-    assert body["assistant_model"]["uid"] == assistant.uid
-    assert body["assistant_model"]["name"] == assistant.name
+    assert body["enhancer_model"] == enhancer.name
+    assert body["assistant_model"] == assistant.name
 
 
 @pytest.mark.asyncio
@@ -101,18 +98,18 @@ async def test_response_is_cached_with_a_ttl(authed_client, db_session):
 
     resp = await authed_client.call("GET", URL)
     assert resp.status_code == 200
-    assert await redis.exists(DETAIL_CACHE_KEY)
-    assert await redis.ttl(DETAIL_CACHE_KEY) > 0
+    assert await redis.exists(SETTING_DETAIL_CACHE_KEY)
+    assert await redis.ttl(SETTING_DETAIL_CACHE_KEY) > 0
 
 
 @pytest.mark.asyncio
-async def test_post_invalidates_the_detail_cache(authed_client, db_session):
-    """200 OK; a POST clears the cached settings so the next GET reflects the new save, not the stale cache."""
+async def test_post_refreshes_the_detail_cache(authed_client, db_session):
+    """200 OK; a POST rewrites the cached settings so the next GET reflects the new save, not the stale cache."""
     await clear_setting_state(db_session)
     redis = redis_client()
 
     await authed_client.call("GET", URL)  # warm the cache with the defaults
-    assert await redis.exists(DETAIL_CACHE_KEY)
+    assert await redis.exists(SETTING_DETAIL_CACHE_KEY)
 
     payload = {
         "admin_view": {"see_all_asset": False},

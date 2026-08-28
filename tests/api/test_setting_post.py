@@ -51,13 +51,16 @@ async def test_post_updates_existing_settings_instead_of_duplicating(authed_clie
 
 @pytest.mark.asyncio
 async def test_post_accepts_enabled_available_text_model(authed_client, db_session):
-    """200 OK; a model that is type=text, is_enabled, is_available can be saved as enhancer_model."""
+    """200 OK; a model that is type=text, is_enabled, is_available can be saved as enhancer_model.
+
+    The client sends the model UID; the setting is stored and returned as the model name.
+    """
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("POST", URL, json=_base_payload(enhancer_model=model.uid))
     assert resp.status_code == 200
-    assert resp.json()["data"]["enhancer_model"]["uid"] == model.uid
+    assert resp.json()["data"]["enhancer_model"] == model.name
 
 
 @pytest.mark.asyncio
@@ -117,14 +120,15 @@ async def test_post_rejects_unavailable_model(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_post_missing_required_group_is_422(authed_client, db_session):
-    """422 when a required top-level group (e.g. admin_view) is omitted entirely."""
+async def test_post_omitted_group_falls_back_to_its_default(authed_client, db_session):
+    """200 OK; every group has a schema default, so omitting one (e.g. admin_view) saves that default."""
     await clear_setting_state(db_session)
     payload = _base_payload()
     del payload["admin_view"]
 
     resp = await authed_client.call("POST", URL, json=payload, raise_for_status=False)
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    assert resp.json()["data"]["admin_view"] == {"see_all_asset": True}
 
 
 @pytest.mark.asyncio

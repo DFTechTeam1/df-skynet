@@ -96,12 +96,12 @@ class AdminSettingPayload(BaseModel):
     a partial diff), though each has a sensible default so the settings page can
     always submit a complete, valid payload."""
 
-    admin_view: AdminView
-    limit: UserRateLimit
-    spend_ceiling: UserSpendCeiling
-    storyboard: UserStoryboard
-    compose_input: UserComposeInput
-    chat_assistant: ChatAssistant
+    admin_view: AdminView = Field(default_factory=AdminView)
+    limit: UserRateLimit = Field(default_factory=UserRateLimit)
+    spend_ceiling: UserSpendCeiling = Field(default_factory=UserSpendCeiling)
+    storyboard: UserStoryboard = Field(default_factory=UserStoryboard)
+    compose_input: UserComposeInput = Field(default_factory=UserComposeInput)
+    chat_assistant: ChatAssistant = Field(default_factory=ChatAssistant)
     enhancer_model: Optional[UUID] = Field(
         default=None,
         description="UID of the enabled text model to use as the prompt enhancer. Leave blank/null to use the engine's default.",

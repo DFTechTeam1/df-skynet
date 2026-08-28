@@ -52,7 +52,6 @@ def _load_centralized_public_key() -> Optional[str]:
 
 
 CENTRALIZED_PUBLIC_KEY: Optional[str] = _load_centralized_public_key()
-print(CENTRALIZED_PUBLIC_KEY)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -87,7 +86,7 @@ async def get_user(
             raise AuthenticationError(message="auth_unauthenticated")
 
         try:
-            print(_assert_canonical_jwt(credential.credentials))
+            _assert_canonical_jwt(credential.credentials)
         except AuthenticationError:
             logging.warning(f"auth: non-canonical JWT encoding on {route} from {client_ip}")
             raise
@@ -101,7 +100,6 @@ async def get_user(
                 issuer=JWT_ISSUER,
                 options={"require_exp": True, "require_iat": True},
             )
-            print(claims)
         except JWTError as e:
             logging.warning(f"auth: token rejected on {route} from {client_ip}: {e}")
             raise AuthenticationError()
