@@ -30,14 +30,14 @@ class UserPreferenceController(CoreDependencies):
     )
     async def user_preferences_to_fetch_user_preference(self) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
             user_id = int(self.user["user_id"])
-            cache_key = CacheKeys().user_preference(user_id)
-
-            cached = await get_json(self.redis, cache_key)
-            if cached is not None:
+            user_preference_key = cache_key.user_preference(user_id)
+            cached_user_preference = await get_json(self.redis, user_preference_key)
+            if cached_user_preference:
                 logging.info(f"user={user_id} fetched user preference source=cache")
-                response.data = cached
+                response.data = cached_user_preference
                 return response
 
             record = await query(
@@ -58,7 +58,7 @@ class UserPreferenceController(CoreDependencies):
                 logging.info(f"user={user_id} fetched user preference source=default")
 
             record["confirm_before_spending"] = CONFIRM_BEFORE_SPENDING_LABELS[record["confirm_before_spending"]]
-            await set_json(self.redis, cache_key, record)
+            await set_json(self.redis, user_preference_key, record)
             response.data = record
         except BaseError:
             raise

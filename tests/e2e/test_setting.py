@@ -1,7 +1,7 @@
 """End-to-end journey for DF Engine admin settings: initial fetch, first save
-(logged with null previous_data), a no-op save (not logged), a real change
-(logged with the actual diff), and the enhancer-model validation + disable
-cascade wired through model_management.
+(inserted, not logged — nothing to diff against), a no-op save (not logged), a
+real change (logged with the actual diff), and the enhancer-model validation +
+disable cascade wired through model_management.
 """
 
 import pytest
@@ -41,33 +41,32 @@ async def test_setting_lifecycle_journey(authed_client, db_session):
     logs_initial = await authed_client.call("GET", LOGS_URL)
     assert logs_initial.json()["data"]["totalData"] == 0
 
-    # 2. first save — settings created, one log with a null previous_data
+    # 2. first save — settings rows inserted; the client sends the UID, the
+    #    setting is stored/returned as the model name; not logged (no prior state)
     first_save = await authed_client.call("POST", SETTING_URL, json=_base_payload(enhancer_model=model.uid))
     assert first_save.status_code == 200
-    assert first_save.json()["data"]["enhancer_model"]["uid"] == model.uid
+    assert first_save.json()["data"]["enhancer_model"] == model.name
 
     logs_after_first = await authed_client.call("GET", LOGS_URL)
-    assert logs_after_first.json()["data"]["totalData"] == 1
-    first_entry = logs_after_first.json()["data"]["paginated"][0]
-    assert first_entry["previous_data"] is None
-    assert first_entry["incoming_data"]["enhancer_model"] == model.uid
+    assert logs_after_first.json()["data"]["totalData"] == 0
 
-    # 3. no-op save — same values, no new log
+    # 3. no-op save — same values, no log
     await authed_client.call("POST", SETTING_URL, json=_base_payload(enhancer_model=model.uid))
     logs_after_noop = await authed_client.call("GET", LOGS_URL)
-    assert logs_after_noop.json()["data"]["totalData"] == 1
+    assert logs_after_noop.json()["data"]["totalData"] == 0
 
-    # 4. real change — rate limit updated, second log records the diff
+    # 4. real change — rate limit updated, one log records the diff (names, not UIDs)
     await authed_client.call(
         "POST",
         SETTING_URL,
         json=_base_payload(enhancer_model=model.uid, limit={"generate_per_min": 5, "enhance_per_min": 5}),
     )
     logs_after_change = await authed_client.call("GET", LOGS_URL)
-    assert logs_after_change.json()["data"]["totalData"] == 2
+    assert logs_after_change.json()["data"]["totalData"] == 1
     newest = logs_after_change.json()["data"]["paginated"][0]
     assert newest["incoming_data"]["limit"] == {"generate_per_min": 5, "enhance_per_min": 5}
     assert newest["previous_data"]["limit"] == {"generate_per_min": 0, "enhance_per_min": 0}
+    assert newest["incoming_data"]["enhancer_model"] == model.name
 
     # 5. disabling the model that's currently the enhancer cascades it to null
     disable_resp = await authed_client.call("PATCH", f"{MODELS_URL}/{model.uid}", json={"is_enabled": False})
@@ -79,7 +78,7 @@ async def test_setting_lifecycle_journey(authed_client, db_session):
 
     # 6. the disable cascade is a direct DB fix, not a settings save — no new log entry
     logs_after_disable = await authed_client.call("GET", LOGS_URL)
-    assert logs_after_disable.json()["data"]["totalData"] == 2
+    assert logs_after_disable.json()["data"]["totalData"] == 1
 
     # 7. the now-disabled model can no longer be picked again
     rejected = await authed_client.call(

@@ -1,3 +1,4 @@
+import json
 import traceback
 from datetime import date
 from typing import Any, Optional
@@ -6,7 +7,8 @@ from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy import func
 from apps.controller.core import CoreDependencies
-from apps.controller.setting import SETTING_CODE, DETAIL_CACHE_KEY
+
+# from apps.controller.setting import SETTING_CODE, DETAIL_CACHE_KEY
 from schemas.payload.model_management import SetModelEnabledPayload
 from schemas.response import PaginationResponse, Response
 from services.mysql.model import DfEngineModelOptions, DfEngineSettings
@@ -32,6 +34,8 @@ model_management_permission = {
     "sync_df_engine_model_option": "sync_df_engine_model_option",
 }
 
+SETTING_CODE = "admin_setting"
+DETAIL_CACHE_KEY = f"setting:detail:{SETTING_CODE}"
 CACHE_TTL_SECONDS = 3600
 LIST_CACHE_PATTERN = "model_management:list:*"
 
@@ -70,11 +74,14 @@ class ModelManagementController(CoreDependencies):
         record.pop("id", None)
         return record
 
-    async def clear_engine_model_reference(self, model_uid: str) -> None:
+    async def clear_engine_model_reference(self, model_name: str) -> None:
         """A disabled model can no longer power the settings page's enhancer or
         assistant model — null out any `df_engine_settings` row still pointing at
         it, so the setting falls back to the engine's default instead of quietly
         referencing a model that's no longer selectable.
+
+        `setting.py` stores the model *name* (JSON-encoded) in these rows, so the
+        match is against `json.dumps(model_name)`, not the UID.
 
         This writes straight to `df_engine_settings` — it isn't a settings
         "save" (no `df_engine_setting_logs` entry, see `setting.py`'s own
@@ -89,7 +96,7 @@ class ModelManagementController(CoreDependencies):
             filters=(
                 DfEngineSettings.code == SETTING_CODE,  # type: ignore
                 DfEngineSettings.key.in_(("enhancer_model", "assistant_model")),  # type: ignore
-                DfEngineSettings.value == model_uid,  # type: ignore
+                DfEngineSettings.value == json.dumps(model_name),  # type: ignore
             ),
         )
         for row in rows:
@@ -325,7 +332,7 @@ class ModelManagementController(CoreDependencies):
             if not schema.is_enabled:
                 if record.is_main:
                     record.is_main = False
-                await self.clear_engine_model_reference(record.uid)
+                await self.clear_engine_model_reference(record.name)
 
             await self.db.flush()
             logging.info(

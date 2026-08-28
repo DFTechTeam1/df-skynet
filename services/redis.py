@@ -155,3 +155,12 @@ class CacheKeys:
 
     def feature_management_detail(self, uid: UUID) -> str:
         return f"feature_management:detail:{uid}"
+
+    def setting_detail(self, code: str) -> str:
+        return f"setting:detail:{code}"
+
+    def setting_pagination(self, page: int, items_per_page: int, search: Optional[str] = None) -> str:
+        return f"setting:logs:page={page}:size={items_per_page}:search={(search or '').strip().lower() or 'all'}"
+
+    def setting_pagination_pattern(self) -> str:
+        return "setting:logs:*"
