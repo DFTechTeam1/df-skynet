@@ -1,85 +1,26 @@
 import traceback
-from typing import Any, Optional
+from typing import Optional
 from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.prompt_template import PromptTemplatePayload
-from services.mysql.model import DfEnginePromptTemplates, DfEngineFeaturePromptMappings, Users, Employees
+from services.mysql.model import DfEnginePromptTemplates
 from services.redis import get_json, set_json, CacheKeys
 from services.mysql import query
 from log import logging
 from utils import local_time
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError
 from utils.serializer import serialize
-from utils.formatter import format_datetime, format_user_employees
+from services.prompt_template import PromptTemplateService
 
-template_permission = {
-    "fetch_df_engine_prompt_templates": "fetch_df_engine_prompt_templates",
-    "update_df_engine_prompt_template": "update_df_engine_prompt_template",
-    "delete_df_engine_prompt_template": "delete_df_engine_prompt_template",
-}
+
+prompt_template_service = PromptTemplateService()
 
 
 class PromptTemplateController(CoreDependencies):
-    def options(self):
-        return (
-            selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEnginePromptTemplates.updated_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEnginePromptTemplates.df_engine_feature_prompt_mappings).load_only(  # type: ignore
-                DfEngineFeaturePromptMappings.id  # type: ignore
-            ),
-        )
-
-    def format(self, record: dict[str, Any]) -> dict[str, Any]:
-        user_permissions = [
-            "delete_df_engine_prompt_template",
-            "fetch_df_engine_prompt_templates",
-            "update_df_engine_prompt_template",
-        ]  # will be overriden first later will be using actual user permissions
-
-        record["created_at"] = format_datetime(record["created_at"])
-        record["updated_at"] = format_datetime(record["updated_at"])
-        record["creator"] = format_user_employees(record["created_by_user"])
-        record["updater"] = format_user_employees(record["updated_by_user"])
-        record["action"] = {
-            "can_fetch_detail": template_permission["fetch_df_engine_prompt_templates"] in user_permissions,
-            "can_delete": template_permission["delete_df_engine_prompt_template"] in user_permissions
-            and not record["df_engine_feature_prompt_mappings"],
-            "can_update": template_permission["update_df_engine_prompt_template"] in user_permissions,
-        }
-
-        record.pop("id", None)
-        record.pop("created_by_user", None)
-        record.pop("updated_by_user", None)
-        record.pop("created_by", None)
-        record.pop("updated_by", None)
-        record.pop("df_engine_feature_prompt_mappings", None)
-
-        return record
-
-    async def rebuild_response(self) -> list[dict[str, Any]]:
-        """Full, newest-first template list from the DB — used to repopulate the
-        `:all` cache whenever a write finds it cold."""
-        results = await query(
-            db=self.db,
-            table=DfEnginePromptTemplates,
-            options=self.options(),
-            order_by=(DfEnginePromptTemplates.created_at.desc(),),  # type: ignore
-        )
-        records = [self.format(record) for record in serialize(results)]
-        logging.info(f"user={self.user['user_id']} rebuilt prompt template list cache count={len(records)}")
-        return records
-
     @controller.get(
         "/prompt-management/{uid}",
         summary="Details of a prompt templates.",
@@ -130,7 +71,7 @@ class PromptTemplateController(CoreDependencies):
             result = await query(
                 db=self.db,
                 table=DfEnginePromptTemplates,
-                options=self.options(),
+                options=prompt_template_service.options(),
                 filters=(DfEnginePromptTemplates.uid == str(uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -139,7 +80,7 @@ class PromptTemplateController(CoreDependencies):
                 raise DataNotFoundError(message="prompt_template_not_found")
 
             serialized_record = serialize(result)
-            formatted_response = self.format(serialized_record)
+            formatted_response = prompt_template_service.format(serialized_record)
             await set_json(self.redis, prompt_template_detail_cache_key, formatted_response)
 
             logging.info(f"user={self.user['user_id']} fetched prompt template uid={uid} source=db")
@@ -191,12 +132,12 @@ class PromptTemplateController(CoreDependencies):
             results = await query(
                 db=self.db,
                 table=DfEnginePromptTemplates,
-                options=self.options(),
+                options=prompt_template_service.options(),
                 filters=(DfEnginePromptTemplates.name.ilike(f"{name}%"),) if name else None,  # type: ignore
                 order_by=(DfEnginePromptTemplates.created_at.desc(),),  # type: ignore
             )
 
-            records = [self.format(record) for record in serialize(results)]
+            records = [prompt_template_service.format(record) for record in serialize(results)]
             await set_json(self.redis, prompt_template_global_cache_key, records)
             logging.info(
                 f"user={self.user['user_id']} listed prompt templates source=db name={name!r} count={len(records)}"
@@ -248,12 +189,12 @@ class PromptTemplateController(CoreDependencies):
                 f"name={prompt_template.name!r} is_active={prompt_template.is_active}"
             )
 
-            new_record = self.format(
+            new_record = prompt_template_service.format(
                 serialize(
                     await query(
                         db=self.db,
                         table=DfEnginePromptTemplates,
-                        options=self.options(),
+                        options=prompt_template_service.options(),
                         filters=(DfEnginePromptTemplates.uid == str(prompt_template.uid),),  # type: ignore
                         fetch_one=True,
                     )
@@ -274,7 +215,7 @@ class PromptTemplateController(CoreDependencies):
                     f"to list cache count={len(records)}"
                 )
             else:
-                records = await self.rebuild_response()
+                records = await prompt_template_service.rebuild_response(self.db, self.user["user_id"])
 
             await set_json(self.redis, prompt_template_global_cache_key, records)
             response.data = records
@@ -317,7 +258,7 @@ class PromptTemplateController(CoreDependencies):
             template = await query(
                 db=self.db,
                 table=DfEnginePromptTemplates,
-                options=self.options(),
+                options=prompt_template_service.options(),
                 filters=(DfEnginePromptTemplates.uid == str(uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -342,12 +283,12 @@ class PromptTemplateController(CoreDependencies):
             )
 
             self.db.expire(template)
-            updated_template = self.format(
+            updated_template = prompt_template_service.format(
                 serialize(
                     await query(
                         db=self.db,
                         table=DfEnginePromptTemplates,
-                        options=self.options(),
+                        options=prompt_template_service.options(),
                         filters=(DfEnginePromptTemplates.uid == str(uid),),  # type: ignore
                         fetch_one=True,
                     )
@@ -369,7 +310,7 @@ class PromptTemplateController(CoreDependencies):
                     f"user={self.user['user_id']} updated prompt template uid={uid} in list cache count={len(records)}"
                 )
             else:
-                records = await self.rebuild_response()
+                records = await prompt_template_service.rebuild_response(self.db, self.user["user_id"])
 
             await set_json(self.redis, prompt_template_global_cache_key, records)
             response.data = records
@@ -411,14 +352,14 @@ class PromptTemplateController(CoreDependencies):
             template = await query(
                 db=self.db,
                 table=DfEnginePromptTemplates,
-                options=self.options(),
+                options=prompt_template_service.options(),
                 filters=(DfEnginePromptTemplates.uid == str(uid),),  # type: ignore
                 fetch_one=True,
             )
             if template is None:
                 raise DataNotFoundError(message="prompt_template_not_found")
 
-            formatted_template = self.format(serialize(template))
+            formatted_template = prompt_template_service.format(serialize(template))
             if formatted_template.get("action", {}).get("can_delete", False) is False:
                 raise DataConflictError(message="prompt_template_in_use")
 
@@ -441,7 +382,7 @@ class PromptTemplateController(CoreDependencies):
                     f"from list cache count={len(records)}"
                 )
             else:
-                records = await self.rebuild_response()
+                records = await prompt_template_service.rebuild_response(self.db, self.user["user_id"])
 
             await set_json(self.redis, prompt_template_global_cache_key, records)
             response.data = records

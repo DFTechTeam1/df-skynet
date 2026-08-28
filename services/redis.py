@@ -143,3 +143,15 @@ class CacheKeys:
 
     def prompt_template_detail(self, uid: UUID) -> str:
         return f"prompt_template:detail:{uid}"
+
+    def menu_managements(self, name: Optional[str] = None) -> str:
+        return f"menu_management:list:{(name or '').strip().lower() or 'all'}"
+
+    def menu_management_detail(self, uid: UUID) -> str:
+        return f"menu_management:detail:{uid}"
+
+    def feature_managements(self, name: Optional[str] = None) -> str:
+        return f"feature_management:list:{(name or '').strip().lower() or 'all'}"
+
+    def feature_management_detail(self, uid: UUID) -> str:
+        return f"feature_management:detail:{uid}"

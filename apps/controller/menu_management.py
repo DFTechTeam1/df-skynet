@@ -1,11 +1,10 @@
 import traceback
-from typing import Any, Optional
+from typing import Optional
 from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.menu_management import MenuPayload
@@ -14,111 +13,19 @@ from services.mysql.model import (
     DfEngineFeatures,
     DfEngineMenuFeatureMappings,
     DfEngineMenus,
-    Users,
-    Employees,
 )
-from services.redis import get_json, set_json
+from services.redis import get_json, set_json, CacheKeys
+from services.menu_management import MenuManagementService
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils import local_time
 from utils.serializer import serialize
-from utils.formatter import format_datetime, format_user_employees
 
-menu_permission = {
-    "fetch_df_engine_menus": "fetch_df_engine_menus",
-    "update_df_engine_menu": "update_df_engine_menu",
-    "delete_df_engine_menu": "delete_df_engine_menu",
-}
+
+menu_management_service = MenuManagementService()
 
 
 class MenuManagementController(CoreDependencies):
-    def list_cache_key(self, name: Optional[str] = None) -> str:
-        return f"menu_management:list:{(name or '').strip().lower() or 'all'}"
-
-    def detail_cache_key(self, uid: UUID) -> str:
-        return f"menu_management:detail:{uid}"
-
-    def options(self):
-        return (
-            selectinload(DfEngineMenus.created_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEngineMenus.updated_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-            selectinload(  # type: ignore
-                DfEngineMenus.df_engine_menu_feature_mappings  # type: ignore
-            )
-            .selectinload(DfEngineMenuFeatureMappings.df_engine_features)  # type: ignore
-            .selectinload(DfEngineFeatures.created_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEngineMenus.df_engine_menu_feature_mappings)  # type: ignore
-            .selectinload(DfEngineMenuFeatureMappings.df_engine_features)  # type: ignore
-            .selectinload(DfEngineFeatures.updated_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-        )
-
-    def format(self, record: dict[str, Any]) -> dict[str, Any]:
-        user_permissions = [
-            "fetch_df_engine_menus",
-            "update_df_engine_menu",
-            "delete_df_engine_menu",
-        ]  # will be overriden first later will be using actual user permissions
-
-        record["created_at"] = format_datetime(record["created_at"])
-        record["updated_at"] = format_datetime(record["updated_at"])
-        record["creator"] = format_user_employees(record["created_by_user"])
-        record["updater"] = format_user_employees(record["updated_by_user"])
-
-        features = []
-        for mapping in record.get("df_engine_menu_feature_mappings", []):
-            feature = mapping.get("df_engine_features", {})
-            features.append(
-                {
-                    "created_at": format_datetime(feature.get("created_at")),
-                    "updated_at": format_datetime(feature.get("updated_at")),
-                    "feature_uid": feature.get("uid"),
-                    "name": feature.get("name"),
-                    "description": feature.get("description"),
-                    "is_active": feature.get("is_active"),
-                    "creator": format_user_employees(feature.get("created_by_user")),
-                    "updater": format_user_employees(feature.get("updated_by_user")),
-                }
-            )
-        record["features"] = features
-        record["action"] = {
-            "can_fetch_detail": menu_permission["fetch_df_engine_menus"] in user_permissions,
-            "can_update": menu_permission["update_df_engine_menu"] in user_permissions,
-            "can_delete": menu_permission["delete_df_engine_menu"] in user_permissions,
-        }
-
-        record.pop("id", None)
-        record.pop("created_by_user", None)
-        record.pop("updated_by_user", None)
-        record.pop("created_by", None)
-        record.pop("updated_by", None)
-        record.pop("df_engine_menu_feature_mappings", None)
-        return record
-
-    async def rebuild_response(self) -> list[dict[str, Any]]:
-        """Full, newest-first menu list from the DB — used to repopulate the
-        `:all` cache whenever a write finds it cold."""
-        results = await query(
-            db=self.db,
-            table=DfEngineMenus,
-            options=self.options(),
-            order_by=(DfEngineMenus.created_at.desc(),),  # type: ignore
-        )
-        records = [self.format(record) for record in serialize(results)]
-        logging.info(f"user={self.user['user_id']} rebuilt menu list cache count={len(records)}")
-        return records
-
     @controller.get(
         "/menu-management",
         summary="List or search menus.",
@@ -148,25 +55,26 @@ class MenuManagementController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
-            list_cache_key = self.list_cache_key(name)
-            cached_list = await get_json(self.redis, list_cache_key)
-            if cached_list:
+            menu_manegement_global_cache_key = cache_key.menu_managements(name)
+            cached_menu_management_global = await get_json(self.redis, menu_manegement_global_cache_key)
+            if cached_menu_management_global:
                 logging.info(
-                    f"user={self.user['user_id']} listed menus source=cache name={name!r} count={len(cached_list)}"
+                    f"user={self.user['user_id']} listed menus source=cache name={name!r} count={len(cached_menu_management_global)}"
                 )
-                response.data = cached_list
+                response.data = cached_menu_management_global
                 return response
 
             results = await query(
                 db=self.db,
                 table=DfEngineMenus,
-                options=self.options(),
+                options=menu_management_service.options(),
                 filters=(DfEngineMenus.name.ilike(f"{name}%"),) if name else None,  # type: ignore
                 order_by=(DfEngineMenus.created_at.desc(),),  # type: ignore
             )
-            records = [self.format(record) for record in serialize(results)]
-            await set_json(self.redis, list_cache_key, records)
+            records = [menu_management_service.format(record) for record in serialize(results)]
+            await set_json(self.redis, menu_manegement_global_cache_key, records)
 
             logging.info(f"user={self.user['user_id']} listed menus source=db name={name!r} count={len(records)}")
             response.data = records
@@ -198,12 +106,13 @@ class MenuManagementController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
-            list_cache_key = self.list_cache_key()
-            cached_global = await get_json(self.redis, list_cache_key)
-            if cached_global:
+            menu_manegement_global_cache_key = cache_key.menu_managements()
+            cached_menu_management_global = await get_json(self.redis, menu_manegement_global_cache_key)
+            if cached_menu_management_global:
                 menu = None
-                for record in cached_global:
+                for record in cached_menu_management_global:
                     if record["uid"] == str(uid):
                         menu = record
 
@@ -214,17 +123,17 @@ class MenuManagementController(CoreDependencies):
                 response.data = menu
                 return response
 
-            detail_cache_key = self.detail_cache_key(uid)
-            cached_detail = await get_json(self.redis, detail_cache_key)
-            if cached_detail:
+            menu_managment_detail_cache_key = cache_key.menu_management_detail(uid)
+            cached_menu_management_detail = await get_json(self.redis, menu_managment_detail_cache_key)
+            if cached_menu_management_detail:
                 logging.info(f"user={self.user['user_id']} fetched menu uid={uid} source=detail_cache")
-                response.data = cached_detail
+                response.data = cached_menu_management_detail
                 return response
 
             result = await query(
                 db=self.db,
                 table=DfEngineMenus,
-                options=self.options(),
+                options=menu_management_service.options(),
                 filters=(DfEngineMenus.uid == str(uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -233,8 +142,8 @@ class MenuManagementController(CoreDependencies):
                 raise DataNotFoundError(message="menu_not_found")
 
             serialized_record = serialize(result)
-            formatted_response = self.format(serialized_record)
-            await set_json(self.redis, detail_cache_key, formatted_response)
+            formatted_response = menu_management_service.format(serialized_record)
+            await set_json(self.redis, menu_managment_detail_cache_key, formatted_response)
 
             logging.info(f"user={self.user['user_id']} fetched menu uid={uid} source=db")
             response.data = formatted_response
@@ -265,6 +174,7 @@ class MenuManagementController(CoreDependencies):
     )
     async def menu_management_to_create_menu(self, schema: MenuPayload) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
             map_feature: dict[str, int] = {}
             if schema.feature_uids:
@@ -311,12 +221,12 @@ class MenuManagementController(CoreDependencies):
                 f"name={menu.name!r} is_active={menu.is_active} feature_count={len(map_feature)}"
             )
 
-            new_record = self.format(
+            new_record = menu_management_service.format(
                 serialize(
                     await query(
                         db=self.db,
                         table=DfEngineMenus,
-                        options=self.options(),
+                        options=menu_management_service.options(),
                         filters=(DfEngineMenus.uid == str(menu.uid),),  # type: ignore
                         fetch_one=True,
                     )
@@ -324,11 +234,11 @@ class MenuManagementController(CoreDependencies):
             )
             await set_json(
                 self.redis,
-                self.detail_cache_key(menu.uid),  # type: ignore
+                cache_key.menu_management_detail(menu.uid),  # type: ignore
                 new_record,
             )
 
-            list_cache_key = self.list_cache_key()
+            list_cache_key = cache_key.menu_managements()
             cached_list = await get_json(self.redis, list_cache_key)
             if cached_list is not None:
                 records = [new_record, *cached_list]
@@ -336,7 +246,7 @@ class MenuManagementController(CoreDependencies):
                     f"user={self.user['user_id']} appended menu uid={menu.uid} to list cache count={len(records)}"
                 )
             else:
-                records = await self.rebuild_response()
+                records = await menu_management_service.rebuild_response(self.db, self.user["user_id"])
 
             await set_json(self.redis, list_cache_key, records)
             response.data = records
@@ -378,6 +288,7 @@ class MenuManagementController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
             map_feature: dict[str, int] = {}
             if schema.feature_uids:
@@ -401,7 +312,7 @@ class MenuManagementController(CoreDependencies):
             menu = await query(
                 db=self.db,
                 table=DfEngineMenus,
-                options=self.options(),
+                options=menu_management_service.options(),
                 filters=(DfEngineMenus.uid == str(uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -452,12 +363,12 @@ class MenuManagementController(CoreDependencies):
             )
 
             self.db.expire(menu)
-            updated_menu = self.format(
+            updated_menu = menu_management_service.format(
                 serialize(
                     await query(
                         db=self.db,
                         table=DfEngineMenus,
-                        options=self.options(),
+                        options=menu_management_service.options(),
                         filters=(DfEngineMenus.uid == str(uid),),  # type: ignore
                         fetch_one=True,
                     )
@@ -466,17 +377,17 @@ class MenuManagementController(CoreDependencies):
 
             await set_json(
                 self.redis,
-                self.detail_cache_key(uid),
+                cache_key.menu_management_detail(uid),
                 updated_menu,
             )
 
-            list_cache_key = self.list_cache_key()
+            list_cache_key = cache_key.menu_managements()
             cached_list = await get_json(self.redis, list_cache_key)
             if cached_list is not None:
                 records = [updated_menu if r["uid"] == str(uid) else r for r in cached_list]
                 logging.info(f"user={self.user['user_id']} updated menu uid={uid} in list cache count={len(records)}")
             else:
-                records = await self.rebuild_response()
+                records = await menu_management_service.rebuild_response(self.db, self.user["user_id"])
 
             await set_json(self.redis, list_cache_key, records)
             response.data = records
@@ -509,6 +420,7 @@ class MenuManagementController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
             menu = await query(
                 db=self.db,
@@ -529,15 +441,15 @@ class MenuManagementController(CoreDependencies):
 
             logging.info(f"user={self.user['user_id']} deleted menu uid={menu.uid} name={menu.name!r}")
 
-            await self.redis.delete(self.detail_cache_key(uid))
+            await self.redis.delete(cache_key.menu_management_detail(uid))
 
-            list_cache_key = self.list_cache_key()
+            list_cache_key = cache_key.menu_managements()
             cached_list = await get_json(self.redis, list_cache_key)
             if cached_list is not None:
                 records = [r for r in cached_list if r["uid"] != str(uid)]
                 logging.info(f"user={self.user['user_id']} removed menu uid={uid} from list cache count={len(records)}")
             else:
-                records = await self.rebuild_response()
+                records = await menu_management_service.rebuild_response(self.db, self.user["user_id"])
 
             await set_json(self.redis, list_cache_key, records)
             response.data = records
