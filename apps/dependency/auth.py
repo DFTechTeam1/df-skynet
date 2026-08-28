@@ -44,7 +44,10 @@ _PUBLIC_KEY_FILE = get_project_root() / "secrets" / "oauth" / "public.key"
 
 def _load_centralized_public_key() -> Optional[str]:
     if JWT_PUBLIC_KEY:
-        return base64.b64decode(JWT_PUBLIC_KEY).decode("utf-8")
+        try:
+            return base64.b64decode(JWT_PUBLIC_KEY).decode("utf-8")
+        except Exception:
+            logging.error("auth: JWT_PUBLIC_KEY is set but is not valid base64 — ignoring it")
     if _PUBLIC_KEY_FILE.exists():
         return _PUBLIC_KEY_FILE.read_text()
     return None
@@ -73,6 +76,11 @@ async def get_user(
     try:
         if CENTRALIZED_PUBLIC_KEY is None:
             logging.error(f"auth: JWT public key not configured — rejecting {route} from {client_ip}")
+            raise AuthenticationError(message="auth_not_configured")
+
+        if not JWT_ISSUER or not JWT_AUDIENCE:
+            missing = "JWT_ISSUER" if not JWT_ISSUER else "JWT_AUDIENCE"
+            logging.error(f"auth: {missing} not configured — rejecting {route} from {client_ip}")
             raise AuthenticationError(message="auth_not_configured")
 
         if not credential or not credential.credentials:
