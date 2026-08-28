@@ -30,8 +30,6 @@ menu_permission = {
     "delete_df_engine_menu": "delete_df_engine_menu",
 }
 
-CACHE_TTL_SECONDS = 3600
-
 
 class MenuManagementController(CoreDependencies):
     def list_cache_key(self, name: Optional[str] = None) -> str:
@@ -168,7 +166,7 @@ class MenuManagementController(CoreDependencies):
                 order_by=(DfEngineMenus.created_at.desc(),),  # type: ignore
             )
             records = [self.format(record) for record in serialize(results)]
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
 
             logging.info(f"user={self.user['user_id']} listed menus source=db name={name!r} count={len(records)}")
             response.data = records
@@ -236,7 +234,7 @@ class MenuManagementController(CoreDependencies):
 
             serialized_record = serialize(result)
             formatted_response = self.format(serialized_record)
-            await set_json(self.redis, detail_cache_key, formatted_response, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, detail_cache_key, formatted_response)
 
             logging.info(f"user={self.user['user_id']} fetched menu uid={uid} source=db")
             response.data = formatted_response
@@ -328,7 +326,6 @@ class MenuManagementController(CoreDependencies):
                 self.redis,
                 self.detail_cache_key(menu.uid),  # type: ignore
                 new_record,
-                ttl=CACHE_TTL_SECONDS,
             )
 
             list_cache_key = self.list_cache_key()
@@ -341,7 +338,7 @@ class MenuManagementController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
             response.data = records
         except BaseError:
             raise
@@ -471,7 +468,6 @@ class MenuManagementController(CoreDependencies):
                 self.redis,
                 self.detail_cache_key(uid),
                 updated_menu,
-                ttl=CACHE_TTL_SECONDS,
             )
 
             list_cache_key = self.list_cache_key()
@@ -482,7 +478,7 @@ class MenuManagementController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
             response.data = records
         except BaseError:
             raise
@@ -543,7 +539,7 @@ class MenuManagementController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
             response.data = records
         except BaseError:
             raise

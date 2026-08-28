@@ -9,7 +9,7 @@ from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.prompt_template import PromptTemplatePayload
 from services.mysql.model import DfEnginePromptTemplates, DfEngineFeaturePromptMappings, Users, Employees
-from services.redis import get_json, set_json
+from services.redis import get_json, set_json, CacheKeys
 from services.mysql import query
 from log import logging
 from utils import local_time
@@ -23,16 +23,8 @@ template_permission = {
     "delete_df_engine_prompt_template": "delete_df_engine_prompt_template",
 }
 
-CACHE_TTL_SECONDS = 3600
-
 
 class PromptTemplateController(CoreDependencies):
-    def list_cache_key(self, name: Optional[str] = None) -> str:
-        return f"prompt_template:list:{(name or '').strip().lower() or 'all'}"
-
-    def detail_cache_key(self, uid: UUID) -> str:
-        return f"prompt_template:detail:{uid}"
-
     def options(self):
         return (
             selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
@@ -111,12 +103,13 @@ class PromptTemplateController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
-            list_cache_key = self.list_cache_key()
-            cached_global = await get_json(self.redis, list_cache_key)
-            if cached_global:
+            prompt_template_global_cache_key = cache_key.prompt_templates()
+            cached_prompt_template_global = await get_json(self.redis, prompt_template_global_cache_key)
+            if cached_prompt_template_global:
                 template = None
-                for record in cached_global:
+                for record in cached_prompt_template_global:
                     if record["uid"] == str(uid):
                         template = record
 
@@ -127,11 +120,11 @@ class PromptTemplateController(CoreDependencies):
                 response.data = template
                 return response
 
-            detail_cache_key = self.detail_cache_key(uid)
-            cached_detail = await get_json(self.redis, detail_cache_key)
-            if cached_detail:
+            prompt_template_detail_cache_key = cache_key.prompt_template_detail(uid)
+            cached_prompt_template_detail = await get_json(self.redis, prompt_template_detail_cache_key)
+            if cached_prompt_template_detail:
                 logging.info(f"user={self.user['user_id']} fetched prompt template uid={uid} source=detail_cache")
-                response.data = cached_detail
+                response.data = cached_prompt_template_detail
                 return response
 
             result = await query(
@@ -147,7 +140,7 @@ class PromptTemplateController(CoreDependencies):
 
             serialized_record = serialize(result)
             formatted_response = self.format(serialized_record)
-            await set_json(self.redis, detail_cache_key, formatted_response, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, prompt_template_detail_cache_key, formatted_response)
 
             logging.info(f"user={self.user['user_id']} fetched prompt template uid={uid} source=db")
             response.data = formatted_response
@@ -183,15 +176,16 @@ class PromptTemplateController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
-            list_cache_key = self.list_cache_key(name)
-            cached_list = await get_json(self.redis, list_cache_key)
-            if cached_list:
+            prompt_template_global_cache_key = cache_key.prompt_templates()
+            cached_prompt_template_global = await get_json(self.redis, prompt_template_global_cache_key)
+            if cached_prompt_template_global:
                 logging.info(
                     f"user={self.user['user_id']} listed prompt templates source=cache "
-                    f"name={name!r} count={len(cached_list)}"
+                    f"name={name!r} count={len(cached_prompt_template_global)}"
                 )
-                response.data = cached_list
+                response.data = cached_prompt_template_global
                 return response
 
             results = await query(
@@ -203,7 +197,7 @@ class PromptTemplateController(CoreDependencies):
             )
 
             records = [self.format(record) for record in serialize(results)]
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, prompt_template_global_cache_key, records)
             logging.info(
                 f"user={self.user['user_id']} listed prompt templates source=db name={name!r} count={len(records)}"
             )
@@ -234,6 +228,7 @@ class PromptTemplateController(CoreDependencies):
     )
     async def prompt_template_to_create_template(self, schema: PromptTemplatePayload) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
             prompt_template = DfEnginePromptTemplates(
                 name=schema.name,
@@ -266,15 +261,14 @@ class PromptTemplateController(CoreDependencies):
             )
             await set_json(
                 self.redis,
-                self.detail_cache_key(prompt_template.uid),  # type: ignore
+                cache_key.prompt_template_detail(prompt_template.uid),  # type: ignore
                 new_record,
-                ttl=CACHE_TTL_SECONDS,
             )
 
-            list_cache_key = self.list_cache_key()
-            cached_list = await get_json(self.redis, list_cache_key)
-            if cached_list is not None:
-                records = [new_record, *cached_list]
+            prompt_template_global_cache_key = cache_key.prompt_templates()
+            cached_prompt_template_global = await get_json(self.redis, prompt_template_global_cache_key)
+            if cached_prompt_template_global is not None:
+                records = [new_record, *cached_prompt_template_global]
                 logging.info(
                     f"user={self.user['user_id']} appended prompt template uid={prompt_template.uid} "
                     f"to list cache count={len(records)}"
@@ -282,7 +276,7 @@ class PromptTemplateController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, prompt_template_global_cache_key, records)
             response.data = records
         except BaseError:
             raise
@@ -318,6 +312,7 @@ class PromptTemplateController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
             template = await query(
                 db=self.db,
@@ -361,22 +356,22 @@ class PromptTemplateController(CoreDependencies):
 
             await set_json(
                 self.redis,
-                self.detail_cache_key(uid),
+                cache_key.prompt_template_detail(uid),
                 updated_template,
-                ttl=CACHE_TTL_SECONDS,
             )
 
-            list_cache_key = self.list_cache_key()
-            cached_list = await get_json(self.redis, list_cache_key)
-            if cached_list is not None:
-                records = [updated_template if r["uid"] == str(uid) else r for r in cached_list]
+            prompt_template_global_cache_key = cache_key.prompt_templates()
+            cached_prompt_template_global = await get_json(self.redis, prompt_template_global_cache_key)
+
+            if cached_prompt_template_global is not None:
+                records = [updated_template if r["uid"] == str(uid) else r for r in cached_prompt_template_global]
                 logging.info(
                     f"user={self.user['user_id']} updated prompt template uid={uid} in list cache count={len(records)}"
                 )
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, prompt_template_global_cache_key, records)
             response.data = records
 
         except BaseError:
@@ -411,6 +406,7 @@ class PromptTemplateController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
             template = await query(
                 db=self.db,
@@ -433,12 +429,13 @@ class PromptTemplateController(CoreDependencies):
                 f"user={self.user['user_id']} deleted prompt template uid={template.uid} name={template.name!r}"
             )
 
-            await self.redis.delete(self.detail_cache_key(uid))
+            await self.redis.delete(cache_key.prompt_template_detail(uid))
 
-            list_cache_key = self.list_cache_key()
-            cached_list = await get_json(self.redis, list_cache_key)
-            if cached_list is not None:
-                records = [r for r in cached_list if r["uid"] != str(uid)]
+            prompt_template_global_cache_key = cache_key.prompt_templates()
+            cached_prompt_template_global = await get_json(self.redis, prompt_template_global_cache_key)
+
+            if cached_prompt_template_global is not None:
+                records = [r for r in cached_prompt_template_global if r["uid"] != str(uid)]
                 logging.info(
                     f"user={self.user['user_id']} removed prompt template uid={uid} "
                     f"from list cache count={len(records)}"
@@ -446,7 +443,7 @@ class PromptTemplateController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, prompt_template_global_cache_key, records)
             response.data = records
         except BaseError:
             raise

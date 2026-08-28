@@ -1,9 +1,9 @@
 import pytest
-from services.redis import client as redis_client
-from apps.controller.user_preference import preference_cache_key
+from services.redis import client as redis_client, CacheKeys
 from tests.helpers import clear_preference_row
 
 URL = "/api/user-preference"
+cache_key = CacheKeys()
 
 
 @pytest.mark.asyncio
@@ -77,7 +77,7 @@ async def test_post_overwrites_the_cache_with_the_saved_value(authed_client, db_
     GET reflects it without needing to fall back to the DB."""
     await clear_preference_row(db_session, user_id)
     redis = redis_client()
-    key = preference_cache_key(int(user_id))
+    key = cache_key.user_preference(int(user_id))
 
     payload = {
         "theme": "light",

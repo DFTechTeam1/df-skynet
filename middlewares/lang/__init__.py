@@ -10,7 +10,6 @@ from middlewares.lang.en.menu_management import (
     MenuManagementMessage as _EnMenuManagement,
 )
 from middlewares.lang.en.model_management import ModelManagementMessage as _EnModelManagement
-from middlewares.lang.en.preference import PreferenceMessage as _EnPreference
 from middlewares.lang.en.prompt_template import (
     PromptTemplateMessage as _EnPromptTemplate,
 )
@@ -26,7 +25,6 @@ from middlewares.lang.id.menu_management import (
     MenuManagementMessage as _IdMenuManagement,
 )
 from middlewares.lang.id.model_management import ModelManagementMessage as _IdModelManagement
-from middlewares.lang.id.preference import PreferenceMessage as _IdPreference
 from middlewares.lang.id.prompt_template import (
     PromptTemplateMessage as _IdPromptTemplate,
 )
@@ -45,7 +43,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_EnKeyManagement().message,
         **_EnMenuManagement().message,
         **_EnModelManagement().message,
-        **_EnPreference().message,
         **_EnPromptTemplate().message,
         **_EnSetting().message,
     },
@@ -57,7 +54,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_IdKeyManagement().message,
         **_IdMenuManagement().message,
         **_IdModelManagement().message,
-        **_IdPreference().message,
         **_IdPromptTemplate().message,
         **_IdSetting().message,
     },

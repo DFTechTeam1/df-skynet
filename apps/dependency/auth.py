@@ -37,8 +37,6 @@ def _assert_canonical_jwt(token: str) -> None:
             raise AuthenticationError()
 
 
-# Centralized RS256 public key: base64-encoded PEM from the JWT_PUBLIC_KEY env,
-# or the raw PEM file installed by `make oauth-keys` (secrets/oauth/public.key).
 _PUBLIC_KEY_FILE = get_project_root() / "secrets" / "oauth" / "public.key"
 
 
@@ -51,6 +49,7 @@ def _load_centralized_public_key() -> Optional[str]:
 
 
 CENTRALIZED_PUBLIC_KEY: Optional[str] = _load_centralized_public_key()
+print(CENTRALIZED_PUBLIC_KEY)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -80,7 +79,7 @@ async def get_user(
             raise AuthenticationError(message="auth_unauthenticated")
 
         try:
-            _assert_canonical_jwt(credential.credentials)
+            print(_assert_canonical_jwt(credential.credentials))
         except AuthenticationError:
             logging.warning(f"auth: non-canonical JWT encoding on {route} from {client_ip}")
             raise
@@ -94,6 +93,7 @@ async def get_user(
                 issuer=JWT_ISSUER,
                 options={"require_exp": True, "require_iat": True},
             )
+            print(claims)
         except JWTError as e:
             logging.warning(f"auth: token rejected on {route} from {client_ip}: {e}")
             raise AuthenticationError()

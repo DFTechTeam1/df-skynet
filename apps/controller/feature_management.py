@@ -32,8 +32,6 @@ feature_permission = {
     "delete_df_engine_feature": "delete_df_engine_feature",
 }
 
-CACHE_TTL_SECONDS = 3600
-
 
 class FeatureManagementController(CoreDependencies):
     def list_cache_key(self, name: Optional[str] = None) -> str:
@@ -175,7 +173,7 @@ class FeatureManagementController(CoreDependencies):
                 order_by=(DfEngineFeatures.created_at.desc(),),  # type: ignore
             )
             records = [self.format(record) for record in serialize(results)]
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
 
             logging.info(f"user={self.user['user_id']} listed features source=db name={name!r} count={len(records)}")
             response.data = records
@@ -243,7 +241,7 @@ class FeatureManagementController(CoreDependencies):
 
             serialized_record = serialize(result)
             formatted_response = self.format(serialized_record)
-            await set_json(self.redis, detail_cache_key, formatted_response, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, detail_cache_key, formatted_response)
 
             logging.info(f"user={self.user['user_id']} fetched feature uid={uid} source=db")
             response.data = formatted_response
@@ -336,7 +334,6 @@ class FeatureManagementController(CoreDependencies):
                 self.redis,
                 self.detail_cache_key(feature.uid),  # type: ignore
                 new_record,
-                ttl=CACHE_TTL_SECONDS,
             )
 
             list_cache_key = self.list_cache_key()
@@ -349,7 +346,7 @@ class FeatureManagementController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
             response.data = records
         except BaseError:
             raise
@@ -479,7 +476,6 @@ class FeatureManagementController(CoreDependencies):
                 self.redis,
                 self.detail_cache_key(uid),
                 updated_feature,
-                ttl=CACHE_TTL_SECONDS,
             )
 
             list_cache_key = self.list_cache_key()
@@ -492,7 +488,7 @@ class FeatureManagementController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
             response.data = records
         except BaseError:
             raise
@@ -563,7 +559,7 @@ class FeatureManagementController(CoreDependencies):
             else:
                 records = await self.rebuild_response()
 
-            await set_json(self.redis, list_cache_key, records, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, list_cache_key, records)
             response.data = records
         except BaseError:
             raise
