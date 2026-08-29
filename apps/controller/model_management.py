@@ -1,18 +1,16 @@
 import json
 import traceback
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy import func
 from apps.controller.core import CoreDependencies
-
-# from apps.controller.setting import SETTING_CODE, DETAIL_CACHE_KEY
 from schemas.payload.model_management import SetModelEnabledPayload
 from schemas.response import PaginationResponse, Response
 from services.mysql.model import DfEngineModelOptions, DfEngineSettings
-from services.redis import get_json, set_json, delete_pattern
+from services.redis import get_json, set_json, delete_pattern, CacheKeys
 from log import logging
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from utils import epoch_to_wib, local_time
@@ -29,215 +27,215 @@ class ModelUsageTypes(StrEnum):
     video = auto()
 
 
-model_management_permission = {
-    "fetch_df_engine_model_option": "fetch_df_engine_model_option",
-    "sync_df_engine_model_option": "sync_df_engine_model_option",
-}
+# model_management_permission = {
+#     "fetch_df_engine_model_option": "fetch_df_engine_model_option",
+#     "sync_df_engine_model_option": "sync_df_engine_model_option",
+# }
 
-SETTING_CODE = "admin_setting"
-DETAIL_CACHE_KEY = f"setting:detail:{SETTING_CODE}"
-CACHE_TTL_SECONDS = 3600
-LIST_CACHE_PATTERN = "model_management:list:*"
+# SETTING_CODE = "admin_setting"
+# DETAIL_CACHE_KEY = f"setting:detail:{SETTING_CODE}"
+# CACHE_TTL_SECONDS = 3600
+# LIST_CACHE_PATTERN = "model_management:list:*"
 
 
-def list_cache_key(
-    type: Optional[str], search: Optional[str], is_enabled: Optional[bool], page: int, items_per_page: int
-) -> str:
-    """This list has more filter dimensions than feature/menu management's
-    plain `name` search (type, search, is_enabled, plus pagination), so every
-    dimension is folded into the key — otherwise two different filtered pages
-    would collide on the same cache entry.
-    """
-    type_key = type or "all"
-    search_key = (search or "").strip().lower() or "all"
-    enabled_key = "all" if is_enabled is None else str(is_enabled).lower()
-    return f"model_management:list:type={type_key}:search={search_key}:is_enabled={enabled_key}:page={page}:size={items_per_page}"
+# def list_cache_key(
+#     type: Optional[str], search: Optional[str], is_enabled: Optional[bool], page: int, items_per_page: int
+# ) -> str:
+#     """This list has more filter dimensions than feature/menu management's
+#     plain `name` search (type, search, is_enabled, plus pagination), so every
+#     dimension is folded into the key — otherwise two different filtered pages
+#     would collide on the same cache entry.
+#     """
+#     type_key = type or "all"
+#     search_key = (search or "").strip().lower() or "all"
+#     enabled_key = "all" if is_enabled is None else str(is_enabled).lower()
+#     return f"model_management:list:type={type_key}:search={search_key}:is_enabled={enabled_key}:page={page}:size={items_per_page}"
 
 
 class ModelManagementController(CoreDependencies):
-    def parse_model_date(self, value: Any) -> Optional[date]:
-        if not value:
-            return None
-        try:
-            return date.fromisoformat(str(value)[:10])
-        except ValueError:
-            return None
+    # def parse_model_date(self, value: Any) -> Optional[date]:
+    #     if not value:
+    #         return None
+    #     try:
+    #         return date.fromisoformat(str(value)[:10])
+    #     except ValueError:
+    #         return None
 
-    def format_response(self, record: dict[str, Any], has_sync_permission: bool) -> dict[str, Any]:
-        record["last_sync_at"] = format_datetime(record["last_sync_at"])
-        record["created"] = format_datetime(epoch_to_wib(record["created"]))
-        record["action"] = {
-            "can_set_enabled": has_sync_permission and record["is_available"],
-            "can_set_main": has_sync_permission and record["is_available"] and record["is_enabled"],
-        }
+    # def format_response(self, record: dict[str, Any], has_sync_permission: bool) -> dict[str, Any]:
+    #     record["last_sync_at"] = format_datetime(record["last_sync_at"])
+    #     record["created"] = format_datetime(epoch_to_wib(record["created"]))
+    #     record["action"] = {
+    #         "can_set_enabled": has_sync_permission and record["is_available"],
+    #         "can_set_main": has_sync_permission and record["is_available"] and record["is_enabled"],
+    #     }
 
-        record.pop("id", None)
-        return record
+    #     record.pop("id", None)
+    #     return record
 
-    async def clear_engine_model_reference(self, model_name: str) -> None:
-        """A disabled model can no longer power the settings page's enhancer or
-        assistant model — null out any `df_engine_settings` row still pointing at
-        it, so the setting falls back to the engine's default instead of quietly
-        referencing a model that's no longer selectable.
+    # async def clear_engine_model_reference(self, model_name: str) -> None:
+    #     """A disabled model can no longer power the settings page's enhancer or
+    #     assistant model — null out any `df_engine_settings` row still pointing at
+    #     it, so the setting falls back to the engine's default instead of quietly
+    #     referencing a model that's no longer selectable.
 
-        `setting.py` stores the model *name* (JSON-encoded) in these rows, so the
-        match is against `json.dumps(model_name)`, not the UID.
+    #     `setting.py` stores the model *name* (JSON-encoded) in these rows, so the
+    #     match is against `json.dumps(model_name)`, not the UID.
 
-        This writes straight to `df_engine_settings` — it isn't a settings
-        "save" (no `df_engine_setting_logs` entry, see `setting.py`'s own
-        upsert), but `setting.py`'s cached response still embeds whatever
-        `enhancer_model`/`assistant_model` was resolved at cache time, so a
-        clear here must also drop that cache or the settings page keeps
-        showing a model that's no longer selectable until its TTL expires.
-        """
-        rows = await query(
-            db=self.db,
-            table=DfEngineSettings,
-            filters=(
-                DfEngineSettings.code == SETTING_CODE,  # type: ignore
-                DfEngineSettings.key.in_(("enhancer_model", "assistant_model")),  # type: ignore
-                DfEngineSettings.value == json.dumps(model_name),  # type: ignore
-            ),
-        )
-        for row in rows:
-            row.value = None
-            row.updated_at = local_time()
+    #     This writes straight to `df_engine_settings` — it isn't a settings
+    #     "save" (no `df_engine_setting_logs` entry, see `setting.py`'s own
+    #     upsert), but `setting.py`'s cached response still embeds whatever
+    #     `enhancer_model`/`assistant_model` was resolved at cache time, so a
+    #     clear here must also drop that cache or the settings page keeps
+    #     showing a model that's no longer selectable until its TTL expires.
+    #     """
+    #     rows = await query(
+    #         db=self.db,
+    #         table=DfEngineSettings,
+    #         filters=(
+    #             DfEngineSettings.code == SETTING_CODE,  # type: ignore
+    #             DfEngineSettings.key.in_(("enhancer_model", "assistant_model")),  # type: ignore
+    #             DfEngineSettings.value == json.dumps(model_name),  # type: ignore
+    #         ),
+    #     )
+    #     for row in rows:
+    #         row.value = None
+    #         row.updated_at = local_time()
 
-        if rows:
-            await self.redis.delete(DETAIL_CACHE_KEY)
+    #     if rows:
+    #         await self.redis.delete(DETAIL_CACHE_KEY)
 
-    async def get_available_models(
-        self,
-        type: Optional[ModelUsageTypes],
-        search: Optional[str],
-        is_enabled: Optional[bool],
-        page: int,
-        items_per_page: int,
-    ) -> tuple[list[dict[str, Any]], int]:
-        """Raw (pre-`format_response`) page cached in Redis, keyed by every
-        filter/page dimension — cached data has no per-user info, so it's
-        safe to share across requests.
-        """
-        cache_key = list_cache_key(type, search, is_enabled, page, items_per_page)
-        cached = await get_json(self.redis, cache_key)
-        if cached is None:
-            filters: list[Any] = [DfEngineModelOptions.is_available.is_(True)]  # type: ignore
-            if type:
-                filters.append(DfEngineModelOptions.type == type)  # type: ignore
-            if search:
-                filters.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
-            if is_enabled is not None:
-                filters.append(DfEngineModelOptions.is_enabled.is_(is_enabled))  # type: ignore
-            query_filters = tuple(filters)
+    # async def get_available_models(
+    #     self,
+    #     type: Optional[ModelUsageTypes],
+    #     search: Optional[str],
+    #     is_enabled: Optional[bool],
+    #     page: int,
+    #     items_per_page: int,
+    # ) -> tuple[list[dict[str, Any]], int]:
+    #     """Raw (pre-`format_response`) page cached in Redis, keyed by every
+    #     filter/page dimension — cached data has no per-user info, so it's
+    #     safe to share across requests.
+    #     """
+    #     cache_key = list_cache_key(type, search, is_enabled, page, items_per_page)
+    #     cached = await get_json(self.redis, cache_key)
+    #     if cached is None:
+    #         filters: list[Any] = [DfEngineModelOptions.is_available.is_(True)]  # type: ignore
+    #         if type:
+    #             filters.append(DfEngineModelOptions.type == type)  # type: ignore
+    #         if search:
+    #             filters.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
+    #         if is_enabled is not None:
+    #             filters.append(DfEngineModelOptions.is_enabled.is_(is_enabled))  # type: ignore
+    #         query_filters = tuple(filters)
 
-            total_data = await query(
-                db=self.db,
-                table=DfEngineModelOptions,
-                columns=(func.count(DfEngineModelOptions.id),),  # type: ignore
-                filters=query_filters,
-                fetch_one=True,
-            )
-            records = await query(
-                db=self.db,
-                table=DfEngineModelOptions,
-                filters=query_filters,
-                order_by=(DfEngineModelOptions.type.asc(), DfEngineModelOptions.name.asc()),  # type: ignore
-                limit=items_per_page,
-                offset=(page - 1) * items_per_page,
-            )
-            cached = {"total_data": total_data or 0, "records": serialize(records)}
-            await set_json(self.redis, cache_key, cached, ttl=CACHE_TTL_SECONDS)
+    #         total_data = await query(
+    #             db=self.db,
+    #             table=DfEngineModelOptions,
+    #             columns=(func.count(DfEngineModelOptions.id),),  # type: ignore
+    #             filters=query_filters,
+    #             fetch_one=True,
+    #         )
+    #         records = await query(
+    #             db=self.db,
+    #             table=DfEngineModelOptions,
+    #             filters=query_filters,
+    #             order_by=(DfEngineModelOptions.type.asc(), DfEngineModelOptions.name.asc()),  # type: ignore
+    #             limit=items_per_page,
+    #             offset=(page - 1) * items_per_page,
+    #         )
+    #         cached = {"total_data": total_data or 0, "records": serialize(records)}
+    #         await set_json(self.redis, cache_key, cached, ttl=CACHE_TTL_SECONDS)
 
-        return cached["records"], cached["total_data"]
+    #     return cached["records"], cached["total_data"]
 
-    async def get_model_option(self, uid: UUID) -> DfEngineModelOptions:
-        record = await query(
-            db=self.db,
-            table=DfEngineModelOptions,
-            filters=(DfEngineModelOptions.uid == str(uid),),  # type: ignore
-            fetch_one=True,
-        )
-        if record is None:
-            raise DataNotFoundError(message="model_option_not_found")
-        return record
+    # async def get_model_option(self, uid: UUID) -> DfEngineModelOptions:
+    #     record = await query(
+    #         db=self.db,
+    #         table=DfEngineModelOptions,
+    #         filters=(DfEngineModelOptions.uid == str(uid),),  # type: ignore
+    #         fetch_one=True,
+    #     )
+    #     if record is None:
+    #         raise DataNotFoundError(message="model_option_not_found")
+    #     return record
 
-    def model_option_fields(self, item: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "name": item.get("name") or item.get("id"),
-            "created": item.get("created"),
-            "description": item.get("description"),
-            "architecture": item.get("architecture"),
-            "supported_parameters": item.get("supported_parameters"),
-            "default_parameters": item.get("default_parameters"),
-            "supports_streaming": item.get("supports_streaming"),
-            "supported_resolutions": item.get("supported_resolutions"),
-            "supported_aspect_ratios": item.get("supported_aspect_ratios"),
-            "supported_sizes": item.get("supported_sizes"),
-            "supported_durations": item.get("supported_durations"),
-            "supported_frame_images": item.get("supported_frame_images"),
-            "generate_audio": item.get("generate_audio"),
-            "allowed_passthrough_parameters": item.get("allowed_passthrough_parameters"),
-            "pricing_skus": item.get("pricing_skus"),
-            "pricing": item.get("pricing"),
-            "top_provider": item.get("top_provider"),
-            "knowledge_cutoff": self.parse_model_date(item.get("knowledge_cutoff")),
-            "expiration_date": self.parse_model_date(item.get("expiration_date")),
-        }
+    # def model_option_fields(self, item: dict[str, Any]) -> dict[str, Any]:
+    #     return {
+    #         "name": item.get("name") or item.get("id"),
+    #         "created": item.get("created"),
+    #         "description": item.get("description"),
+    #         "architecture": item.get("architecture"),
+    #         "supported_parameters": item.get("supported_parameters"),
+    #         "default_parameters": item.get("default_parameters"),
+    #         "supports_streaming": item.get("supports_streaming"),
+    #         "supported_resolutions": item.get("supported_resolutions"),
+    #         "supported_aspect_ratios": item.get("supported_aspect_ratios"),
+    #         "supported_sizes": item.get("supported_sizes"),
+    #         "supported_durations": item.get("supported_durations"),
+    #         "supported_frame_images": item.get("supported_frame_images"),
+    #         "generate_audio": item.get("generate_audio"),
+    #         "allowed_passthrough_parameters": item.get("allowed_passthrough_parameters"),
+    #         "pricing_skus": item.get("pricing_skus"),
+    #         "pricing": item.get("pricing"),
+    #         "top_provider": item.get("top_provider"),
+    #         "knowledge_cutoff": self.parse_model_date(item.get("knowledge_cutoff")),
+    #         "expiration_date": self.parse_model_date(item.get("expiration_date")),
+    #     }
 
-    async def sync_model_type(self, model_type: str, items: list[dict[str, Any]]) -> dict[str, int]:
-        """1:1 sync of `items` (OpenRouter's model list for `model_type`) onto
-        df_engine_model_options: models we don't have yet are inserted, models we
-        already have are refreshed and marked available, and models we have locally
-        but OpenRouter no longer returned are flagged `is_available = False` rather
-        than deleted, so `is_main` / `is_enabled` history isn't lost.
-        """
-        existing_rows = await query(
-            db=self.db,
-            table=DfEngineModelOptions,
-            filters=(DfEngineModelOptions.type == model_type,),
-        )
-        existing_by_model_id = {row.model_id: row for row in existing_rows}
-        fetched_model_ids: set[str] = set()
-        inserted = updated = disabled = skipped = 0
+    # async def sync_model_type(self, model_type: str, items: list[dict[str, Any]]) -> dict[str, int]:
+    #     """1:1 sync of `items` (OpenRouter's model list for `model_type`) onto
+    #     df_engine_model_options: models we don't have yet are inserted, models we
+    #     already have are refreshed and marked available, and models we have locally
+    #     but OpenRouter no longer returned are flagged `is_available = False` rather
+    #     than deleted, so `is_main` / `is_enabled` history isn't lost.
+    #     """
+    #     existing_rows = await query(
+    #         db=self.db,
+    #         table=DfEngineModelOptions,
+    #         filters=(DfEngineModelOptions.type == model_type,),
+    #     )
+    #     existing_by_model_id = {row.model_id: row for row in existing_rows}
+    #     fetched_model_ids: set[str] = set()
+    #     inserted = updated = disabled = skipped = 0
 
-        for item in items:
-            model_id = item.get("id")
-            if not model_id:
-                skipped += 1
-                continue
-            fetched_model_ids.add(model_id)
-            fields = self.model_option_fields(item)
+    #     for item in items:
+    #         model_id = item.get("id")
+    #         if not model_id:
+    #             skipped += 1
+    #             continue
+    #         fetched_model_ids.add(model_id)
+    #         fields = self.model_option_fields(item)
 
-            row = existing_by_model_id.get(model_id)
-            if row is None:
-                self.db.add(
-                    DfEngineModelOptions(
-                        model_id=model_id,
-                        type=model_type,  # type: ignore
-                        is_available=True,
-                        last_sync_at=local_time(),
-                        **fields,
-                    )
-                )
-                inserted += 1
-            else:
-                for key, value in fields.items():
-                    setattr(row, key, value)
-                row.is_available = True
-                row.last_sync_at = local_time()
-                updated += 1
+    #         row = existing_by_model_id.get(model_id)
+    #         if row is None:
+    #             self.db.add(
+    #                 DfEngineModelOptions(
+    #                     model_id=model_id,
+    #                     type=model_type,  # type: ignore
+    #                     is_available=True,
+    #                     last_sync_at=local_time(),
+    #                     **fields,
+    #                 )
+    #             )
+    #             inserted += 1
+    #         else:
+    #             for key, value in fields.items():
+    #                 setattr(row, key, value)
+    #             row.is_available = True
+    #             row.last_sync_at = local_time()
+    #             updated += 1
 
-        for model_id, row in existing_by_model_id.items():
-            if model_id not in fetched_model_ids and row.is_available:
-                row.is_available = False
-                disabled += 1
+    #     for model_id, row in existing_by_model_id.items():
+    #         if model_id not in fetched_model_ids and row.is_available:
+    #             row.is_available = False
+    #             disabled += 1
 
-        if skipped:
-            logging.warning(
-                f"user={self.user['user_id']} model sync type={model_type}: skipped {skipped} item(s) missing an 'id'"
-            )
+    #     if skipped:
+    #         logging.warning(
+    #             f"user={self.user['user_id']} model sync type={model_type}: skipped {skipped} item(s) missing an 'id'"
+    #         )
 
-        return {"inserted": inserted, "updated": updated, "disabled": disabled, "skipped": skipped}
+    #     return {"inserted": inserted, "updated": updated, "disabled": disabled, "skipped": skipped}
 
     @controller.get(
         "/models",
@@ -257,7 +255,7 @@ class ModelManagementController(CoreDependencies):
     )
     async def model_management_to_fetch_available_models(
         self,
-        type: Optional[ModelUsageTypes] = Query(
+        type: Optional[Literal["text", "video", "image"]] = Query(
             default=None,
             description="Restrict results to one usage type. Omit to include all types.",
         ),
@@ -275,152 +273,191 @@ class ModelManagementController(CoreDependencies):
         itemsPerPage: int = Query(default=500, ge=1, le=500, description="Number of records to return per page."),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
-            records, total_data = await self.get_available_models(type, search, is_enabled, page, itemsPerPage)
+            models_cache_key = cache_key.model_pagination(page, itemsPerPage, search, type, is_enabled)
+            cached = await get_json(self.redis, models_cache_key)
+            if cached is not None:
+                logging.info(f"user={self.user['user_id']} listed model options source=cache key={models_cache_key}")
+                response.data = PaginationResponse(paginated=cached["models"], totalData=cached["total_data"])
+                return response
 
-            # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
-            #     "permissions", []
-            # )
-            has_sync_permission = True  # will be overide first
+            conditions: list[Any] = [DfEngineModelOptions.is_available.is_(True)]  # type: ignore
+            if type:
+                conditions.append(DfEngineModelOptions.type == type)  # type: ignore
+            if search:
+                conditions.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
+            if is_enabled is not None:
+                conditions.append(DfEngineModelOptions.is_enabled.is_(is_enabled))  # type: ignore
+            filters = tuple(conditions)
 
-            response.data = PaginationResponse(
-                paginated=[self.format_response(record, has_sync_permission) for record in records],
-                totalData=total_data,
-            )
-        except BaseError:
-            raise
-        except Exception:
-            logging.error(traceback.format_exc())
-            raise ServiceError()
-        return response
-
-    @controller.patch(
-        "/models/{uid}",
-        summary="Enable or disable a model.",
-        description=(
-            "Toggles whether a model is enabled (selectable in the product). Requires "
-            "the model to still be available on OpenRouter (`is_available = true`) — "
-            "a model OpenRouter no longer returns can't be enabled or disabled through "
-            "this endpoint either way. Only an enabled model can be set as main — "
-            "disabling a model that currently holds `is_main` also clears that flag, "
-            "since a disabled model can never stay main. Disabling a model that's "
-            "currently saved as the settings page's enhancer or assistant model also "
-            "clears that reference back to blank (falls back to the engine's "
-            "default) — the settings page can only keep an enabled model selected. "
-            "Returns the updated model."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["Model Management"],
-        response_model=Response,
-    )
-    async def model_management_to_set_model_enabled(
-        self,
-        schema: SetModelEnabledPayload,
-        uid: UUID = Path(
-            ...,
-            description="Model UID.",
-            examples=["8d96ff4e-5c35-4329-bd5d-827e2c68599d"],
-        ),
-    ) -> Response:
-        response = Response()
-        try:
-            record = await self.get_model_option(uid)
-            if not record.is_available:
-                raise DataValidationError(message="model_option_unavailable_cannot_set_enabled")
-
-            record.is_enabled = schema.is_enabled
-            if not schema.is_enabled:
-                if record.is_main:
-                    record.is_main = False
-                await self.clear_engine_model_reference(record.name)
-
-            await self.db.flush()
-            logging.info(
-                f"user={self.user['user_id']} model uid={record.uid} model_id={record.model_id} "
-                f"is_enabled={record.is_enabled} is_main={record.is_main}"
-            )
-
-            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
-
-            # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
-            #     "permissions", []
-            # )
-            has_sync_permission = True  # will be overide first
-            response.data = self.format_response(serialize(record), has_sync_permission)
-        except BaseError:
-            raise
-        except Exception:
-            logging.error(traceback.format_exc())
-            raise ServiceError()
-        return response
-
-    @controller.post(
-        "/models",
-        summary="Sync models from OpenRouter.",
-        description=(
-            "Fetches OpenRouter's current model list for each usage type (`text`, "
-            "`image`, `video`) and reconciles it 1:1 against `df_engine_model_options`: "
-            "models not seen before are inserted, models already on file are refreshed "
-            "and marked available, and models on file that OpenRouter no longer returns "
-            "are flagged `is_available = false` rather than deleted, so `is_main` / "
-            "`is_enabled` history is preserved. Every OpenRouter call — success or "
-            "failure — is recorded in the audit log."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["Model Management"],
-        response_model=Response,
-    )
-    async def model_management_to_sync_available_models(self) -> Response:
-        response = Response()
-        endpoints = {
-            "text": "/models?output_modalities=text",
-            "video": "/videos/models",
-            "image": "/videos/models",
-        }
-        totals = {"inserted": 0, "updated": 0, "disabled": 0, "skipped": 0}
-        try:
-            for model_type, path in endpoints.items():
-                openrouter_response = await call_openrouter(
+            total_data = (
+                await query(
                     db=self.db,
-                    user_id=int(self.user["user_id"]),
-                    method="GET",
-                    path=path,
+                    table=DfEngineModelOptions,
+                    columns=(func.count(DfEngineModelOptions.id),),  # type: ignore
+                    filters=filters,
+                    fetch_one=True,
                 )
-
-                if isinstance(openrouter_response, dict) and "data" in openrouter_response:
-                    items = openrouter_response.get("data")
-                elif isinstance(openrouter_response, list):
-                    items = openrouter_response
-                else:
-                    items = None
-
-                if items is None:
-                    logging.warning(
-                        f"user={self.user['user_id']} model sync skipped type={model_type} path={path}: "
-                        f"unexpected OpenRouter response shape response={openrouter_response!r}"
-                    )
-                    continue
-
-                result = await self.sync_model_type(model_type, items)
-                for key in totals:
-                    totals[key] += result[key]
-                logging.info(
-                    f"user={self.user['user_id']} model sync type={model_type} "
-                    f"inserted={result['inserted']} updated={result['updated']} "
-                    f"disabled={result['disabled']} skipped={result['skipped']}"
-                )
-
-            await self.db.flush()
-            logging.info(
-                f"user={self.user['user_id']} model sync summary: "
-                f"inserted={totals['inserted']} updated={totals['updated']} "
-                f"disabled={totals['disabled']} skipped={totals['skipped']}"
+                or 0
             )
 
-            await delete_pattern(self.redis, LIST_CACHE_PATTERN)
+            records = await query(
+                db=self.db,
+                table=DfEngineModelOptions,
+                filters=filters,
+                order_by=(DfEngineModelOptions.type.asc(), DfEngineModelOptions.name.asc()),  # type: ignore
+                limit=itemsPerPage,
+                offset=(page - 1) * itemsPerPage,
+            )
+
+            models = []
+            for record in serialize(records):
+                record["last_sync_at"] = format_datetime(record["last_sync_at"])
+                record["created"] = format_datetime(epoch_to_wib(record["created"]))
+                record.pop("id", None)
+                models.append(record)
+
+            logging.info(
+                f"user={self.user['user_id']} listed model options type={type!r} search={search!r} "
+                f"is_enabled={is_enabled} page={page} size={itemsPerPage} count={len(models)} total={total_data}"
+            )
+            await set_json(self.redis, models_cache_key, {"models": models, "total_data": total_data})
+            response.data = PaginationResponse(paginated=models, totalData=total_data)
         except BaseError:
             raise
         except Exception:
             logging.error(traceback.format_exc())
             raise ServiceError()
         return response
+
+    # @controller.patch(
+    #     "/models/{uid}",
+    #     summary="Enable or disable a model.",
+    #     description=(
+    #         "Toggles whether a model is enabled (selectable in the product). Requires "
+    #         "the model to still be available on OpenRouter (`is_available = true`) — "
+    #         "a model OpenRouter no longer returns can't be enabled or disabled through "
+    #         "this endpoint either way. Only an enabled model can be set as main — "
+    #         "disabling a model that currently holds `is_main` also clears that flag, "
+    #         "since a disabled model can never stay main. Disabling a model that's "
+    #         "currently saved as the settings page's enhancer or assistant model also "
+    #         "clears that reference back to blank (falls back to the engine's "
+    #         "default) — the settings page can only keep an enabled model selected. "
+    #         "Returns the updated model."
+    #     ),
+    #     status_code=status.HTTP_200_OK,
+    #     tags=["Model Management"],
+    #     response_model=Response,
+    # )
+    # async def model_management_to_set_model_enabled(
+    #     self,
+    #     schema: SetModelEnabledPayload,
+    #     uid: UUID = Path(
+    #         ...,
+    #         description="Model UID.",
+    #         examples=["8d96ff4e-5c35-4329-bd5d-827e2c68599d"],
+    #     ),
+    # ) -> Response:
+    #     response = Response()
+    #     try:
+    #         record = await self.get_model_option(uid)
+    #         if not record.is_available:
+    #             raise DataValidationError(message="model_option_unavailable_cannot_set_enabled")
+
+    #         record.is_enabled = schema.is_enabled
+    #         if not schema.is_enabled:
+    #             if record.is_main:
+    #                 record.is_main = False
+    #             await self.clear_engine_model_reference(record.name)
+
+    #         await self.db.flush()
+    #         logging.info(
+    #             f"user={self.user['user_id']} model uid={record.uid} model_id={record.model_id} "
+    #             f"is_enabled={record.is_enabled} is_main={record.is_main}"
+    #         )
+
+    #         await delete_pattern(self.redis, LIST_CACHE_PATTERN)
+
+    #         # has_sync_permission = model_management_permission["sync_df_engine_model_option"] in self.user.get(
+    #         #     "permissions", []
+    #         # )
+    #         has_sync_permission = True  # will be overide first
+    #         response.data = self.format_response(serialize(record), has_sync_permission)
+    #     except BaseError:
+    #         raise
+    #     except Exception:
+    #         logging.error(traceback.format_exc())
+    #         raise ServiceError()
+    #     return response
+
+    # @controller.post(
+    #     "/models",
+    #     summary="Sync models from OpenRouter.",
+    #     description=(
+    #         "Fetches OpenRouter's current model list for each usage type (`text`, "
+    #         "`image`, `video`) and reconciles it 1:1 against `df_engine_model_options`: "
+    #         "models not seen before are inserted, models already on file are refreshed "
+    #         "and marked available, and models on file that OpenRouter no longer returns "
+    #         "are flagged `is_available = false` rather than deleted, so `is_main` / "
+    #         "`is_enabled` history is preserved. Every OpenRouter call — success or "
+    #         "failure — is recorded in the audit log."
+    #     ),
+    #     status_code=status.HTTP_200_OK,
+    #     tags=["Model Management"],
+    #     response_model=Response,
+    # )
+    # async def model_management_to_sync_available_models(self) -> Response:
+    #     response = Response()
+    #     endpoints = {
+    #         "text": "/models?output_modalities=text",
+    #         "video": "/videos/models",
+    #         "image": "/videos/models",
+    #     }
+    #     totals = {"inserted": 0, "updated": 0, "disabled": 0, "skipped": 0}
+    #     try:
+    #         for model_type, path in endpoints.items():
+    #             openrouter_response = await call_openrouter(
+    #                 db=self.db,
+    #                 user_id=int(self.user["user_id"]),
+    #                 method="GET",
+    #                 path=path,
+    #             )
+
+    #             if isinstance(openrouter_response, dict) and "data" in openrouter_response:
+    #                 items = openrouter_response.get("data")
+    #             elif isinstance(openrouter_response, list):
+    #                 items = openrouter_response
+    #             else:
+    #                 items = None
+
+    #             if items is None:
+    #                 logging.warning(
+    #                     f"user={self.user['user_id']} model sync skipped type={model_type} path={path}: "
+    #                     f"unexpected OpenRouter response shape response={openrouter_response!r}"
+    #                 )
+    #                 continue
+
+    #             result = await self.sync_model_type(model_type, items)
+    #             for key in totals:
+    #                 totals[key] += result[key]
+    #             logging.info(
+    #                 f"user={self.user['user_id']} model sync type={model_type} "
+    #                 f"inserted={result['inserted']} updated={result['updated']} "
+    #                 f"disabled={result['disabled']} skipped={result['skipped']}"
+    #             )
+
+    #         await self.db.flush()
+    #         logging.info(
+    #             f"user={self.user['user_id']} model sync summary: "
+    #             f"inserted={totals['inserted']} updated={totals['updated']} "
+    #             f"disabled={totals['disabled']} skipped={totals['skipped']}"
+    #         )
+
+    #         await delete_pattern(self.redis, LIST_CACHE_PATTERN)
+    #     except BaseError:
+    #         raise
+    #     except Exception:
+    #         logging.error(traceback.format_exc())
+    #         raise ServiceError()
+    #     return response

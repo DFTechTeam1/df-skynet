@@ -1,7 +1,7 @@
 import json
 from uuid import UUID
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from redis.asyncio import Redis
 from redis.exceptions import AuthenticationError as RedisAuthError
 from apps.secret import REDIS_HOST, REDIS_PASSWORD, REDIS_PORT
@@ -164,3 +164,16 @@ class CacheKeys:
 
     def setting_pagination_pattern(self) -> str:
         return "setting:logs:*"
+
+    def model_pagination_pattern(self) -> str:
+        return "model_option:*"
+
+    def model_pagination(
+        self,
+        page: int,
+        items_per_page: int,
+        search: Optional[str] = None,
+        type: Optional[Literal["text", "video", "image"]] = None,
+        is_enabled: Optional[bool] = None,
+    ) -> str:
+        return f"model_option:page={page}:size={items_per_page}:search={(search or '').strip().lower() or 'all'}:type={(type or '').strip().lower() or 'all'}:is_enabled={is_enabled if is_enabled is not None else 'all'}"
