@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Any
 
 
@@ -37,3 +37,12 @@ def format_datetime(value: Optional[datetime | str]) -> Optional[str]:
     if isinstance(value, str):
         value = datetime.fromisoformat(value)
     return value.strftime("%d %B %Y, %H:%M")
+
+
+def format_date(value: Optional[str] = None) -> Optional[date]:
+    if value:
+        try:
+            return date.fromisoformat(str(value)[:10]) if value else None
+        except ValueError:
+            return None
+    return None

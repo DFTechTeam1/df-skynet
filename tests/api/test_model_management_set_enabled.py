@@ -2,8 +2,7 @@ import pytest
 from uuid import uuid4
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
-from services.redis import client as redis_client
-from apps.controller.model_management import list_cache_key
+from services.redis import client as redis_client, CacheKeys
 
 URL = "/api/models"
 
@@ -31,15 +30,14 @@ async def test_disable_enabled_model(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_disabling_main_model_clears_is_main(authed_client):
-    """200 OK; disabling a model that currently holds is_main also clears is_main in the same call."""
+async def test_disabling_main_model_is_rejected(authed_client):
+    """422 model_option_main_cannot_be_disabled; a model holding is_main can't be
+    disabled through this endpoint — another model must be made main first."""
     row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
 
-    resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": False})
-    assert resp.status_code == 200
-    body = resp.json()["data"]
-    assert body["is_enabled"] is False
-    assert body["is_main"] is False
+    resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": False}, raise_for_status=False)
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message("model_option_main_cannot_be_disabled", "en")
 
 
 @pytest.mark.asyncio
@@ -89,7 +87,7 @@ async def test_set_enabled_invalidates_the_list_cache(authed_client):
     redis = redis_client()
 
     await authed_client.call("GET", "/api/models", params={"search": prefix})
-    key = list_cache_key(None, prefix, None, 1, 500)
+    key = CacheKeys().model_pagination(1, 500, prefix, None, None)
     assert await redis.exists(key)
 
     await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": True})

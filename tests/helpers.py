@@ -9,6 +9,7 @@ from services.redis import CacheKeys
 SETTING_DETAIL_CACHE_KEY = CacheKeys().setting_detail("admin_setting")
 SETTING_LOGS_CACHE_PATTERN = "setting:logs:*"
 from services.mysql.model import (
+    DfEngineModelOptions,
     DfEngineOpenrouterLogs,
     DfEnginePreferences,
     DfEngineSettingLogs,
@@ -80,6 +81,53 @@ async def clear_openrouter_logs(db_session: AsyncSession) -> None:
     await db_session.execute(delete(DfEngineOpenrouterLogs))
     await db_session.commit()
     await delete_pattern(redis_client(), OPENROUTER_LOGS_CACHE_PATTERN)
+
+
+async def available_model_rows(db_session: AsyncSession, model_type: str) -> list[DfEngineModelOptions]:
+    """Every currently-available row of one usage type — a real OpenRouter
+    response would only ever echo models it still has, so the sync tests
+    rebuild their fake response from exactly this set (plus/minus the one row
+    under test) to avoid mass-disabling real, already-synced data."""
+    return (
+        (
+            await db_session.execute(
+                select(DfEngineModelOptions).where(
+                    DfEngineModelOptions.type == model_type,  # type: ignore
+                    DfEngineModelOptions.is_available.is_(True),  # type: ignore
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def openrouter_item_from_row(row: DfEngineModelOptions) -> dict[str, Any]:
+    """Reconstruct an OpenRouter-shaped model item from a stored row, so a fake
+    sync response can carry the full real catalog for a type without the
+    endpoint disabling or rewriting anything real."""
+    return {
+        "id": row.model_id,
+        "name": row.name,
+        "created": row.created,
+        "description": row.description,
+        "architecture": row.architecture,
+        "supported_parameters": row.supported_parameters,
+        "default_parameters": row.default_parameters,
+        "supports_streaming": row.supports_streaming,
+        "supported_resolutions": row.supported_resolutions,
+        "supported_aspect_ratios": row.supported_aspect_ratios,
+        "supported_sizes": row.supported_sizes,
+        "supported_durations": row.supported_durations,
+        "supported_frame_images": row.supported_frame_images,
+        "generate_audio": row.generate_audio,
+        "allowed_passthrough_parameters": row.allowed_passthrough_parameters,
+        "pricing_skus": row.pricing_skus,
+        "pricing": row.pricing,
+        "top_provider": row.top_provider,
+        "knowledge_cutoff": row.knowledge_cutoff.isoformat() if row.knowledge_cutoff else None,
+        "expiration_date": row.expiration_date.isoformat() if row.expiration_date else None,
+    }
 
 
 def find_by_name(items: list[dict[str, Any]], name: str) -> dict[str, Any]:
