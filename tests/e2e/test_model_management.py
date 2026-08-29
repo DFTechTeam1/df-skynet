@@ -11,6 +11,7 @@ by uid.
 import pytest
 from typing import Any
 from sqlalchemy import update
+from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.model import DfEngineModelOptions
 from services.redis import client as redis_client, delete_pattern
@@ -26,10 +27,10 @@ async def _fetch_item(authed_client, search: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_disable_cascades_then_unavailable_blocks_actions_journey(authed_client, db_session):
-    """Disabling a main model cascades to clear is_main; once the model is
-    later flagged unavailable (as sync would do), it disappears from the
-    fetch list and enable/disable is rejected."""
+async def test_main_model_cannot_be_disabled_then_sync_drop_blocks_actions_journey(authed_client, db_session):
+    """A model holding is_main can't be disabled through the PATCH endpoint;
+    once sync later flags it unavailable it disappears from the fetch list and
+    can't be enabled either."""
     row = DfEngineModelOptionsFactory.create(type="image", is_available=True, is_enabled=True, is_main=True)
 
     # 1. confirmed live: enabled and main
@@ -37,36 +38,30 @@ async def test_disable_cascades_then_unavailable_blocks_actions_journey(authed_c
     assert item["is_enabled"] is True
     assert item["is_main"] is True
 
-    # 2. disable it — cascades to clear is_main in the same call
-    disable_resp = await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": False})
-    assert disable_resp.status_code == 200
-    assert disable_resp.json()["data"]["is_enabled"] is False
-    assert disable_resp.json()["data"]["is_main"] is False
+    # 2. disabling a main model is rejected — must hand off main to another model first
+    disable_resp = await authed_client.call(
+        "PATCH", f"{URL}/{row.uid}", json={"is_enabled": False}, raise_for_status=False
+    )
+    assert disable_resp.status_code == 422
+    assert disable_resp.json()["message"] == resolve_message("model_option_main_cannot_be_disabled", "en")
 
-    item = await _fetch_item(authed_client, row.name)
-    assert item["is_enabled"] is False
-    assert item["is_main"] is False
-
-    # 3. OpenRouter drops the model — simulate what sync_model_type would do.
-    # `row` belongs to the factory's own sync session, so mutate it via a
-    # plain UPDATE on `db_session` rather than re-`add`ing the same instance
-    # to a second, unrelated session (SQLAlchemy rejects that outright).
+    # 3. OpenRouter drops the model — simulate what sync does (flag unavailable,
+    # then invalidate the model-option list cache). `row` belongs to the
+    # factory's own sync session, so mutate it via a plain UPDATE on
+    # `db_session` rather than re-`add`ing it to a second session.
     await db_session.execute(
         update(DfEngineModelOptions).where(DfEngineModelOptions.id == row.id).values(is_available=False)  # type: ignore
     )
     await db_session.commit()
-    # A real sync always ends by invalidating the list cache (see
-    # `model_management_to_sync_available_models`) — this raw UPDATE is
-    # standing in for that whole flow, so it has to model that side effect
-    # too, or step 1/2's cached search-by-name page hides this change.
-    await delete_pattern(redis_client(), "model_management:list:*")
+    await delete_pattern(redis_client(), "model_option:*")
 
     # 4. gone from the default fetch view entirely
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     assert resp.json()["data"]["paginated"] == []
 
-    # 5. can no longer be re-enabled
+    # 5. can no longer be toggled at all
     blocked_enable = await authed_client.call(
         "PATCH", f"{URL}/{row.uid}", json={"is_enabled": True}, raise_for_status=False
     )
     assert blocked_enable.status_code == 422
+    assert blocked_enable.json()["message"] == resolve_message("model_option_unavailable_cannot_set_enabled", "en")

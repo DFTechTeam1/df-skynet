@@ -1,8 +1,7 @@
 import pytest
 from uuid import uuid4
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
-from services.redis import client as redis_client
-from apps.controller.model_management import list_cache_key
+from services.redis import client as redis_client, CacheKeys
 
 URL = "/api/models"
 
@@ -137,29 +136,29 @@ async def test_action_flags_available_enabled_not_main(authed_client):
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert item["action"] == {"can_set_enabled": True, "can_set_main": True}
+    assert item["action"] == {"can_enable_disable": True, "can_set_as_main": True}
 
 
 @pytest.mark.asyncio
 async def test_action_flags_already_main_can_set_main_again(authed_client):
     """200 OK; a usage type can have more than one main model, so a model
-    that's already main still shows can_set_main=True (setting it again is
+    that's already main still shows can_set_as_main=True (setting it again is
     an idempotent no-op)."""
     row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert item["action"] == {"can_set_enabled": True, "can_set_main": True}
+    assert item["action"] == {"can_enable_disable": True, "can_set_as_main": True}
 
 
 @pytest.mark.asyncio
 async def test_action_flags_disabled_cannot_set_main(authed_client):
-    """200 OK; a disabled model shows can_set_main=False (not eligible until enabled)."""
+    """200 OK; a disabled model shows can_set_as_main=False (not eligible until enabled)."""
     row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert item["action"] == {"can_set_enabled": True, "can_set_main": False}
+    assert item["action"] == {"can_enable_disable": True, "can_set_as_main": False}
 
 
 @pytest.mark.asyncio
@@ -178,6 +177,6 @@ async def test_list_response_is_cached_with_a_ttl(authed_client):
 
     resp = await authed_client.call("GET", URL, params={"search": prefix})
     assert resp.status_code == 200
-    key = list_cache_key(None, prefix, None, 1, 500)
+    key = CacheKeys().model_pagination(1, 500, prefix, None, None)
     assert await redis.exists(key)
     assert await redis.ttl(key) > 0

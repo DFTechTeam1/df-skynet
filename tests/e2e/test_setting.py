@@ -1,13 +1,13 @@
 """End-to-end journey for DF Engine admin settings: initial fetch, first save
 (inserted, not logged — nothing to diff against), a no-op save (not logged), a
 real change (logged with the actual diff), and the enhancer-model validation +
-disable cascade wired through model_management.
+the sync cascade that nulls a setting when its main model goes unavailable.
 """
 
 import pytest
 from typing import Any
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
-from tests.helpers import clear_setting_state
+from tests.helpers import available_model_rows, clear_setting_state, openrouter_item_from_row
 
 SETTING_URL = "/api/setting"
 LOGS_URL = "/api/setting/logs"
@@ -30,9 +30,9 @@ def _base_payload(**overrides: Any) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_setting_lifecycle_journey(authed_client, db_session):
+async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_sync):
     await clear_setting_state(db_session)
-    model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
+    model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
 
     # 1. nothing saved yet — GET returns defaults, no logs
     initial = await authed_client.call("GET", SETTING_URL)
@@ -68,19 +68,24 @@ async def test_setting_lifecycle_journey(authed_client, db_session):
     assert newest["previous_data"]["limit"] == {"generate_per_min": 0, "enhance_per_min": 0}
     assert newest["incoming_data"]["enhancer_model"] == model.name
 
-    # 5. disabling the model that's currently the enhancer cascades it to null
-    disable_resp = await authed_client.call("PATCH", f"{MODELS_URL}/{model.uid}", json={"is_enabled": False})
-    assert disable_resp.status_code == 200
-    assert disable_resp.json()["data"]["is_enabled"] is False
+    # 5. sync drops the model from OpenRouter — it's a main model still referenced
+    #    by the enhancer setting, so sync flags it unavailable AND nulls the setting.
+    rows = await available_model_rows(db_session, "text")
+    mock_model_sync.set(
+        "/models?output_modalities=text",
+        [openrouter_item_from_row(r) for r in rows if r.model_id != model.model_id],
+    )
+    sync_resp = await authed_client.call("POST", MODELS_URL)
+    assert sync_resp.status_code == 200
 
-    after_disable = await authed_client.call("GET", SETTING_URL)
-    assert after_disable.json()["data"]["enhancer_model"] is None
+    after_sync = await authed_client.call("GET", SETTING_URL)
+    assert after_sync.json()["data"]["enhancer_model"] is None
 
-    # 6. the disable cascade is a direct DB fix, not a settings save — no new log entry
-    logs_after_disable = await authed_client.call("GET", LOGS_URL)
-    assert logs_after_disable.json()["data"]["totalData"] == 1
+    # 6. the sync cascade is an audited change — a second log entry now exists
+    logs_after_sync = await authed_client.call("GET", LOGS_URL)
+    assert logs_after_sync.json()["data"]["totalData"] == 2
 
-    # 7. the now-disabled model can no longer be picked again
+    # 7. the now-unavailable model can no longer be picked again
     rejected = await authed_client.call(
         "POST", SETTING_URL, json=_base_payload(enhancer_model=model.uid), raise_for_status=False
     )

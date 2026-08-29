@@ -1,79 +1,42 @@
 """Tests for POST /models (sync).
 
-`sync_model_type` reconciles a WHOLE usage type against OpenRouter's response:
+The sync endpoint reconciles a WHOLE usage type against OpenRouter's response:
 anything of that type not in the response gets flagged `is_available = False`.
 `df_engine_model_options` is real, shared, already-synced data (hundreds of rows
-per type) — so a naive test that hits the real HTTP endpoint with a small,
-incomplete fake model list would mass-disable every real row of that type.
+per type) — so a naive test that configures a small, incomplete fake model list
+would mass-disable every real row of that type.
 
-To stay safe:
-  - `mock_model_sync` (see conftest.py) fails an unconfigured type safe — it
-    returns an error-shaped payload, which the controller treats as "skip this
-    type", not "OpenRouter returned zero models".
-  - The one true HTTP round-trip test below only ever configures a type with
-    its OWN full current catalog (reconstructed from the DB) plus one new
-    item, so nothing pre-existing can be disabled.
-  - Scenarios that legitimately need to omit/replace existing rows (disable,
-    skipped-item counting) call `sync_model_type` directly against `db_session`
-    inside a SAVEPOINT (`db_session.begin_nested()`) that's always rolled back,
-    so the mass-effect never reaches the real table even transiently past this
-    test process.
+To stay safe every test here that goes through the HTTP endpoint configures the
+`text` path with its OWN full current catalog (reconstructed from the DB) and
+then adds / omits exactly the one row it wants to exercise, so nothing else can
+be inserted or disabled as a side effect. Unconfigured paths (`video`, `image`)
+return a 5xx from the mock and are skipped untouched.
 """
 
+import json
 import pytest
-from typing import Any
 from uuid import uuid4
 from sqlalchemy import select
-from services.mysql.model import DfEngineModelOptions
+from services.mysql.model import DfEngineModelOptions, DfEngineSettings, DfEngineSettingLogs
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
-from services.redis import client as redis_client
-from apps.controller.model_management import ModelManagementController, list_cache_key
+from services.redis import client as redis_client, CacheKeys
+from tests.helpers import available_model_rows, openrouter_item_from_row, clear_setting_state
 
 URL = "/api/models"
+TEXT_PATH = "/models?output_modalities=text"
 
 
-def _item_from_row(row: DfEngineModelOptions) -> dict[str, Any]:
-    """Reconstruct an OpenRouter-shaped item from a stored row — the exact
-    reverse of `ModelManagementController.model_option_fields`. Used so a
-    fake sync response can safely include the FULL real catalog for a type
-    (each real row round-trips to its own current values) alongside new
-    test items, without wiping or disabling anything real.
-    """
-    return {
-        "id": row.model_id,
-        "name": row.name,
-        "created": row.created,
-        "description": row.description,
-        "architecture": row.architecture,
-        "supported_parameters": row.supported_parameters,
-        "default_parameters": row.default_parameters,
-        "supports_streaming": row.supports_streaming,
-        "supported_resolutions": row.supported_resolutions,
-        "supported_aspect_ratios": row.supported_aspect_ratios,
-        "supported_sizes": row.supported_sizes,
-        "supported_durations": row.supported_durations,
-        "supported_frame_images": row.supported_frame_images,
-        "generate_audio": row.generate_audio,
-        "allowed_passthrough_parameters": row.allowed_passthrough_parameters,
-        "pricing_skus": row.pricing_skus,
-        "pricing": row.pricing,
-        "top_provider": row.top_provider,
-        "knowledge_cutoff": row.knowledge_cutoff.isoformat() if row.knowledge_cutoff else None,
-        "expiration_date": row.expiration_date.isoformat() if row.expiration_date else None,
-    }
+async def _available_text_rows(db_session) -> list[DfEngineModelOptions]:
+    return await available_model_rows(db_session, "text")
 
 
-def _controller(db_session, user_id: str) -> ModelManagementController:
-    ctrl = ModelManagementController.__new__(ModelManagementController)
-    ctrl.db = db_session
-    ctrl.user = {"user_id": int(user_id)}
-    return ctrl
+_item_from_row = openrouter_item_from_row
 
 
 @pytest.mark.asyncio
-async def test_sync_http_skips_unconfigured_types_without_side_effects(authed_client, db_session, mock_model_sync):
-    """200 OK; with nothing configured on `mock_model_sync`, every type gets an
-    error-shaped response and is skipped — real rows are provably untouched."""
+async def test_sync_skips_unconfigured_types_without_side_effects(authed_client, db_session, mock_model_sync):
+    """200 OK; with nothing configured on `mock_model_sync`, every type gets a
+    5xx response and is skipped — real rows are provably untouched."""
     before = {
         t: (
             await db_session.execute(
@@ -88,7 +51,7 @@ async def test_sync_http_skips_unconfigured_types_without_side_effects(authed_cl
     resp = await authed_client.call("POST", URL)
     assert resp.status_code == 200
 
-    await db_session.rollback()  # see the endpoint's own committed writes (or lack thereof)
+    await db_session.rollback()
     after = {
         t: (
             await db_session.execute(
@@ -105,27 +68,12 @@ async def test_sync_http_skips_unconfigured_types_without_side_effects(authed_cl
 
 @pytest.mark.asyncio
 async def test_sync_inserts_new_model_and_preserves_existing_catalog(authed_client, db_session, mock_model_sync):
-    """200 OK; syncing a type with its full real catalog plus one new item inserts
-    only the new item and disables nothing already on file."""
-    # Only currently-available rows — a real OpenRouter response would only ever
-    # echo back models it still has, never ones already flagged unavailable
-    # locally, so reconstructing from the full row set (including disabled ones)
-    # would incorrectly "resurrect" them.
-    existing_rows = (
-        (
-            await db_session.execute(
-                select(DfEngineModelOptions).where(
-                    DfEngineModelOptions.type == "text",  # type: ignore
-                    DfEngineModelOptions.is_available.is_(True),  # type: ignore
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    """200 OK; syncing `text` with its full real catalog plus one new item
+    inserts only the new item and disables nothing already on file."""
+    existing_rows = await _available_text_rows(db_session)
     new_model_id = f"test-vendor/http-insert-{uuid4().hex[:10]}"
     items = [_item_from_row(row) for row in existing_rows] + [{"id": new_model_id, "name": "HTTP Insert Test"}]
-    mock_model_sync.set("/models?output_modalities=text", items)
+    mock_model_sync.set(TEXT_PATH, items)
 
     resp = await authed_client.call("POST", URL)
     assert resp.status_code == 200
@@ -141,68 +89,138 @@ async def test_sync_inserts_new_model_and_preserves_existing_catalog(authed_clie
     ).scalar_one()
     assert inserted.is_available is True
 
-    still_available = (
+    still_available = await _available_text_rows(db_session)
+    assert len(existing_rows) + 1 == len(still_available)
+
+
+@pytest.mark.asyncio
+async def test_sync_refreshes_present_model_and_flags_missing_one_unavailable(
+    authed_client, db_session, mock_model_sync
+):
+    """A model still in the response is refreshed and stays available; one
+    absent from it is flagged is_available=False. Both are brand-new,
+    uniquely-named factory rows so no real catalog data is touched."""
+    kept = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
+    dropped = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
+
+    rows = await _available_text_rows(db_session)
+    items = [
+        {**_item_from_row(r), "name": "Kept Renamed"} if r.model_id == kept.model_id else _item_from_row(r)
+        for r in rows
+        if r.model_id != dropped.model_id
+    ]
+    mock_model_sync.set(TEXT_PATH, items)
+
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+
+    await db_session.rollback()
+    kept_after = (
         await db_session.execute(
-            select(DfEngineModelOptions.id).where(  # type: ignore
-                DfEngineModelOptions.type == "text",  # type: ignore
-                DfEngineModelOptions.is_available.is_(True),  # type: ignore
+            select(DfEngineModelOptions).where(DfEngineModelOptions.id == kept.id)  # type: ignore
+        )
+    ).scalar_one()
+    dropped_after = (
+        await db_session.execute(
+            select(DfEngineModelOptions).where(DfEngineModelOptions.id == dropped.id)  # type: ignore
+        )
+    ).scalar_one()
+    assert kept_after.is_available is True
+    assert kept_after.name == "Kept Renamed"
+    assert dropped_after.is_available is False
+
+
+@pytest.mark.asyncio
+async def test_sync_ignores_items_without_an_id(authed_client, db_session, mock_model_sync):
+    """An item missing `id` is skipped, not inserted; valid items alongside it
+    still sync."""
+    rows = await _available_text_rows(db_session)
+    valid_id = f"test-vendor/with-id-{uuid4().hex[:10]}"
+    items = [_item_from_row(r) for r in rows] + [{"name": "no id here"}, {"id": valid_id, "name": "Has An Id"}]
+    mock_model_sync.set(TEXT_PATH, items)
+
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+
+    await db_session.rollback()
+    assert (
+        await db_session.execute(
+            select(DfEngineModelOptions).where(DfEngineModelOptions.model_id == valid_id)  # type: ignore
+        )
+    ).scalar_one().is_available is True
+    assert (
+        await db_session.execute(
+            select(DfEngineModelOptions.id).where(DfEngineModelOptions.name == "no id here")  # type: ignore
+        )
+    ).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_sync_nulls_engine_setting_when_main_model_goes_unavailable(authed_client, db_session, mock_model_sync):
+    """A main text model that sync makes unavailable is dropped from any
+    `admin_setting` still pointing at it (enhancer_model / assistant_model),
+    and the change is written to df_engine_setting_logs."""
+    await clear_setting_state(db_session)
+    main_model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
+    db_session.add_all(
+        DfEngineSettings(code="admin_setting", key=key, value=json.dumps(main_model.name))
+        for key in ("enhancer_model", "assistant_model")
+    )
+    await db_session.commit()
+
+    rows = await _available_text_rows(db_session)
+    items = [_item_from_row(r) for r in rows if r.model_id != main_model.model_id]
+    mock_model_sync.set(TEXT_PATH, items)
+
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+
+    await db_session.rollback()
+    settings = (
+        (
+            await db_session.execute(
+                select(DfEngineSettings).where(
+                    DfEngineSettings.code == "admin_setting",  # type: ignore
+                    DfEngineSettings.key.in_(("enhancer_model", "assistant_model")),  # type: ignore
+                )
             )
         )
-    ).scalars()
-    assert len(existing_rows) + 1 == len(list(still_available))
+        .scalars()
+        .all()
+    )
+    assert {s.value for s in settings} == {json.dumps(None)}
+
+    logs = (await db_session.execute(select(DfEngineSettingLogs))).scalars().all()
+    assert len(logs) == 1
+    assert logs[0].previous_data == {
+        "enhancer_model": json.dumps(main_model.name),
+        "assistant_model": json.dumps(main_model.name),
+    }
+    assert logs[0].incoming_data == {
+        "enhancer_model": json.dumps(None),
+        "assistant_model": json.dumps(None),
+    }
+
+    model_after = (
+        await db_session.execute(
+            select(DfEngineModelOptions).where(DfEngineModelOptions.id == main_model.id)  # type: ignore
+        )
+    ).scalar_one()
+    assert model_after.is_available is False
 
 
 @pytest.mark.asyncio
-async def test_sync_flags_missing_model_unavailable(db_session, user_id):
-    """A model previously on file but absent from the latest OpenRouter response
-    gets flagged is_available=False; one still present gets refreshed and stays
-    available. `kept`/`dropped` are created and committed normally first (safe —
-    brand-new, uniquely-named rows); only the sync call itself runs inside a
-    SAVEPOINT (never committed), since sync_model_type also mass-disables every
-    other real row of the type as a side effect. The factory commits via its
-    own sync session, which can't happen inside `begin_nested()`."""
-    kept_id = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False).id
-    dropped_id = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False).id
+async def test_sync_invalidates_the_list_cache(authed_client, mock_model_sync):
+    """200 OK; even a no-op sync still clears every cached list page — sync
+    always ends by flushing the model-option cache namespace."""
+    redis = redis_client()
+    await authed_client.call("GET", URL)
+    key = CacheKeys().model_pagination(1, 500, None, None, None)
+    assert await redis.exists(key)
 
-    async with db_session.begin_nested():
-        ctrl = _controller(db_session, user_id)
-        kept_model_id = (
-            await db_session.execute(select(DfEngineModelOptions.model_id).where(DfEngineModelOptions.id == kept_id))  # type: ignore
-        ).scalar_one()
-        result = await ctrl.sync_model_type("text", [{"id": kept_model_id, "name": "Kept Renamed"}])
-        await db_session.flush()
-
-        assert result["updated"] >= 1
-        assert result["disabled"] >= 1
-
-        # `kept`/`dropped` were created via the factory's own sync session, so
-        # re-select them through `db_session` instead of `db_session.refresh(...)`
-        # (SQLAlchemy rejects refreshing an instance owned by another session).
-        kept = (
-            await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == kept_id))  # type: ignore
-        ).scalar_one()
-        dropped = (
-            await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == dropped_id))  # type: ignore
-        ).scalar_one()
-        assert kept.is_available is True
-        assert kept.name == "Kept Renamed"
-        assert dropped.is_available is False
-
-        await db_session.rollback()
-
-
-@pytest.mark.asyncio
-async def test_sync_skips_items_missing_id(db_session, user_id):
-    """Items without an `id` are counted as skipped, not inserted. Run inside a
-    SAVEPOINT for the same reason as the disable test above."""
-    async with db_session.begin_nested():
-        ctrl = _controller(db_session, user_id)
-        result = await ctrl.sync_model_type("text", [{"id": None}, {"name": "no id here"}])
-
-        assert result["inserted"] == 0
-        assert result["skipped"] == 2
-
-        await db_session.rollback()
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+    assert not await redis.exists(key)
 
 
 @pytest.mark.asyncio
@@ -210,18 +228,3 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("POST", URL, raise_for_status=False)
     assert resp.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_sync_invalidates_the_list_cache(authed_client, mock_model_sync):
-    """200 OK; even a no-op sync (nothing configured on mock_model_sync, same safe setup as the
-    "skips unconfigured types" test above) still clears every cached list page — sync always
-    flushes at the end regardless of whether anything actually changed."""
-    redis = redis_client()
-    await authed_client.call("GET", URL)
-    key = list_cache_key(None, None, None, 1, 500)
-    assert await redis.exists(key)
-
-    resp = await authed_client.call("POST", URL)
-    assert resp.status_code == 200
-    assert not await redis.exists(key)
