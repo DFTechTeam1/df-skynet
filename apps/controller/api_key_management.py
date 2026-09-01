@@ -1,14 +1,11 @@
-import re
 import time
 import traceback
 from uuid import UUID
-from datetime import timedelta
-from typing import Any, Optional
+from typing import Optional
 from fastapi import status, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import select, func
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
 from schemas.response import PaginationResponse, Response
 from services.mysql import query
@@ -20,368 +17,18 @@ from services.mysql.model import (
     DfEngineOpenrouterLogs,
     Employees,
     PositionBackups,
-    Users,
 )
-from services.redis import get_json, set_json, delete_pattern
+from services.redis import get_json, set_json, delete_pattern, CacheKeys
 from log import logging
 from apps.secret import OPENROUTER_BASE_URL, OPENROUTER_MANAGEMENT_KEY
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils import local_time, wib_to_utc_iso
 from services.api_caller import APICaller
-from utils.serializer import serialize, to_json_safe
-from utils.formatter import format_user_employees, format_datetime, format_employee_users
-# from apps.dependency.permission import require_permissions
-
-
-key_management_permission = {
-    "update_df_engine_key_management": "update_df_engine_key_management",
-    "delete_df_engine_key_management": "delete_df_engine_key_management",
-    "copy_df_engine_key_management": "copy_df_engine_key_management",
-}
-
-CACHE_TTL_SECONDS = 3600
-LIST_CACHE_KEY = "api_key_management:list:all"
-LOGS_CACHE_PATTERN = "api_key_management:logs:*"
-
-EMPLOYEE_STATUS_RESIGNED = 6
-ROTATION_INTERVAL_DAYS = 7
-ALLOWED_PIC_POSITIONS = {"project manager", "assistant project manager"}
-
-
-def openrouter_logs_cache_key(page: int, items_per_page: int) -> str:
-    return f"api_key_management:logs:page={page}:size={items_per_page}"
-
-
-def mask_secret(value: str) -> str:
-    if len(value) <= 12:
-        return "*" * len(value)
-    return f"{value[:8]}{'*' * 8}{value[-4:]}"
-
-
-_HASH_RE = re.compile(r"[0-9a-f]{64}")
-
-
-def _scrub_hashes(value: Any) -> Any:
-    if isinstance(value, str):
-        return _HASH_RE.sub(lambda m: mask_secret(m.group()), value)
-    if isinstance(value, dict):
-        return {k: _scrub_hashes(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_scrub_hashes(v) for v in value]
-    return value
-
-
-def redact_openrouter_log_fields(record: dict[str, Any]) -> dict[str, Any]:
-    """Mask the OpenRouter secret key (`response_body.key`) and every key hash
-    found anywhere in the log's endpoint / headers / body, in place. Everything
-    else is kept as-is.
-    """
-    body = record.get("response_body")
-    if isinstance(body, dict) and isinstance(body.get("key"), str):
-        body["key"] = mask_secret(body["key"])
-
-    for field in ("endpoint", "response_headers", "response_body", "request_payload"):
-        if record.get(field) is not None:
-            record[field] = _scrub_hashes(record[field])
-    return record
+from services.api_key_management import ApiKeyManagement
+from utils.serializer import serialize
 
 
 class APIKeyManagementController(CoreDependencies):
-    def mask_key(self, key: str) -> str:
-        return mask_secret(key)
-
-    def format_response(
-        self, record: dict[str, Any], user_permissions: list[str], employee_ids_with_main: set[int]
-    ) -> dict[str, Any]:
-        record["created_at"] = format_datetime(record["created_at"])
-        record["updated_at"] = format_datetime(record["updated_at"])
-        record["expires_at"] = format_datetime(record["expires_at"])
-        record["creator"] = format_user_employees(record.pop("created_by_user", None))
-        record["updater"] = format_user_employees(record.pop("updated_by_user", None))
-        record["pic"] = format_employee_users(record.pop("employees", None))
-        record["key"] = self.mask_key(record["key"])
-        record["action"] = {
-            "can_delete": key_management_permission["delete_df_engine_key_management"] in user_permissions
-            and (not record["is_main"] or not record["hash"] or not record["employee_id"]),
-            "can_update": key_management_permission["update_df_engine_key_management"] in user_permissions
-            and bool(record["hash"] and record["employee_id"]),
-            "can_copy": key_management_permission["copy_df_engine_key_management"] in user_permissions
-            and bool(record["hash"] and record["employee_id"]),
-            "can_set_to_main": key_management_permission["update_df_engine_key_management"] in user_permissions
-            and bool(record["hash"] and record["employee_id"])
-            and not record["is_main"]
-            and record["employee_id"] not in employee_ids_with_main,
-        }
-
-        record.pop("id", None)
-        record.pop("hash", None)
-        record.pop("employee_id", None)
-        record.pop("created_by", None)
-        record.pop("updated_by", None)
-        record.pop("created_by_user", None)
-        record.pop("updated_by_user", None)
-        record.pop("employees", None)
-        record.pop("employee_name", None)
-        return record
-
-    def options(self) -> tuple:
-        return (
-            selectinload(DfEngineApiKeys.created_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEngineApiKeys.updated_by_user)  # type: ignore
-            .load_only(Users.image)  # type: ignore
-            .selectinload(Users.employees)  # type: ignore
-            .load_only(Employees.nickname),  # type: ignore
-            selectinload(DfEngineApiKeys.employees)  # type: ignore
-            .load_only(Employees.nickname, Employees.uid)  # type: ignore
-            .selectinload(Employees.users)  # type: ignore
-            .load_only(Users.image),  # type: ignore
-        )
-
-    async def get_api_keys(self) -> list[dict[str, Any]]:
-        """Raw (pre-`format_response`) rows are cached in Redis — cached data
-        has no per-user info, so it's safe to share across requests.
-        `format_response` still runs on every call, since `can_*` actions
-        depend on `permissions` (currently overridden, but kept live for when
-        the real per-user permission list is wired back in).
-        """
-        raw = await get_json(self.redis, LIST_CACHE_KEY)
-        if raw is None:
-            records = (
-                (
-                    await self.db.execute(
-                        select(DfEngineApiKeys)
-                        .options(*self.options())  # type: ignore
-                        .order_by(DfEngineApiKeys.created_at.desc())  # type: ignore
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            raw = serialize(records)
-            await set_json(self.redis, LIST_CACHE_KEY, raw, ttl=CACHE_TTL_SECONDS)
-
-        # permissions = self.user.get("permissions", [])
-        permissions = [
-            "update_df_engine_key_management",
-            "delete_df_engine_key_management",
-            "copy_df_engine_key_management",
-        ]  # overidden
-        employee_ids_with_main = {
-            row["employee_id"] for row in raw if row["is_main"] and row["employee_id"] is not None
-        }
-        return [self.format_response(row, permissions, employee_ids_with_main) for row in raw]
-
-    async def get_employee(self, employee_uid: UUID) -> Employees:
-        employee = (
-            await self.db.execute(select(Employees).where(Employees.uid == str(employee_uid)))  # type: ignore
-        ).scalar_one_or_none()
-        if employee is None:
-            raise DataNotFoundError(message="employee_not_found")
-        if employee.status == EMPLOYEE_STATUS_RESIGNED:
-            raise DataValidationError(message="employee_already_resigned")
-
-        position = (
-            (await self.db.execute(select(PositionBackups).where(PositionBackups.id == employee.position_id)))  # type: ignore
-            .scalars()
-            .first()
-        )
-        if position is None or position.name.strip().lower() not in ALLOWED_PIC_POSITIONS:
-            raise DataValidationError(message="employee_position_not_allowed")
-
-        return employee
-
-    async def get_nickname(self, user_id: int) -> str:
-        return (
-            await self.db.execute(
-                select(Employees.nickname).where(Employees.user_id == user_id)  # type: ignore
-            )
-        ).scalar_one()
-
-    async def ensure_single_main_api_key(self, pic_id: int, exclude_id: Optional[int] = None) -> None:
-        query = select(DfEngineApiKeys).where(
-            DfEngineApiKeys.employee_id == pic_id,  # type: ignore
-            DfEngineApiKeys.is_main.is_(True),  # type: ignore
-        )
-        if exclude_id is not None:
-            query = query.where(DfEngineApiKeys.id != exclude_id)  # type: ignore
-        record = (await self.db.execute(query)).scalars().first()
-        if record:
-            raise DataValidationError(message="employee_already_has_main_api_key")
-
-    async def ensure_unique_api_key_name(self, name: str, exclude_id: Optional[int] = None) -> None:
-        query = select(DfEngineApiKeys.id).where(DfEngineApiKeys.name == name)  # type: ignore
-        if exclude_id is not None:
-            query = query.where(DfEngineApiKeys.id != exclude_id)  # type: ignore
-        record = (await self.db.execute(query)).scalars().first()
-        if record:
-            raise DataConflictError(message="api_key_already_exists")
-
-    async def get_api_key(self, uid: UUID) -> DfEngineApiKeys:
-        record = (
-            await self.db.execute(select(DfEngineApiKeys).where(DfEngineApiKeys.uid == str(uid)))  # type: ignore
-        ).scalar_one_or_none()
-        if record is None:
-            raise DataNotFoundError(message="api_key_not_found")
-        return record
-
-    async def get_employee_name(self, employee_id: Optional[int]) -> Optional[str]:
-        if employee_id is None:
-            return None
-        employee = (
-            await self.db.execute(select(Employees).where(Employees.id == employee_id))  # type: ignore
-        ).scalar_one_or_none()
-        return (employee.nickname or employee.name) if employee else None
-
-    async def to_snapshot(self, record: DfEngineApiKeys) -> DfEngineApiSnapshots:
-        return DfEngineApiSnapshots(
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-            expires_at=record.expires_at,
-            limit=record.limit,
-            limit_reset=record.limit_reset,
-            key=record.key,
-            hash=record.hash,
-            name=record.name,
-            description=record.description,
-            employee_id=record.employee_id,
-            employee_name=record.employee_name,
-            created_by=record.created_by,
-            updated_by=record.updated_by,
-        )
-
-    async def archive_key(self, record: DfEngineApiKeys, record_uid: str, new_uid: Optional[str] = None) -> bool:
-        """Archive an already-revoked `record` to snapshots and delete the local
-        row. Records a DfEngineApiKeyRotationIssues incident and returns False on
-        failure. `new_uid`, when given, is attached to the incident so a
-        reconciliation job knows which replacement key this cleanup was blocking.
-        """
-        """
-        TODO: generation_prompts.key_id currently points at this row's
-        df_engine_api_keys.id. Before archiving, add a SQLModel for
-        generation_prompts (same DB, just never mapped here yet — confirmed
-        reachable from this service) and, for any generation_prompts row where
-        key_id == record.id, update key_id to point at the new
-        df_engine_api_snapshots row's id instead — so historical prompt records
-        keep resolving to a real row once this df_engine_api_keys row is gone.
-        Requires the snapshot to be flushed first to get its id.
-
-        At this moment, every record is moved to snapshots unconditionally,
-        with no generation_prompts remapping yet — implement before this ships
-        if any generation_prompts rows can reference a retired key.
-        """
-        try:
-            async with self.db.begin_nested():
-                self.db.add(await self.to_snapshot(record))
-                await self.db.delete(record)
-                await self.db.flush()
-        except Exception as exc:
-            self.db.add(
-                DfEngineApiKeyRotationIssues(
-                    old_uid=record_uid,
-                    new_uid=new_uid,
-                    issue_type="archive_failed",
-                    detail=str(exc),
-                )
-            )
-            await self.db.flush()
-            logging.warning(
-                f"rotate: old key revoked but archiving uid={record_uid} failed ({exc}) — needs manual cleanup"
-            )
-            return False
-
-        return True
-
-    async def revoke_and_archive_key(
-        self, record: DfEngineApiKeys, record_uid: str, new_uid: Optional[str] = None
-    ) -> bool:
-        """Revoke `record` on OpenRouter, then archive+delete it locally via
-        archive_key. Returns False on any failure; True once both steps succeed.
-        """
-        try:
-            await self.call_openrouter("DELETE", f"/keys/{record.hash}")
-        except Exception as exc:
-            self.db.add(
-                DfEngineApiKeyRotationIssues(
-                    old_uid=record_uid,
-                    new_uid=new_uid,
-                    issue_type="old_key_not_revoked",
-                    detail=str(exc),
-                )
-            )
-            await self.db.flush()
-            logging.error(
-                f"rotate: old uid={record_uid} could not be revoked on OpenRouter ({exc}) — needs manual cleanup"
-            )
-            return False
-
-        return await self.archive_key(record, record_uid, new_uid)
-
-    async def call_openrouter(
-        self,
-        method: str,
-        path: str,
-        json_payload: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
-        """Call OpenRouter and always log the attempt (success or failure) to
-        DfEngineOpenrouterLogs with an explicit commit, so the log survives
-        even if the caller's later DB work fails within the same request.
-        """
-        response_body: dict[str, Any] = {}
-        error_message: Optional[str] = None
-        response_status_code: Optional[int] = None
-        response_headers: Optional[dict[str, Any]] = None
-        started_at = time.perf_counter()
-        request_headers = {"Authorization": f"Bearer {OPENROUTER_MANAGEMENT_KEY}"}
-        endpoint = f"{OPENROUTER_BASE_URL.rstrip('/')}{path}"
-        json_payload = to_json_safe(json_payload) if json_payload is not None else None
-
-        try:
-            async with APICaller(
-                base_url=OPENROUTER_BASE_URL,
-                headers=request_headers,
-            ) as caller:
-                openrouter_response = await caller.call(method, path, json=json_payload, raise_for_status=False)  # type: ignore
-            response_body = openrouter_response.json() if openrouter_response.content else {}
-            response_status_code = openrouter_response.status_code
-            response_headers = dict(openrouter_response.headers)
-            endpoint = str(openrouter_response.request.url)
-            return response_body
-        except Exception as exc:
-            error_message = str(exc)
-            raise
-        finally:
-            try:
-                safe = redact_openrouter_log_fields(
-                    {
-                        "endpoint": endpoint,
-                        "request_payload": json_payload,
-                        "response_headers": response_headers,
-                        "response_body": response_body or None,
-                    }
-                )
-                self.db.add(
-                    DfEngineOpenrouterLogs(
-                        name=await self.get_nickname(self.user["user_id"]),
-                        method=method,
-                        endpoint=safe["endpoint"],
-                        request_headers=request_headers,
-                        request_payload=safe["request_payload"],
-                        response_status_code=response_status_code,
-                        response_headers=safe["response_headers"],
-                        response_body=safe["response_body"],
-                        error_message=error_message,
-                        duration_ms=int((time.perf_counter() - started_at) * 1000),
-                    )
-                )
-                await self.db.commit()
-                await delete_pattern(self.redis, LOGS_CACHE_PATTERN)
-            except Exception:
-                await self.db.rollback()
-                logging.error(f"call_openrouter: failed to persist audit log for {method} {endpoint}")
-
     @controller.post(
         "/key-management",
         summary="Create an API key.",
@@ -396,63 +43,144 @@ class APIKeyManagementController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["API Key Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["create_df_engine_key_management"])) # Will be enabled later
-        # ]
     )
     async def api_key_management_to_create_api_management(self, schema: CreateApiKeyPayload) -> Response:
         response = Response()
+        cache_key = CacheKeys()
+        ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager"]
         try:
-            employee = await self.get_employee(schema.employee_uid)
-            await self.ensure_unique_api_key_name(schema.name)
-            if schema.is_main:
-                await self.ensure_single_main_api_key(employee.id)
+            if schema.expires_at and schema.expires_at <= local_time():
+                raise DataValidationError(message="api_key_expiry_must_be_in_future")
 
-            if schema.expires_at and schema.expires_at <= local_time() + timedelta(days=ROTATION_INTERVAL_DAYS):
-                raise DataValidationError(message="api_key_expiry_too_soon")
-
-            openrouter_response = await self.call_openrouter(
-                "POST",
-                "/keys",
-                json_payload={
-                    "expires_at": schema.expires_at_iso,
-                    "include_byok_in_limit": True,
-                    "limit": schema.limit,
-                    "limit_reset": schema.limit_reset,
-                    "name": schema.name,
-                },
+            employee = await query(
+                db=self.db,
+                columns=(
+                    Employees.id,
+                    Employees.nickname,
+                    PositionBackups.name.label("position_name"),  # type: ignore
+                    DfEngineApiKeys.id.label("api_key"),  # type: ignore
+                ),
+                table=Employees,
+                joins=(
+                    (PositionBackups, Employees.position_id == PositionBackups.id, True),
+                    (
+                        DfEngineApiKeys,
+                        (DfEngineApiKeys.employee_id == Employees.id)
+                        & DfEngineApiKeys.is_main.is_(True)  # type: ignore
+                        & DfEngineApiKeys.created_by.isnot(None)  # type: ignore
+                        & DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                        True,
+                    ),
+                ),
+                filters=(Employees.uid == str(schema.employee_uid),),
+                fetch_one=True,
             )
 
-            api_key = DfEngineApiKeys(
-                name=schema.name,
-                description=schema.description,
-                key=openrouter_response["key"],
-                hash=openrouter_response["data"]["hash"],
-                employee_id=employee.id,
-                employee_name=employee.nickname,
-                limit=schema.limit,
-                limit_reset=schema.limit_reset.value if schema.limit_reset else None,
-                expires_at=schema.expires_at,
-                created_by=int(self.user["user_id"]),
-                is_main=schema.is_main,
+            if not employee:
+                raise DataNotFoundError(message="employee_not_found")
+            if (employee.position_name or "").strip().lower() not in ALLOWED_PIC_POSITIONS:
+                raise DataValidationError(message="employee_position_not_allowed")
+            if schema.is_main and employee.api_key is not None:
+                raise DataConflictError(message="employee_already_has_main_api_key")
+
+            name_taken = await query(
+                db=self.db,
+                table=DfEngineApiKeys,
+                columns=(DfEngineApiKeys.id,),
+                filters=(
+                    DfEngineApiKeys.name == schema.name,
+                    DfEngineApiKeys.employee_id == employee.id,
+                    DfEngineApiKeys.created_by.isnot(None),  # type: ignore
+                    DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                ),
+                fetch_one=True,
             )
-            self.db.add(api_key)
-            try:
-                await self.db.flush()
-            except IntegrityError as e:
-                logging.error(f"api key create IntegrityError: {e.orig}")
+            if name_taken is not None:
                 raise DataConflictError(message="api_key_already_exists")
 
-            logging.info(
-                f"user={self.user['user_id']} created api key uid={api_key.uid} "
-                f"name={api_key.name!r} employee_id={employee.id} is_main={api_key.is_main}"
+            header = {"Authorization": f"Bearer {OPENROUTER_MANAGEMENT_KEY}"}
+            payload = {
+                "expires_at": schema.expires_at_iso,
+                "include_byok_in_limit": True,
+                "limit": schema.limit,
+                "limit_reset": schema.limit_reset,
+                "name": schema.name,
+            }
+
+            started_at = time.perf_counter()
+            async with APICaller(base_url=OPENROUTER_BASE_URL, headers=header) as caller:
+                openrouter_response = await caller.call("POST", "/keys", raise_for_status=False, json=payload)
+
+            response_body = openrouter_response.json() if openrouter_response.content else {}
+            error_message: Optional[str] = None
+            conflict = False
+
+            if openrouter_response.is_error:
+                error_message = (
+                    f"openrouter {openrouter_response.status_code}: {response_body or openrouter_response.text}"
+                )
+            else:
+                self.db.add(
+                    DfEngineApiKeys(
+                        name=schema.name,
+                        description=schema.description,
+                        key=response_body["key"],
+                        hash=response_body["data"]["hash"],
+                        employee_id=employee.id,
+                        employee_name=employee.nickname,
+                        limit=schema.limit,
+                        limit_reset=schema.limit_reset.value if schema.limit_reset else None,
+                        expires_at=schema.expires_at,
+                        created_by=int(self.user["user_id"]),
+                        is_main=schema.is_main,
+                    )
+                )
+                try:
+                    await self.db.flush()
+                except IntegrityError as e:
+                    await self.db.rollback()
+                    logging.error(
+                        f"user={self.user['user_id']} API key create hit a DB conflict for {schema.name!r}: {e.orig}"
+                    )
+                    error_message = f"IntegrityError: {e.orig}"
+                    conflict = True
+
+            self.db.add(
+                DfEngineOpenrouterLogs(
+                    name=employee.nickname,
+                    method="POST",
+                    endpoint=str(openrouter_response.request.url),
+                    request_headers={**header, "Authorization": "Bearer ***"},
+                    request_payload=payload,
+                    response_status_code=openrouter_response.status_code,
+                    response_headers=dict(openrouter_response.headers),
+                    response_body=response_body or None,
+                    error_message=error_message,
+                    duration_ms=int((time.perf_counter() - started_at) * 1000),
+                )
             )
-            await self.redis.delete(LIST_CACHE_KEY)
-            response.data = await self.get_api_keys()
-        except BaseError:
+            await self.db.flush()
+
+            if conflict:
+                raise DataConflictError(message="api_key_already_exists")
+            if openrouter_response.is_error:
+                raise ServiceError(message="openrouter_key_create_failed")
+
+            logging.info(
+                f"user={self.user['user_id']} created API key {schema.name!r} for employee {employee.id} "
+                f"(is_main={schema.is_main}) in {int((time.perf_counter() - started_at) * 1000)}ms"
+            )
+            await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            response.data = (await self.api_key_management_to_fetch_available_keys()).data
+
+        except BaseError as e:
+            logging.warning(
+                f"user={self.user['user_id']} could not create API key {schema.name!r} "
+                f"for employee_uid={schema.employee_uid}: {e.message} ({e.status_code})"
+            )
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.error(f"user={self.user['user_id']} unexpected error creating API key\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
@@ -473,153 +201,225 @@ class APIKeyManagementController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["API Key Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["update_df_engine_key_management"])) # Will be enabled later
-        # ]
     )
     async def api_key_management_to_rotate_api_keys(self) -> Response:
         response = Response()
-        total_rotated = 0
-        total_failed = 0
-        total_partial = 0
+        cache_key = CacheKeys()
         try:
-            records = (await self.db.execute(select(DfEngineApiKeys))).scalars().all()
+            records = await query(
+                db=self.db,
+                table=DfEngineApiKeys,
+                filters=(DfEngineApiKeys.hash.isnot(None), DfEngineApiKeys.created_by.isnot(None)),  # type: ignore
+            )
+
+            logging.info(f"user={self.user['user_id']} rotating API keys — {len(records or [])} candidate(s)")
+
+            if not records:
+                logging.info(f"user={self.user['user_id']} no API keys to rotate")
+                response.data = (await self.api_key_management_to_fetch_available_keys()).data
+                return response
+
+            header = {"Authorization": f"Bearer {OPENROUTER_MANAGEMENT_KEY}"}
+            redacted_header = {**header, "Authorization": "Bearer ***"}
+            rotated = 0
+            removed = 0
 
             for record in records:
-                record_uid, record_name = record.uid, record.name
-
-                if not record.hash:
-                    """Directly removed from record"""
-                    await self.db.delete(record)
-                    await self.db.flush()
-                    total_failed += 1
-                    logging.info(
-                        f"user={self.user['user_id']} rotate removed api key uid={record_uid} "
-                        f"name={record_name!r} reason=missing_hash"
-                    )
-                    continue
-
                 if record.expires_at is not None and record.expires_at <= local_time():
-                    """Already past its own expiry — clean it up instead of rotating;
-                    no point creating a replacement for a key nobody renewed in time."""
-                    if await self.revoke_and_archive_key(record, record_uid):
-                        total_failed += 1
-                        logging.info(
-                            f"user={self.user['user_id']} rotate removed api key uid={record_uid} "
-                            f"name={record_name!r} reason=expired"
+                    # Past its own expiry — clean up instead of rotating.
+                    # The OpenRouter secret is already dead, so no revoke
+                    # call; just archive the row and drop it, in its own SAVEPOINT.
+                    try:
+                        async with self.db.begin_nested():
+                            self.db.add(
+                                DfEngineApiSnapshots(
+                                    created_at=record.created_at,
+                                    updated_at=record.updated_at,
+                                    expires_at=record.expires_at,
+                                    limit=record.limit,
+                                    limit_reset=record.limit_reset,
+                                    uid=record.uid,
+                                    key=record.key,
+                                    hash=record.hash,
+                                    name=record.name,
+                                    description=record.description,
+                                    employee_id=record.employee_id,
+                                    employee_name=record.employee_name,
+                                    created_by=record.created_by,
+                                    updated_by=record.updated_by,
+                                )
+                            )
+                            await self.db.delete(record)
+                    except IntegrityError as e:
+                        self.db.add(
+                            DfEngineApiKeyRotationIssues(
+                                old_uid=record.uid,
+                                issue_type="expired_key_not_removed",
+                                detail=str(e.orig),
+                            )
                         )
-                    else:
-                        total_partial += 1
-                    continue
+                        await self.db.flush()
+                        logging.error(
+                            f"user={self.user['user_id']} could not remove expired API key {record.name!r} "
+                            f"(uid={record.uid}): {e.orig}"
+                        )
+                        continue
 
-                """
-                Revoke directly on OpenRouter — a 404/error response means the
-                hash is already invalid there, so just drop the local row.
-                """
-                openrouter_response = await self.call_openrouter("DELETE", f"/keys/{record.hash}")
-                if openrouter_response.get("error"):
-                    await self.db.delete(record)
-                    await self.db.flush()
-                    total_failed += 1
+                    removed += 1
                     logging.info(
-                        f"user={self.user['user_id']} rotate removed api key uid={record_uid} "
-                        f"name={record_name!r} reason=invalid_hash"
+                        f"user={self.user['user_id']} removed expired API key {record.name!r} (uid={record.uid})"
                     )
                     continue
 
-                if not await self.archive_key(record, record_uid):
-                    total_partial += 1
-                    continue
+                create_payload = {
+                    "expires_at": wib_to_utc_iso(record.expires_at),
+                    "include_byok_in_limit": True,
+                    "limit": float(record.limit) if record.limit is not None else None,
+                    "limit_reset": record.limit_reset,
+                    "name": record.name,
+                }
 
-                if record.expires_at is None:
-                    new_expires_at = None
-                else:
-                    original_duration = record.expires_at - record.created_at
-                    new_expires_at = local_time() + max(original_duration, timedelta(days=ROTATION_INTERVAL_DAYS))
+                # Create the replacement first — never leave a PIC without a working key.
+                t0 = time.perf_counter()
+                async with APICaller(base_url=OPENROUTER_BASE_URL, headers=header) as caller:
+                    create_response = await caller.call("POST", "/keys", raise_for_status=False, json=create_payload)
+                create_body = create_response.json() if create_response.content else {}
+                create_ok = not (create_response.is_error or bool(create_body.get("error")))
 
-                """The old key is revoked and archived; create its replacement with
-                the same configuration."""
-                try:
-                    new_openrouter_response = await self.call_openrouter(
-                        "POST",
-                        "/keys",
-                        json_payload={
-                            "expires_at": wib_to_utc_iso(new_expires_at),
-                            "include_byok_in_limit": True,
-                            "limit": record.limit,
-                            "limit_reset": record.limit_reset,
-                            "name": record.name,
-                        },
+                self.db.add(
+                    DfEngineOpenrouterLogs(
+                        name=record.employee_name,
+                        method="POST",
+                        endpoint=str(create_response.request.url),
+                        request_headers=redacted_header,
+                        request_payload=create_payload,
+                        response_status_code=create_response.status_code,
+                        response_headers=dict(create_response.headers),
+                        response_body=create_body or None,
+                        error_message=None
+                        if create_ok
+                        else f"openrouter {create_response.status_code}: {create_body or create_response.text}",
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
                     )
-                    if new_openrouter_response.get("error"):
-                        raise ValueError(new_openrouter_response["error"].get("message", "create_failed"))
-                except Exception as exc:
-                    total_partial += 1
+                )
+
+                if not create_ok:
                     self.db.add(
                         DfEngineApiKeyRotationIssues(
-                            old_uid=record_uid,
+                            old_uid=record.uid,
                             issue_type="new_key_not_created",
-                            detail=str(exc),
+                            detail=f"openrouter {create_response.status_code}: {create_body or create_response.text}",
                         )
                     )
                     await self.db.flush()
                     logging.error(
-                        f"rotate: old uid={record_uid} name={record_name!r} was revoked but replacement "
-                        f"creation failed ({exc}) — PIC has no working key until this is fixed manually"
+                        f"user={self.user['user_id']} skipped {record.name!r} (uid={record.uid}) during rotation — "
+                        f"OpenRouter rejected the replacement ({create_response.status_code}); old key kept"
                     )
                     continue
 
-                new_key = DfEngineApiKeys(
-                    name=record.name,
-                    description=record.description,
-                    key=new_openrouter_response["key"],
-                    hash=new_openrouter_response["data"]["hash"],
-                    employee_id=record.employee_id,
-                    employee_name=record.employee_name,
-                    limit=record.limit,
-                    limit_reset=record.limit_reset,
-                    expires_at=new_expires_at,
-                    created_by=int(self.user["user_id"]),
-                    is_main=record.is_main,
+                # Replacement exists — revoke the old key. A revoke failure is non-fatal
+                # (the old secret is being dropped and would expire anyway); just log it.
+                t1 = time.perf_counter()
+                async with APICaller(base_url=OPENROUTER_BASE_URL, headers=header) as caller:
+                    revoke_response = await caller.call("DELETE", f"/keys/{record.hash}", raise_for_status=False)
+                revoke_body = revoke_response.json() if revoke_response.content else {}
+                revoked_cleanly = not (revoke_response.is_error or bool(revoke_body.get("error")))
+
+                self.db.add(
+                    DfEngineOpenrouterLogs(
+                        name=record.employee_name,
+                        method="DELETE",
+                        endpoint=str(revoke_response.request.url),
+                        request_headers=redacted_header,
+                        request_payload=None,
+                        response_status_code=revoke_response.status_code,
+                        response_headers=dict(revoke_response.headers),
+                        response_body=revoke_body or None,
+                        error_message=None
+                        if revoked_cleanly
+                        else f"openrouter {revoke_response.status_code}: {revoke_body or revoke_response.text}",
+                        duration_ms=int((time.perf_counter() - t1) * 1000),
+                    )
                 )
+
+                # Swap the rows inside a SAVEPOINT so a conflict here unwinds ONLY this
+                # key — the request-wide transaction (prior rotations + every log row
+                # above) stays intact. ponytail: generation_prompts still points at
+                # df_engine_api_keys.id via a polymorphic FK; repoint those to the
+                # snapshot id once that model is mapped in this service.
                 try:
                     async with self.db.begin_nested():
-                        self.db.add(new_key)
-                        await self.db.flush()
+                        self.db.add(
+                            DfEngineApiSnapshots(
+                                created_at=record.created_at,
+                                updated_at=record.updated_at,
+                                expires_at=record.expires_at,
+                                limit=record.limit,
+                                limit_reset=record.limit_reset,
+                                uid=record.uid,
+                                key=record.key,
+                                hash=record.hash,
+                                name=record.name,
+                                description=record.description,
+                                employee_id=record.employee_id,
+                                employee_name=record.employee_name,
+                                created_by=record.created_by,
+                                updated_by=record.updated_by,
+                            )
+                        )
+                        self.db.add(
+                            DfEngineApiKeys(
+                                name=record.name,
+                                description=record.description,
+                                key=create_body["key"],
+                                hash=create_body["data"]["hash"],
+                                employee_id=record.employee_id,
+                                employee_name=record.employee_name,
+                                limit=record.limit,
+                                limit_reset=record.limit_reset,
+                                expires_at=record.expires_at,
+                                created_by=record.created_by,
+                                is_main=record.is_main,
+                            )
+                        )
+                        await self.db.delete(record)
                 except IntegrityError as e:
-                    total_partial += 1
                     self.db.add(
                         DfEngineApiKeyRotationIssues(
-                            old_uid=record_uid,
-                            new_key_hash=new_openrouter_response["data"]["hash"],
-                            new_key_value=new_openrouter_response["key"],
+                            old_uid=record.uid,
+                            new_key_hash=create_body["data"]["hash"],
+                            new_key_value=create_body["key"],
                             issue_type="new_key_db_conflict",
                             detail=str(e.orig),
                         )
                     )
                     await self.db.flush()
                     logging.error(
-                        f"rotate: created replacement on OpenRouter for uid={record_uid} but couldn't save it "
-                        f"locally (hash={new_openrouter_response['data']['hash']}) — needs manual reconciliation"
+                        f"user={self.user['user_id']} rotation left an orphan for {record.name!r} (uid={record.uid}) — "
+                        f"OpenRouter key created (hash {create_body['data']['hash']}) but the local save failed "
+                        f"({e.orig}); needs manual reconciliation"
                     )
                     continue
 
-                total_rotated += 1
+                rotated += 1
                 logging.info(
-                    f"user={self.user['user_id']} rotated api key old_uid={record_uid} name={record_name!r} "
-                    f"-> new_uid={new_key.uid}"
+                    f"user={self.user['user_id']} rotated API key {record.name!r} (uid={record.uid}); "
+                    f"old key revoked={revoked_cleanly}"
                 )
 
             logging.info(
-                f"user={self.user['user_id']} rotate summary: "
-                f"rotated={total_rotated} failed={total_failed} partial={total_partial}"
+                f"user={self.user['user_id']} rotation complete — {rotated} rotated, {removed} expired removed "
+                f"of {len(records)} candidate(s)"
             )
-            await self.redis.delete(LIST_CACHE_KEY)
-            response.data = await self.get_api_keys()
-        except BaseError:
+            await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            response.data = (await self.api_key_management_to_fetch_available_keys()).data
+
+        except BaseError as e:
+            logging.warning(f"user={self.user['user_id']} could not rotate API keys: {e.message} ({e.status_code})")
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.error(f"user={self.user['user_id']} unexpected error rotating API keys\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
@@ -635,18 +435,40 @@ class APIKeyManagementController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["API Key Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["fetch_df_engine_key_management"])) # Will be enabled later
-        # ]
     )
     async def api_key_management_to_fetch_available_keys(self) -> Response:
         response = Response()
+        cache_key = CacheKeys()
+        api_key_service = ApiKeyManagement()
         try:
-            response.data = await self.get_api_keys()
-        except BaseError:
+            api_keys_global_cache_key = cache_key.api_key_management()
+            cached_api_keys = await get_json(self.redis, api_keys_global_cache_key)
+            if cached_api_keys:
+                logging.info(f"user={self.user['user_id']} listed {len(cached_api_keys)} API key(s) from cache")
+                response.data = cached_api_keys
+                return response
+
+            results = await query(
+                db=self.db,
+                table=DfEngineApiKeys,
+                options=api_key_service.options(),
+                filters=(DfEngineApiKeys.created_by.isnot(None), DfEngineApiKeys.hash.isnot(None)),  # type: ignore
+                order_by=(DfEngineApiKeys.created_at.desc(),),  # type: ignore
+            )
+
+            serialized = serialize(results)
+            employee_ids_with_main = {
+                r["employee_id"] for r in serialized if r["is_main"] and r["employee_id"] is not None
+            }
+            records = [api_key_service.format(record, employee_ids_with_main) for record in serialized]
+            await set_json(self.redis, api_keys_global_cache_key, records)
+            logging.info(f"user={self.user['user_id']} listed {len(records)} API key(s) from database")
+            response.data = records
+        except BaseError as e:
+            logging.warning(f"user={self.user['user_id']} could not list API keys: {e.message} ({e.status_code})")
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.error(f"user={self.user['user_id']} unexpected error listing API keys\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
@@ -673,18 +495,27 @@ class APIKeyManagementController(CoreDependencies):
         itemsPerPage: int = Query(default=50, ge=1, le=200, description="Number of records to return per page."),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
+        api_key_service = ApiKeyManagement()
         try:
-            cache_key = openrouter_logs_cache_key(page, itemsPerPage)
-            cached = await get_json(self.redis, cache_key)
+            logs_cache_key = cache_key.api_key_management_logs(page, itemsPerPage)
+            cached = await get_json(self.redis, logs_cache_key)
             if cached is not None:
+                logging.info(
+                    f"user={self.user['user_id']} returned OpenRouter call log page {page} "
+                    f"({len(cached['logs'])} row(s)) from cache"
+                )
                 response.data = PaginationResponse(paginated=cached["logs"], totalData=cached["total_data"])
                 return response
 
-            total_data = await query(
-                db=self.db,
-                table=DfEngineOpenrouterLogs,
-                columns=(func.count(DfEngineOpenrouterLogs.id),),  # type: ignore
-                fetch_one=True,
+            total_data = (
+                await query(
+                    db=self.db,
+                    table=DfEngineOpenrouterLogs,
+                    columns=(func.count(DfEngineOpenrouterLogs.id),),  # type: ignore
+                    fetch_one=True,
+                )
+                or 0
             )
 
             records = await query(
@@ -695,24 +526,24 @@ class APIKeyManagementController(CoreDependencies):
                 offset=(page - 1) * itemsPerPage,
             )
 
-            logs = []
-            for record in serialize(records):
-                # request_headers carries the OpenRouter management key — never expose it.
-                record.pop("request_headers", None)
-                record.pop("id", None)
-                # Defense in depth: newer rows are already redacted on write, but
-                # older rows may still hold a plaintext key/hash.
-                redact_openrouter_log_fields(record)
-                record["created_at"] = format_datetime(record["created_at"])
-                logs.append(record)
+            logs = [api_key_service.format_log(record) for record in serialize(records)]
 
-            total_data = total_data or 0
-            await set_json(self.redis, cache_key, {"logs": logs, "total_data": total_data}, ttl=CACHE_TTL_SECONDS)
+            await set_json(self.redis, logs_cache_key, {"logs": logs, "total_data": total_data})
+            logging.info(
+                f"user={self.user['user_id']} returned OpenRouter call log page {page} "
+                f"({len(logs)} of {total_data} row(s)) from database"
+            )
             response.data = PaginationResponse(paginated=logs, totalData=total_data)
-        except BaseError:
+        except BaseError as e:
+            logging.warning(
+                f"user={self.user['user_id']} could not return OpenRouter call log (page {page}): "
+                f"{e.message} ({e.status_code})"
+            )
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.error(
+                f"user={self.user['user_id']} unexpected error returning OpenRouter call log\n{traceback.format_exc()}"
+            )
             raise ServiceError()
         return response
 
@@ -730,9 +561,6 @@ class APIKeyManagementController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["API Key Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["delete_df_engine_key_management"])) # Will be enabled later
-        # ]
     )
     async def api_key_management_with_uid_to_delete_an_api_key(
         self,
@@ -743,64 +571,97 @@ class APIKeyManagementController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
         try:
-            record = await self.get_api_key(uid)
-            record_uid, record_name = record.uid, record.name
-            if record.is_main:
+            record = await query(
+                db=self.db,
+                table=DfEngineApiKeys,
+                filters=(
+                    DfEngineApiKeys.uid == str(uid),
+                    DfEngineApiKeys.created_by.isnot(None),  # type: ignore
+                    DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                ),
+                fetch_one=True,
+            )
+            if not record:
+                raise DataNotFoundError(message="api_key_not_found")
+            is_expired = record.expires_at is not None and record.expires_at <= local_time()
+            if record.is_main and not is_expired:
                 raise DataValidationError(message="cannot_delete_main_api_key")
 
-            if not record.hash:
-                await self.db.delete(record)
-                await self.db.flush()
-                logging.info(
-                    f"user={self.user['user_id']} deleted api key uid={record_uid} "
-                    f"name={record_name!r} reason=missing_hash"
+            record_name = record.name
+            header = {"Authorization": f"Bearer {OPENROUTER_MANAGEMENT_KEY}"}
+            started_at = time.perf_counter()
+            async with APICaller(base_url=OPENROUTER_BASE_URL, headers=header) as caller:
+                openrouter_response = await caller.call("DELETE", f"/keys/{record.hash}", raise_for_status=False)
+
+            response_body = openrouter_response.json() if openrouter_response.content else {}
+            revoked_cleanly = not (openrouter_response.is_error or bool(response_body.get("error")))
+
+            self.db.add(
+                DfEngineOpenrouterLogs(
+                    name=record.employee_name,
+                    method="DELETE",
+                    endpoint=str(openrouter_response.request.url),
+                    request_headers={**header, "Authorization": "Bearer ***"},
+                    request_payload=None,
+                    response_status_code=openrouter_response.status_code,
+                    response_headers=dict(openrouter_response.headers),
+                    response_body=response_body or None,
+                    error_message=None
+                    if revoked_cleanly
+                    else f"openrouter {openrouter_response.status_code}: {response_body or openrouter_response.text}",
+                    duration_ms=int((time.perf_counter() - started_at) * 1000),
                 )
-                await self.redis.delete(LIST_CACHE_KEY)
-                response.data = await self.get_api_keys()
-                return response
+            )
 
-            openrouter_response = await self.call_openrouter("DELETE", f"/keys/{record.hash}")
-            if openrouter_response.get("error"):
-                await self.db.delete(record)
-                await self.db.flush()
-                logging.info(
-                    f"user={self.user['user_id']} deleted api key uid={record_uid} "
-                    f"name={record_name!r} reason=invalid_hash"
+            if revoked_cleanly:
+                # Archive only when OpenRouter confirmed the revoke. A stale/invalid
+                # hash (revoke failed) means there's nothing live to snapshot — just
+                # drop the row.
+                # ponytail: generation_prompts still points at df_engine_api_keys.id via
+                # a polymorphic FK; repoint those to the snapshot id here once that model
+                # is mapped in this service. Same TODO in the rotate flow.
+                self.db.add(
+                    DfEngineApiSnapshots(
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
+                        expires_at=record.expires_at,
+                        limit=record.limit,
+                        limit_reset=record.limit_reset,
+                        uid=record.uid,
+                        key=record.key,
+                        hash=record.hash,
+                        name=record.name,
+                        description=record.description,
+                        employee_id=record.employee_id,
+                        employee_name=record.employee_name,
+                        created_by=record.created_by,
+                        updated_by=record.updated_by,
+                    )
                 )
-                await self.redis.delete(LIST_CACHE_KEY)
-                response.data = await self.get_api_keys()
-                return response
-
-            """Key was revoked on OpenRouter above; archive it locally."""
-            self.db.add(await self.to_snapshot(record))
-
-            """
-            TODO: generation_prompts.key_id currently points at this row's
-            df_engine_api_keys.id. Before archiving, add a SQLModel for
-            generation_prompts (same DB, just never mapped here yet — confirmed
-            reachable from this service) and, for any generation_prompts row where
-            key_id == record.id, update key_id to point at the new
-            df_engine_api_snapshots row's id instead — so historical prompt records
-            keep resolving to a real row once this df_engine_api_keys row is gone.
-            Requires the snapshot to be flushed first to get its id. See the same
-            TODO in revoke_and_archive_key, used by rotate, for the other call site.
-            """
 
             await self.db.delete(record)
             await self.db.flush()
+
             logging.info(
-                f"user={self.user['user_id']} deleted api key uid={record_uid} "
-                f"name={record_name!r} reason=revoked_on_openrouter"
+                f"user={self.user['user_id']} deleted API key {record_name!r} (uid={uid}) — "
+                f"{'OpenRouter key revoked' if revoked_cleanly else 'OpenRouter hash was already invalid'} "
+                f"in {int((time.perf_counter() - started_at) * 1000)}ms"
             )
 
-            await self.redis.delete(LIST_CACHE_KEY)
-            response.data = await self.get_api_keys()
+            await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            response.data = (await self.api_key_management_to_fetch_available_keys()).data
 
-        except BaseError:
+        except BaseError as e:
+            logging.warning(
+                f"user={self.user['user_id']} could not delete API key uid={uid}: {e.message} ({e.status_code})"
+            )
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.error(
+                f"user={self.user['user_id']} unexpected error deleting API key uid={uid}\n{traceback.format_exc()}"
+            )
             raise ServiceError()
         return response
 
@@ -816,9 +677,6 @@ class APIKeyManagementController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["API Key Management"],
         response_model=Response,
-        # dependencies=[
-        #     Depends(require_permissions(["copy_df_engine_key_management"])) # Will be enabled later
-        # ]
     )
     async def api_key_management_with_uid_to_copy_api_key(
         self,
@@ -828,25 +686,52 @@ class APIKeyManagementController(CoreDependencies):
             examples=["8d96ff4e-5c35-4329-bd5d-827e2c68599d"],
         ),
     ) -> Response:
-        # Deliberately not cached: this is the one endpoint that hands back an
-        # unmasked secret key. Every call is already an audited reveal event
-        # (logged below) — storing that plaintext in Redis too would widen its
-        # exposure for no benefit, since reveals aren't meant to be repeated
-        # rapidly like a list/detail fetch.
         response = Response()
+        cache_key = CacheKeys()
         try:
-            record = await self.get_api_key(uid)
-            if not record.hash:
-                raise DataValidationError(message="api_key_copy_missing_hash")
+            api_key_detail_cache_key = cache_key.api_key_management_detail(uid)
+            cached_key = await get_json(self.redis, api_key_detail_cache_key)
+            if cached_key:
+                logging.info(f"user={self.user['user_id']} revealed API key uid={uid} from cache")
+                response.data = cached_key
+                return response
+
+            record = await query(
+                db=self.db,
+                table=DfEngineApiKeys,
+                columns=(
+                    DfEngineApiKeys.key,
+                    DfEngineApiKeys.hash,
+                    DfEngineApiKeys.employee_id,
+                    DfEngineApiKeys.name,
+                    DfEngineApiKeys.expires_at,
+                ),
+                filters=(
+                    DfEngineApiKeys.uid == str(uid),
+                    DfEngineApiKeys.created_by.isnot(None),  # type: ignore
+                    DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                ),
+                fetch_one=True,
+            )
+            if record is None:
+                raise DataNotFoundError(message="api_key_not_found")
             if not record.employee_id:
                 raise DataValidationError(message="api_key_copy_missing_employee")
+            if record.expires_at is not None and record.expires_at <= local_time():
+                raise DataValidationError(message="api_key_expired")
 
+            await set_json(self.redis, api_key_detail_cache_key, record.key)
+            logging.info(f"user={self.user['user_id']} revealed API key {record.name!r} (uid={uid}) from database")
             response.data = record.key
-            logging.info(f"user={self.user['user_id']} revealed api key uid={record.uid} name={record.name!r}")
-        except BaseError:
+        except BaseError as e:
+            logging.warning(
+                f"user={self.user['user_id']} could not reveal API key uid={uid}: {e.message} ({e.status_code})"
+            )
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.error(
+                f"user={self.user['user_id']} unexpected error revealing API key uid={uid}\n{traceback.format_exc()}"
+            )
             raise ServiceError()
         return response
 
@@ -854,15 +739,15 @@ class APIKeyManagementController(CoreDependencies):
         "/key-management/{uid}",
         summary="Update an API key.",
         description=(
-            "Replaces the key's editable details — name, description, assigned PIC, "
-            "spending limit, reset schedule, and main flag — with what's submitted "
-            "(this is a full replace, not a partial update). OpenRouter is only "
-            "contacted if the spending limit or reset schedule actually changed; "
-            "every other field updates locally without touching OpenRouter. The "
-            "expiry date is fixed when the key is created and can't be changed "
-            'afterward — OpenRouter has no way to update it. The same "only one '
-            'main key per PIC" rule as creation applies. Returns the full, '
-            "up-to-date list of API keys."
+            "Replaces the key's editable details — name, description, spending limit, "
+            "reset schedule, and main flag — with what's submitted (this is a full "
+            "replace, not a partial update). The PIC and the expiry date are fixed at "
+            "creation and can't be changed here — the payload mirrors OpenRouter's own "
+            "key-update fields. OpenRouter is contacted only when the name, spending "
+            "limit, or reset schedule actually changed; description and main-flag "
+            "changes stay local. An expired key can't be updated (delete it and create "
+            'a new one). The same "only one main key per PIC" rule as creation applies. '
+            "Returns the full, up-to-date list of API keys."
         ),
         status_code=status.HTTP_200_OK,
         tags=["API Key Management"],
@@ -878,67 +763,132 @@ class APIKeyManagementController(CoreDependencies):
         ),
     ) -> Response:
         response = Response()
-        trigger_update = False
+        cache_key = CacheKeys()
         try:
-            record = await self.get_api_key(uid)
+            record = await query(
+                db=self.db,
+                table=DfEngineApiKeys,
+                filters=(
+                    DfEngineApiKeys.uid == str(uid),
+                    DfEngineApiKeys.created_by.isnot(None),  # type: ignore
+                    DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                ),
+                fetch_one=True,
+            )
+            if not record:
+                raise DataNotFoundError(message="api_key_not_found")
             if not record.employee_id:
                 raise DataValidationError(message="api_key_employee_deleted")
+            if record.expires_at is not None and record.expires_at <= local_time():
+                raise DataValidationError(message="api_key_expired")
 
-            await self.ensure_unique_api_key_name(schema.name, exclude_id=record.id)
+            name_taken = await query(
+                db=self.db,
+                table=DfEngineApiKeys,
+                columns=(DfEngineApiKeys.id,),
+                filters=(
+                    DfEngineApiKeys.name == schema.name,
+                    DfEngineApiKeys.employee_id == record.employee_id,
+                    DfEngineApiKeys.id != record.id,
+                    DfEngineApiKeys.created_by.isnot(None),  # type: ignore
+                    DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                ),
+                fetch_one=True,
+            )
+            if name_taken is not None:
+                raise DataConflictError(message="api_key_already_exists")
 
-            if schema.is_main:
-                await self.ensure_single_main_api_key(record.employee_id, exclude_id=record.id)
+            if schema.is_main and not record.is_main:
+                other_main = await query(
+                    db=self.db,
+                    table=DfEngineApiKeys,
+                    columns=(DfEngineApiKeys.id,),
+                    filters=(
+                        DfEngineApiKeys.employee_id == record.employee_id,
+                        DfEngineApiKeys.is_main.is_(True),  # type: ignore
+                        DfEngineApiKeys.id != record.id,
+                        DfEngineApiKeys.created_by.isnot(None),  # type: ignore
+                        DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                    ),
+                    fetch_one=True,
+                )
+                if other_main is not None:
+                    raise DataConflictError(message="employee_already_has_main_api_key")
 
-            if not record.hash:
-                raise DataValidationError(message="api_key_missing_hash")
-
-            trigger_update = (
-                True
-                if schema.name != record.name
-                or schema.limit != record.limit
-                or schema.limit_reset != record.limit_reset
-                else False
+            new_limit = float(schema.limit) if schema.limit is not None else None
+            new_limit_reset = schema.limit_reset.value if schema.limit_reset else None
+            current_limit = float(record.limit) if record.limit is not None else None
+            openrouter_synced = (
+                schema.name != record.name or new_limit != current_limit or new_limit_reset != record.limit_reset
             )
 
-            openrouter_response = await self.call_openrouter(
-                "PATCH",
-                f"/keys/{record.hash}",
-                json_payload={
+            sync_failed = False
+            if openrouter_synced:
+                header = {"Authorization": f"Bearer {OPENROUTER_MANAGEMENT_KEY}"}
+                payload = {
                     "disabled": False,
                     "include_byok_in_limit": True,
                     "limit": schema.limit,
                     "limit_reset": schema.limit_reset,
                     "name": schema.name,
-                },
-            )
+                }
+                started_at = time.perf_counter()
+                async with APICaller(base_url=OPENROUTER_BASE_URL, headers=header) as caller:
+                    openrouter_response = await caller.call(
+                        "PATCH", f"/keys/{record.hash}", raise_for_status=False, json=payload
+                    )
+                response_body = openrouter_response.json() if openrouter_response.content else {}
+                sync_failed = openrouter_response.is_error or bool(response_body.get("error"))
 
-            if openrouter_response.get("error"):
-                error_message = openrouter_response.get("error", {}).get("message", "Error while calling Openrouter.")
-                logging.warning(f"api key update uid={record.uid} rejected by OpenRouter: {error_message}")
-                raise DataValidationError(message="api_key_openrouter_sync_failed")
+                self.db.add(
+                    DfEngineOpenrouterLogs(
+                        name=record.employee_name,
+                        method="PATCH",
+                        endpoint=str(openrouter_response.request.url),
+                        request_headers={**header, "Authorization": "Bearer ***"},
+                        request_payload=payload,
+                        response_status_code=openrouter_response.status_code,
+                        response_headers=dict(openrouter_response.headers),
+                        response_body=response_body or None,
+                        error_message=None
+                        if not sync_failed
+                        else f"openrouter {openrouter_response.status_code}: {response_body or openrouter_response.text}",
+                        duration_ms=int((time.perf_counter() - started_at) * 1000),
+                    )
+                )
 
-            record.name = schema.name
-            record.description = schema.description
-            record.limit = schema.limit
-            record.limit_reset = schema.limit_reset
-            record.is_main = schema.is_main
-            record.updated_by = int(self.user["user_id"])
+            if not sync_failed:
+                record.name = schema.name
+                record.description = schema.description
+                record.limit = schema.limit
+                record.limit_reset = new_limit_reset
+                record.is_main = schema.is_main
+                record.updated_by = int(self.user["user_id"])
 
             try:
                 await self.db.flush()
             except IntegrityError as e:
-                logging.error(f"api key update IntegrityError: {e.orig}")
+                await self.db.rollback()
+                logging.error(f"user={self.user['user_id']} API key update hit a DB conflict (uid={uid}): {e.orig}")
                 raise DataConflictError(message="api_key_already_exists")
 
+            if sync_failed:
+                raise DataValidationError(message="api_key_openrouter_sync_failed")
+
             logging.info(
-                f"user={self.user['user_id']} updated api key uid={record.uid} "
-                f"name={record.name!r} openrouter_synced={trigger_update} is_main={record.is_main}"
+                f"user={self.user['user_id']} updated API key {schema.name!r} (uid={uid}) — "
+                f"{'synced to OpenRouter' if openrouter_synced else 'local changes only'}, is_main={schema.is_main}"
             )
-            await self.redis.delete(LIST_CACHE_KEY)
-            response.data = await self.get_api_keys()
-        except BaseError:
+            await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            response.data = (await self.api_key_management_to_fetch_available_keys()).data
+        except BaseError as e:
+            logging.warning(
+                f"user={self.user['user_id']} could not update API key uid={uid}: {e.message} ({e.status_code})"
+            )
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.error(
+                f"user={self.user['user_id']} unexpected error updating API key uid={uid}\n{traceback.format_exc()}"
+            )
             raise ServiceError()
         return response

@@ -177,3 +177,18 @@ class CacheKeys:
         is_enabled: Optional[bool] = None,
     ) -> str:
         return f"model_option:page={page}:size={items_per_page}:search={(search or '').strip().lower() or 'all'}:type={(type or '').strip().lower() or 'all'}:is_enabled={is_enabled if is_enabled is not None else 'all'}"
+
+    def api_key_management(self) -> str:
+        return "api_key_management:list:all"
+
+    def api_key_management_detail(self, uid: UUID) -> str:
+        return f"api_key_management:detail:{uid}"
+
+    def api_key_management_logs(self, page: int, items_per_page: int) -> str:
+        return f"api_key_management:logs:page={page}:size={items_per_page}"
+
+    def api_key_management_logs_pattern(self) -> str:
+        return "api_key_management:logs:*"
+
+    def api_key_management_pattern(self) -> str:
+        return "api_key_management:*"

@@ -10,8 +10,11 @@ class ApiKeyManagementMessage:
             "cannot_delete_main_api_key": "Key ini sedang ditandai sebagai main dan tidak dapat dihapus. Ubah statusnya terlebih dahulu.",
             "api_key_missing_hash": "API key ini kehilangan informasi setup dari saat pembuatannya, sehingga tidak dapat diupdate. Key ini hanya dapat dihapus.",
             "api_key_expiry_too_soon": "Tanggal expired minimal 7 hari dari sekarang, agar key tetap berlaku hingga dirotasi secara otomatis.",
+            "api_key_expiry_must_be_in_future": "Tanggal expired harus di masa depan.",
+            "openrouter_key_create_failed": "OpenRouter menolak pembuatan API key. Silakan coba lagi nanti.",
             "api_key_employee_deleted": "PIC yang ditugaskan pada key ini sudah tidak ada, sehingga tidak dapat diupdate. Key ini hanya dapat dihapus.",
             "api_key_copy_missing_hash": "API key ini kehilangan informasi setup dari saat pembuatannya, sehingga tidak dapat disalin. Key ini hanya dapat dihapus.",
             "api_key_copy_missing_employee": "PIC yang ditugaskan pada key ini sudah tidak ada, sehingga tidak dapat disalin. Key ini hanya dapat dihapus.",
             "api_key_openrouter_sync_failed": "API key ini tidak dapat diupdate karena sudah tidak sesuai dengan data di OpenRouter. Key ini masih dapat disalin atau dihapus, namun tidak dapat diedit.",
+            "api_key_expired": "API key ini sudah kedaluwarsa. Key ini hanya dapat dihapus — buat key baru sebagai gantinya.",
         }
