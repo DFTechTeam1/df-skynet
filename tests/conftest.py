@@ -62,7 +62,7 @@ async def _clear_all_redis_caches():
         "prompt_template:list:*",
         "prompt_template:detail:*",
         "model_option:*",
-        "api_key_management:list:*",
+        "api_key_management:*",
         "setting:detail:*",
         "setting:logs:*",
         "user_preference:*",
@@ -204,15 +204,18 @@ async def wrong_position_employee_uid(db_session) -> str:
 
 
 class _FakeOpenRouterResponse:
-    """Stands in for the subset of `httpx.Response` that
-    `APIKeyManagementController.call_openrouter` actually reads."""
+    """Stands in for the subset of `httpx.Response` the API key management
+    controller reads off an OpenRouter call: status_code, is_error, content,
+    text, headers, request.url, and .json()."""
 
-    def __init__(self, status_code: int, json_data: Optional[dict[str, Any]] = None):
+    def __init__(self, status_code: int, json_data: Optional[dict[str, Any]] = None, path: str = "/keys"):
         self.status_code = status_code
+        self.is_error = status_code >= 400
         self._json_data = json_data
         self.content = b"{}" if json_data is not None else b""
+        self.text = "{}" if json_data is not None else ""
         self.headers: dict[str, str] = {}
-        self.request = SimpleNamespace(url="https://openrouter.ai/api/v1/keys")
+        self.request = SimpleNamespace(url=f"https://openrouter.ai/api/v1{path}")
 
     def json(self) -> dict[str, Any]:
         return self._json_data or {}
@@ -240,8 +243,9 @@ class _FakeOpenRouterCaller:
             return _FakeOpenRouterResponse(
                 201,
                 {"key": f"sk-or-v1-fake{uuid4().hex}", "data": {"hash": uuid4().hex}},
+                path=path,
             )
-        return _FakeOpenRouterResponse(200)
+        return _FakeOpenRouterResponse(200, path=path)
 
 
 @pytest.fixture

@@ -3,7 +3,6 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
-from apps.controller.api_key_management import LOGS_CACHE_PATTERN as OPENROUTER_LOGS_CACHE_PATTERN
 from services.redis import CacheKeys
 
 SETTING_DETAIL_CACHE_KEY = CacheKeys().setting_detail("admin_setting")
@@ -80,7 +79,7 @@ async def clear_openrouter_logs(db_session: AsyncSession) -> None:
     """
     await db_session.execute(delete(DfEngineOpenrouterLogs))
     await db_session.commit()
-    await delete_pattern(redis_client(), OPENROUTER_LOGS_CACHE_PATTERN)
+    await delete_pattern(redis_client(), cache_key.api_key_management_logs_pattern())
 
 
 async def available_model_rows(db_session: AsyncSession, model_type: str) -> list[DfEngineModelOptions]:

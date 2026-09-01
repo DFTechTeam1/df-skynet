@@ -71,8 +71,35 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
-    op.drop_constraint("uq_df_engine_api_keys_key", "df_engine_api_keys", type_="unique")
+    """Downgrade schema. Written to be safe to re-run — an earlier attempt may have
+    partially applied before failing on the employee_id NOT NULL step."""
+    bind = op.get_bind()
+
+    def _has_col(col: str) -> bool:
+        return bool(
+            bind.execute(
+                sa.text(
+                    "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() "
+                    "AND table_name = 'df_engine_api_keys' AND column_name = :c"
+                ),
+                {"c": col},
+            ).scalar()
+        )
+
+    def _has_constraint(name: str) -> bool:
+        return bool(
+            bind.execute(
+                sa.text(
+                    "SELECT 1 FROM information_schema.table_constraints WHERE table_schema = DATABASE() "
+                    "AND table_name = 'df_engine_api_keys' AND constraint_name = :n"
+                ),
+                {"n": name},
+            ).scalar()
+        )
+
+    if _has_constraint("uq_df_engine_api_keys_key"):
+        op.drop_constraint("uq_df_engine_api_keys_key", "df_engine_api_keys", type_="unique")
+
     op.alter_column(
         "df_engine_api_keys",
         "key",
@@ -80,24 +107,34 @@ def downgrade() -> None:
         type_=sa.Text(),
         existing_nullable=False,
     )
-    op.add_column("df_engine_api_keys", sa.Column("deleted_at", sa.DateTime(), nullable=True))
-    op.alter_column(
-        "df_engine_api_keys",
-        "limit",
-        new_column_name="limit_usage",
-        existing_type=DECIMAL(10, 2),
-        existing_nullable=True,
-    )
+
+    if not _has_col("deleted_at"):
+        op.add_column("df_engine_api_keys", sa.Column("deleted_at", sa.DateTime(), nullable=True))
+
+    if _has_col("limit"):
+        op.alter_column(
+            "df_engine_api_keys",
+            "limit",
+            new_column_name="limit_usage",
+            existing_type=DECIMAL(10, 2),
+            existing_nullable=True,
+        )
+
+    # employee_id went nullable in upgrade(); rows created since (incl. test-factory
+    # rows) may hold NULL. Drop them before restoring NOT NULL.
+    op.execute("DELETE FROM df_engine_api_keys WHERE employee_id IS NULL")
     op.alter_column(
         "df_engine_api_keys",
         "employee_id",
         existing_type=BIGINT(unsigned=True),
         nullable=False,
     )
-    op.add_column(
-        "df_engine_api_keys",
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
-    )
-    op.drop_column("df_engine_api_keys", "is_main")
-    op.drop_column("df_engine_api_keys", "employee_name")
-    op.drop_column("df_engine_api_keys", "hash")
+
+    if not _has_col("is_active"):
+        op.add_column(
+            "df_engine_api_keys",
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        )
+    for col in ("is_main", "employee_name", "hash"):
+        if _has_col(col):
+            op.drop_column("df_engine_api_keys", col)

@@ -20,7 +20,7 @@ from middlewares.lang.id.equipment import EquipmentMessage as _IdEquipment
 from middlewares.lang.id.feature_management import (
     FeatureManagementMessage as _IdFeatureManagement,
 )
-from middlewares.lang.id.key_management import ApiKeyManagementMessage as _IdKeyManagement
+from middlewares.lang.id.api_key_management import ApiKeyManagementMessage as _IdKeyManagement
 from middlewares.lang.id.menu_management import (
     MenuManagementMessage as _IdMenuManagement,
 )

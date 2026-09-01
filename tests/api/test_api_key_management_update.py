@@ -1,304 +1,264 @@
-# import pytest
-# from datetime import datetime
-# from uuid import uuid4
-# from sqlalchemy import select
-# from middlewares.lang import resolve_message
-# from services.mysql.model import DfEngineApiKeys, DfEngineOpenrouterLogs, Employees
-# from utils.formatter import format_datetime
-# from tests.helpers import create_record, expected_user, find_by_name
+import pytest
+from datetime import timedelta
+from uuid import uuid4
+from sqlalchemy import select
+from middlewares.lang import resolve_message
+from services.mysql.model import DfEngineOpenrouterLogs, Employees
+from services.mysql.factory import DfEngineApiKeysFactory
+from utils import local_time
+from tests.helpers import expected_user, find_by_name
 
-# URL = "/api/key-management"
+URL = "/api/key-management"
 
-# pytestmark = pytest.mark.usefixtures("mock_openrouter")
-
-
-# async def _employee(db_session, employee_uid):
-#     return (await db_session.execute(select(Employees).where(Employees.uid == employee_uid))).scalar_one()
+pytestmark = pytest.mark.usefixtures("mock_openrouter")
 
 
-# async def _fabricate_key(db_session, user_id, employee_id, **overrides):
-#     """Insert a row directly, bypassing OpenRouter — only valid when the update under test
-#     won't change limit/limit_reset (so the endpoint never actually calls OpenRouter) or
-#     fails before reaching that check."""
-#     data = dict(
-#         uid=str(uuid4()),
-#         name=f"Key {uuid4().hex[:8]}",
-#         key=f"sk-or-v1-{uuid4().hex[:16]}",
-#         hash=uuid4().hex,
-#         employee_id=employee_id,
-#         created_by=int(user_id),
-#         is_main=False,
-#         limit=None,
-#         limit_reset=None,
-#     )
-#     data.update(overrides)
-#     return await create_record(db_session, DfEngineApiKeys, data)
+async def _employee(db_session, employee_uid):
+    return (await db_session.execute(select(Employees).where(Employees.uid == employee_uid))).scalar_one()
 
 
-# async def _create_key_via_api(authed_client, employee_uid, **overrides) -> dict:
-#     payload = {"name": f"Key {uuid4().hex[:8]}", "employee_uid": employee_uid, "is_main": False}
-#     payload.update(overrides)
-#     resp = await authed_client.call("POST", URL, json=payload)
-#     return find_by_name(resp.json()["data"], payload["name"])
+def _key(employee_id, user_id, **overrides):
+    return DfEngineApiKeysFactory.create(
+        name=f"Key {uuid4().hex[:8]}", employee_id=employee_id, created_by=int(user_id), **overrides
+    )
 
 
-# @pytest.mark.asyncio
-# async def test_update_full_replace(authed_client, db_session, user_id, active_employee_uid):
-#     """200 OK; PATCH replaces name/description and sets updater to the current user."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     row = await _fabricate_key(db_session, user_id, employee.id)
-#     updater = await expected_user(db_session, user_id)
-#     new_name = f"Updated {uuid4().hex[:8]}"
-
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={
-#             "name": new_name,
-#             "employee_uid": active_employee_uid,
-#             "description": "updated desc",
-#             "is_main": False,
-#         },
-#     )
-#     assert resp.status_code == 200
-#     item = find_by_name(resp.json()["data"], new_name)
-#     assert item["description"] == "updated desc"
-#     assert item["updater"] == updater
+async def _patch_logs(db_session, name: str) -> list:
+    await db_session.rollback()
+    logs = (
+        (
+            await db_session.execute(
+                select(DfEngineOpenrouterLogs).order_by(DfEngineOpenrouterLogs.created_at.desc()).limit(20)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        log for log in logs if log.method == "PATCH" and log.request_payload and log.request_payload.get("name") == name
+    ]
 
 
-# @pytest.mark.asyncio
-# async def test_update_does_not_accept_or_change_expired_at(authed_client, db_session, user_id, active_employee_uid):
-#     """200 OK; `expires_at` isn't a field on the update payload — OpenRouter's update
-#     endpoint has no way to change a key's expiry, so it's fixed at creation. Sending it
-#     anyway is silently ignored (unknown field), and the stored value is untouched."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     original_expiry = datetime(2027, 12, 31, 23, 59, 59)
-#     row = await _fabricate_key(db_session, user_id, employee.id, expired_at=original_expiry)
+@pytest.mark.asyncio
+async def test_update_replaces_name_description_and_sets_updater(
+    authed_client, db_session, user_id, active_employee_uid
+):
+    """200 OK; PATCH replaces name/description and stamps updater with the current user."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id)
+    updater = await expected_user(db_session, user_id)
+    new_name = f"Updated {uuid4().hex[:8]}"
 
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={
-#             "name": row.name,
-#             "employee_uid": active_employee_uid,
-#             "is_main": False,
-#             "expires_at": "2030-01-01T00:00:00Z",
-#         },
-#     )
-#     assert resp.status_code == 200
-#     item = find_by_name(resp.json()["data"], row.name)
-#     assert item["expired_at"] == format_datetime(original_expiry)
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": new_name, "employee_uid": active_employee_uid, "description": "updated desc", "is_main": False},
+    )
+    assert resp.status_code == 200
+    item = find_by_name(resp.json()["data"], new_name)
+    assert item["description"] == "updated desc"
+    assert item["updater"] == updater
 
 
-# @pytest.mark.asyncio
-# async def test_update_rename_only_does_not_call_openrouter(authed_client, db_session, user_id, active_employee_uid):
-#     """200 OK; renaming without touching limit/limit_reset never calls OpenRouter — no new
-#     DfEngineOpenrouterLogs row is written."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     row = await _fabricate_key(db_session, user_id, employee.id)
-#     new_name = f"{row.name}-renamed"
+@pytest.mark.asyncio
+async def test_update_description_only_does_not_call_openrouter(
+    authed_client, db_session, user_id, active_employee_uid
+):
+    """200 OK; changing only description/main-flag stays local — no PATCH /keys log row."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id)
 
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={"name": new_name, "employee_uid": active_employee_uid, "is_main": False},
-#     )
-#     assert resp.status_code == 200
-
-#     await db_session.rollback()
-#     logs = (
-#         (
-#             await db_session.execute(
-#                 select(DfEngineOpenrouterLogs).order_by(DfEngineOpenrouterLogs.created_at.desc()).limit(20)
-#             )
-#         )
-#         .scalars()
-#         .all()
-#     )
-#     assert not any(log.request_payload and log.request_payload.get("name") == new_name for log in logs)
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": row.name, "employee_uid": active_employee_uid, "description": "revised", "is_main": False},
+    )
+    assert resp.status_code == 200
+    assert await _patch_logs(db_session, row.name) == []
 
 
-# @pytest.mark.asyncio
-# async def test_update_changing_limit_calls_openrouter(authed_client, db_session, active_employee_uid):
-#     """200 OK; changing `limit`/`limit_reset` calls OpenRouter's PATCH /keys/{hash} and
-#     writes a matching log row for it. Uses a key created through the real API so it
-#     carries a genuine OpenRouter hash."""
-#     created = await _create_key_via_api(authed_client, active_employee_uid)
+@pytest.mark.asyncio
+async def test_update_rename_calls_openrouter(authed_client, db_session, user_id, active_employee_uid):
+    """200 OK; a rename is synced to OpenRouter (the key's name lives there too) and logged."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id)
+    new_name = f"{row.name}-renamed"
 
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{created['uid']}",
-#         json={
-#             "name": created["name"],
-#             "employee_uid": active_employee_uid,
-#             "is_main": False,
-#             "limit": 42.0,
-#             "limit_reset": "daily",
-#         },
-#     )
-#     assert resp.status_code == 200
-#     item = find_by_name(resp.json()["data"], created["name"])
-#     assert item["limit"] == 42.0
-#     assert item["limit_reset"] == "daily"
-
-#     await db_session.rollback()
-#     logs = (
-#         (
-#             await db_session.execute(
-#                 select(DfEngineOpenrouterLogs).order_by(DfEngineOpenrouterLogs.created_at.desc()).limit(20)
-#             )
-#         )
-#         .scalars()
-#         .all()
-#     )
-#     assert any(
-#         log.method == "PATCH" and log.request_payload and log.request_payload.get("name") == created["name"]
-#         for log in logs
-#     )
+    resp = await authed_client.call(
+        "PATCH", f"{URL}/{row.uid}", json={"name": new_name, "employee_uid": active_employee_uid, "is_main": False}
+    )
+    assert resp.status_code == 200
+    assert len(await _patch_logs(db_session, new_name)) == 1
 
 
-# @pytest.mark.asyncio
-# async def test_update_resaving_own_main_key_succeeds(authed_client, db_session, user_id, active_employee_uid):
-#     """200 OK; re-saving a key that is *already* main for its employee with is_main=true
-#     doesn't false-positive against itself (the exclude-self fix)."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     row = await _fabricate_key(db_session, user_id, employee.id, is_main=True)
+@pytest.mark.asyncio
+async def test_update_changing_limit_calls_openrouter(authed_client, db_session, user_id, active_employee_uid):
+    """200 OK; changing limit/limit_reset syncs to OpenRouter and writes a PATCH log row."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id)
 
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={"name": row.name, "employee_uid": active_employee_uid, "is_main": True},
-#     )
-#     assert resp.status_code == 200
-
-
-# @pytest.mark.asyncio
-# async def test_update_second_main_key_for_employee_is_422(authed_client, db_session, user_id, active_employee_uid):
-#     """422 employee_already_has_main_api_key when setting is_main=true on a *different* key
-#     while another key already holds main for that employee."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     await _fabricate_key(db_session, user_id, employee.id, is_main=True)
-#     other = await _fabricate_key(db_session, user_id, employee.id, is_main=False)
-
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{other.uid}",
-#         json={"name": other.name, "employee_uid": active_employee_uid, "is_main": True},
-#         raise_for_status=False,
-#     )
-#     assert resp.status_code == 422
-#     assert resp.json()["message"] == resolve_message("employee_already_has_main_api_key", "en")
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={
+            "name": row.name,
+            "employee_uid": active_employee_uid,
+            "is_main": False,
+            "limit": 42.0,
+            "limit_reset": "daily",
+        },
+    )
+    assert resp.status_code == 200
+    item = find_by_name(resp.json()["data"], row.name)
+    assert item["limit"] == 42.0
+    assert item["limit_reset"] == "daily"
+    assert len(await _patch_logs(db_session, row.name)) == 1
 
 
-# @pytest.mark.asyncio
-# async def test_update_reassigning_to_resigned_employee_is_422(
-#     authed_client, db_session, user_id, active_employee_uid, resigned_employee_uid
-# ):
-#     """422 employee_already_resigned when reassigning the PIC to a resigned employee."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     row = await _fabricate_key(db_session, user_id, employee.id)
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={"name": row.name, "employee_uid": resigned_employee_uid, "is_main": False},
-#         raise_for_status=False,
-#     )
-#     assert resp.status_code == 422
-#     assert resp.json()["message"] == resolve_message("employee_already_resigned", "en")
+@pytest.mark.asyncio
+async def test_update_resaving_own_main_key_succeeds(authed_client, db_session, user_id, active_employee_uid):
+    """200 OK; re-saving a key that is *already* main with is_main=true doesn't false-positive
+    against itself (exclude-self on the single-main check)."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id, is_main=True)
+    resp = await authed_client.call(
+        "PATCH", f"{URL}/{row.uid}", json={"name": row.name, "employee_uid": active_employee_uid, "is_main": True}
+    )
+    assert resp.status_code == 200
 
 
-# @pytest.mark.asyncio
-# async def test_update_reassigning_to_wrong_position_employee_is_422(
-#     authed_client, db_session, user_id, active_employee_uid, wrong_position_employee_uid
-# ):
-#     """422 employee_position_not_allowed when reassigning the PIC to a non-PM/APM employee."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     row = await _fabricate_key(db_session, user_id, employee.id)
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={"name": row.name, "employee_uid": wrong_position_employee_uid, "is_main": False},
-#         raise_for_status=False,
-#     )
-#     assert resp.status_code == 422
-#     assert resp.json()["message"] == resolve_message("employee_position_not_allowed", "en")
+@pytest.mark.asyncio
+async def test_update_promoting_to_main_when_another_exists_is_409(
+    authed_client, db_session, user_id, active_employee_uid
+):
+    """409 employee_already_has_main_api_key when setting is_main=true on one key while
+    another key already holds main for that PIC."""
+    employee = await _employee(db_session, active_employee_uid)
+    _key(employee.id, user_id, is_main=True)
+    other = _key(employee.id, user_id, is_main=False)
+
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{other.uid}",
+        json={"name": other.name, "employee_uid": active_employee_uid, "is_main": True},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 409
+    assert resp.json()["message"] == resolve_message("employee_already_has_main_api_key", "en")
 
 
-# @pytest.mark.asyncio
-# async def test_update_renaming_to_its_own_current_name_succeeds(
-#     authed_client, db_session, user_id, active_employee_uid
-# ):
-#     """200 OK; renaming a key to its own current name doesn't trip the uniqueness conflict."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     row = await _fabricate_key(db_session, user_id, employee.id)
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False, "description": "revised"},
-#     )
-#     assert resp.status_code == 200
-#     item = find_by_name(resp.json()["data"], row.name)
-#     assert item["description"] == "revised"
+@pytest.mark.asyncio
+async def test_update_rename_into_a_sibling_keys_name_is_409(authed_client, db_session, user_id, active_employee_uid):
+    """409 api_key_already_exists; key names are unique per PIC (app-level check)."""
+    employee = await _employee(db_session, active_employee_uid)
+    target = _key(employee.id, user_id)
+    other = _key(employee.id, user_id)
+
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{other.uid}",
+        json={"name": target.name, "employee_uid": active_employee_uid, "is_main": False},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 409
+    assert resp.json()["message"] == resolve_message("api_key_already_exists", "en")
 
 
-# @pytest.mark.asyncio
-# async def test_update_unknown_uid_is_404(authed_client, active_employee_uid):
-#     """404 api_key_not_found when the path uid matches no key."""
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{uuid4()}",
-#         json={"name": "x", "employee_uid": active_employee_uid, "is_main": False},
-#         raise_for_status=False,
-#     )
-#     assert resp.status_code == 404
-#     assert resp.json()["message"] == resolve_message("api_key_not_found", "en")
+@pytest.mark.asyncio
+async def test_update_renaming_to_its_own_current_name_succeeds(
+    authed_client, db_session, user_id, active_employee_uid
+):
+    """200 OK; renaming a key to its own current name doesn't trip the uniqueness check."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id)
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False, "description": "revised"},
+    )
+    assert resp.status_code == 200
+    assert find_by_name(resp.json()["data"], row.name)["description"] == "revised"
 
 
-# @pytest.mark.asyncio
-# async def test_update_renaming_into_another_keys_name_is_allowed(
-#     authed_client, db_session, user_id, active_employee_uid
-# ):
-#     """200 OK; `name` has no uniqueness constraint on df_engine_api_keys — renaming a key
-#     to a name another key already has succeeds rather than 409ing."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     target = await _fabricate_key(db_session, user_id, employee.id)
-#     other = await _fabricate_key(db_session, user_id, employee.id)
-#     target_name = target.name
-
-#     resp = await authed_client.call(
-#         "PATCH",
-#         f"{URL}/{other.uid}",
-#         json={"name": target_name, "employee_uid": active_employee_uid, "is_main": False},
-#     )
-#     assert resp.status_code == 200
-#     matches = [item for item in resp.json()["data"] if item["name"] == target_name]
-#     assert len(matches) == 2
+@pytest.mark.asyncio
+async def test_update_expired_key_is_422(authed_client, db_session, user_id, active_employee_uid):
+    """422 api_key_expired; an expired key can only be deleted."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id, expires_at=local_time() - timedelta(days=1))
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message("api_key_expired", "en")
 
 
-# @pytest.mark.asyncio
-# @pytest.mark.parametrize(
-#     "overrides",
-#     [{"name": ""}, {"name": "x" * 256}, {"limit": -1}],
-#     ids=["empty_name", "oversized_name", "negative_limit"],
-# )
-# async def test_update_validation_errors(authed_client, active_employee_uid, overrides):
-#     """422 for each individually invalid field — rejected by payload validation before the
-#     row is even looked up, so an unknown uid is fine here."""
-#     payload = {"name": "valid name", "employee_uid": active_employee_uid, "is_main": False}
-#     payload.update(overrides)
-#     resp = await authed_client.call("PATCH", f"{URL}/{uuid4()}", json=payload, raise_for_status=False)
-#     assert resp.status_code == 422
+@pytest.mark.asyncio
+async def test_update_key_with_detached_pic_is_422(authed_client, db_session, user_id, active_employee_uid):
+    """422 api_key_employee_deleted when the key's PIC is no longer set."""
+    row = _key(None, user_id)
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message("api_key_employee_deleted", "en")
 
 
-# @pytest.mark.asyncio
-# async def test_requires_auth(client, db_session, user_id, active_employee_uid):
-#     """401 when the request carries no bearer token."""
-#     employee = await _employee(db_session, active_employee_uid)
-#     row = await _fabricate_key(db_session, user_id, employee.id)
-#     resp = await client.call(
-#         "PATCH",
-#         f"{URL}/{row.uid}",
-#         json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False},
-#         raise_for_status=False,
-#     )
-#     assert resp.status_code == 401
+@pytest.mark.asyncio
+async def test_update_unknown_uid_is_404(authed_client, active_employee_uid):
+    """404 api_key_not_found when the path uid matches no key."""
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{uuid4()}",
+        json={"name": "x", "employee_uid": active_employee_uid, "is_main": False},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 404
+    assert resp.json()["message"] == resolve_message("api_key_not_found", "en")
+
+
+@pytest.mark.asyncio
+async def test_update_row_without_hash_is_404(authed_client, db_session, user_id, active_employee_uid):
+    """404; a key with no OpenRouter hash on record is invisible to the endpoint."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id, hash=None)
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [{"name": ""}, {"name": "x" * 256}, {"limit": -1}],
+    ids=["empty_name", "oversized_name", "negative_limit"],
+)
+async def test_update_validation_errors(authed_client, active_employee_uid, overrides):
+    """422 for each individually invalid field — payload validation runs before the lookup."""
+    payload = {"name": "valid name", "employee_uid": active_employee_uid, "is_main": False}
+    payload.update(overrides)
+    resp = await authed_client.call("PATCH", f"{URL}/{uuid4()}", json=payload, raise_for_status=False)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_requires_auth(client, db_session, user_id, active_employee_uid):
+    """401 when the request carries no bearer token."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id)
+    resp = await client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 401

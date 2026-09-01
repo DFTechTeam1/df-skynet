@@ -1,4 +1,5 @@
 import base64
+from uuid import uuid4
 import traceback
 from typing import Optional
 from fastapi import Depends, Request
@@ -111,15 +112,15 @@ async def get_user(
                 "iss": JWT_ISSUER,
                 "aud": JWT_AUDIENCE,
                 "sub": "42",
-                "jti": "6a5dace7-deeb-4b92-bd07-9f17fa3bfbe2",
+                "jti": str(uuid4()),
                 "iat": current_timestamp,
                 "exp": new_timestamp,
                 "roles": ["root"],
                 "permissions": [],
             }
         # except JWTError as e:
-        # logging.warning(f"auth: token rejected on {route} from {client_ip}: {e}")
-        # raise AuthenticationError()
+        #     logging.warning(f"auth: token rejected on {route} from {client_ip}: {e}")
+        #     raise AuthenticationError()
         user_id = claims.get("sub")
         if not user_id:
             logging.warning(f"auth: valid token with no 'sub' claim on {route} from {client_ip}")

@@ -1,4 +1,5 @@
 from uuid import uuid4
+from secrets import token_hex
 from factory.declarations import LazyFunction, Sequence
 from factory.faker import Faker
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
@@ -21,8 +22,8 @@ class DfEngineApiKeysFactory(SQLAlchemyModelFactory):
     limit = None
     limit_reset = None
     uid = LazyFunction(lambda: str(uuid4()))
-    key = LazyFunction(lambda: f"sk-{uuid4().hex}")
-    hash = None
+    key = LazyFunction(lambda: f"sk-or-v1-{token_hex(32)}")
+    hash = LazyFunction(lambda: token_hex(32))
     name = Sequence(lambda n: f"API Key {n}")
     description = Faker("sentence")
     employee_id = None
