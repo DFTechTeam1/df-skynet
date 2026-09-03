@@ -12,7 +12,6 @@ def _base_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "admin_view": {"see_all_asset": True},
         "limit": {"generate_per_min": 0, "enhance_per_min": 0},
-        "spend_ceiling": {"daily_ceiling_global_user": 0, "daily_ceiling_per_user": 0},
         "storyboard": {"max_storyboard_char": 4000, "max_scene_per_storyboard": 100, "max_shot_per_scene": 100},
         "compose_input": {"max_prompt_char": 4000},
         "chat_assistant": {"max_previous_conversation": 0},
@@ -129,6 +128,114 @@ async def test_post_omitted_group_falls_back_to_its_default(authed_client, db_se
     resp = await authed_client.call("POST", URL, json=payload, raise_for_status=False)
     assert resp.status_code == 200
     assert resp.json()["data"]["admin_view"] == {"see_all_asset": True}
+
+
+@pytest.mark.asyncio
+async def test_post_without_override_leaves_it_null_in_the_response(authed_client, db_session):
+    """200 OK; project_limit_override is optional — omitting it echoes null."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("POST", URL, json=_base_payload())
+    assert resp.status_code == 200
+    assert resp.json()["data"]["project_limit_override"] is None
+
+
+@pytest.mark.asyncio
+async def test_post_with_override_upserts_and_echoes_it_without_project_uid(authed_client, db_session, project_uid):
+    """200 OK; sending {project_uid, limit} upserts that project's cap; the echo drops project_uid."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call(
+        "POST", URL, json=_base_payload(project_limit_override={"project_uid": project_uid, "limit": 4})
+    )
+    assert resp.status_code == 200
+    override = resp.json()["data"]["project_limit_override"]
+    assert override["limit"] == 4
+    assert set(override) == {"project_name", "limit"}
+
+    fetched = await authed_client.call("GET", URL, params={"project_uid": project_uid})
+    assert fetched.json()["data"]["project_limit_override"]["limit"] == 4
+
+
+@pytest.mark.asyncio
+async def test_post_rejects_unknown_project_uid_in_override(authed_client, db_session):
+    """404 project_not_found when project_limit_override.project_uid matches no project."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call(
+        "POST",
+        URL,
+        json=_base_payload(project_limit_override={"project_uid": str(uuid4()), "limit": 1}),
+        raise_for_status=False,
+    )
+    assert resp.status_code == 404
+    assert resp.json()["message"] == resolve_message("project_not_found", "en")
+
+
+@pytest.mark.asyncio
+async def test_post_rejects_unknown_project_class_id(authed_client, db_session, project_class_id):
+    """404 project_class_not_found; the offending payload path is named in `error`."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call(
+        "POST",
+        URL,
+        json=_base_payload(
+            project_class_limits=[
+                {"project_class_id": project_class_id, "limit": 3},
+                {"project_class_id": 999999999, "limit": 5},
+            ]
+        ),
+        raise_for_status=False,
+    )
+    assert resp.status_code == 404
+    assert resp.json()["message"] == resolve_message("project_class_not_found", "en")
+    assert resp.json()["error"] == {
+        "project_class_limits.1.project_class_id": [resolve_message("project_class_not_found", "en")]
+    }
+
+
+@pytest.mark.asyncio
+async def test_post_dedupes_project_class_limits_keeping_the_last(authed_client, db_session, project_class_id):
+    """200 OK; a repeated project_class_id is collapsed to its last value."""
+    await clear_setting_state(db_session)
+
+    await authed_client.call(
+        "POST",
+        URL,
+        json=_base_payload(
+            project_class_limits=[
+                {"project_class_id": project_class_id, "limit": 10},
+                {"project_class_id": project_class_id, "limit": 2},
+            ]
+        ),
+    )
+    body = (await authed_client.call("GET", URL)).json()["data"]
+    limits = [row["limit"] for row in body["project_class_limits"]]
+    assert 10 not in limits and 2 in limits
+
+
+@pytest.mark.asyncio
+async def test_post_rejects_empty_project_class_limits(authed_client, db_session):
+    """422; when project_class_limits is sent it must carry at least one entry."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("POST", URL, json=_base_payload(project_class_limits=[]), raise_for_status=False)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_fills_unspecified_project_classes_with_zero(authed_client, db_session, project_class_id):
+    """200 OK; only the listed class carries its limit — every other current class comes back at 0."""
+    await clear_setting_state(db_session)
+
+    await authed_client.call(
+        "POST", URL, json=_base_payload(project_class_limits=[{"project_class_id": project_class_id, "limit": 8}])
+    )
+    body = (await authed_client.call("GET", URL)).json()["data"]
+    limits = {row["project_class_name"]: row["limit"] for row in body["project_class_limits"]}
+    assert 8 in limits.values()
+    assert sum(1 for v in limits.values() if v == 0) == len(limits) - 1
 
 
 @pytest.mark.asyncio

@@ -74,7 +74,10 @@ def _serialize(data: Any, seen: set[int]) -> Any:
 
         return result
 
-    if isinstance(data, (Row, RowMapping, Mapping)):
+    if isinstance(data, Row):
+        data = data._mapping
+
+    if isinstance(data, (RowMapping, Mapping)):
         return {k: _serialize(v, seen) for k, v in dict(data).items()}
 
     if isinstance(data, (list, tuple, Sequence)) and not isinstance(data, (str, bytes)):

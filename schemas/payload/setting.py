@@ -1,6 +1,6 @@
 from uuid import UUID
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatAssistant(BaseModel):
@@ -45,21 +45,6 @@ class UserRateLimit(BaseModel):
     )
 
 
-class UserSpendCeiling(BaseModel):
-    """Credit-spend caps, workspace-wide and per user."""
-
-    daily_ceiling_global_user: int = Field(
-        default=0,
-        ge=0,
-        description="Daily credit spend across all users combined before generation pauses workspace-wide. 0 means no cap.",
-    )
-    daily_ceiling_per_user: int = Field(
-        default=0,
-        ge=0,
-        description="Daily credit spend a single user can make before they're blocked from further generation. 0 means no cap.",
-    )
-
-
 class UserComposeInput(BaseModel):
     """Limits on the free-text prompt a user types when composing a generation."""
 
@@ -91,14 +76,53 @@ class UserStoryboard(BaseModel):
     )
 
 
+class ProjectLimitOverride(BaseModel):
+    """A per-project override of the generation cap."""
+
+    project_uid: UUID = Field(
+        ...,
+        description="UID of the project this override applies to.",
+        examples=["c6f66cb0-9c62-46f4-9228-1604e26c09d9"],
+    )
+    limit: int = Field(
+        default=0,
+        ge=0,
+        description="Generation cap for this project. 0 means unlimited.",
+        examples=[0],
+    )
+
+
+class ProjectClassLimit(BaseModel):
+    """A generation cap for one project class. Classes not listed default to 0."""
+
+    project_class_id: int = Field(..., description="ID of the project class this limit applies to.", examples=[1])
+    limit: int = Field(
+        default=0,
+        ge=0,
+        description="Generation cap for this project class. 0 means no class-specific limit.",
+        examples=[0],
+    )
+
+
 class AdminSettingPayload(BaseModel):
-    """Full DF Engine admin settings — every field must be supplied on save (not
-    a partial diff), though each has a sensible default so the settings page can
-    always submit a complete, valid payload."""
+    """Full DF Engine admin settings — every field except `project_limit_override`
+    must be supplied on save (not a partial diff), though each has a sensible
+    default so the settings page can always submit a complete, valid payload."""
 
     admin_view: AdminView = Field(default_factory=AdminView)
     limit: UserRateLimit = Field(default_factory=UserRateLimit)
-    spend_ceiling: UserSpendCeiling = Field(default_factory=UserSpendCeiling)
+    project_limit_override: Optional[ProjectLimitOverride] = Field(
+        default=None,
+        description=(
+            "Set one project's generation cap. Omit (or null) to leave every existing per-project override untouched."
+        ),
+    )
+    project_class_limits: list[ProjectClassLimit] = Field(
+        default_factory=list,
+        min_length=1,
+        description="Per-class generation caps. When provided, at least one entry; duplicate project_class_id keeps the last.",
+        examples=[[{"project_class_id": 1, "limit": 0}]],
+    )
     storyboard: UserStoryboard = Field(default_factory=UserStoryboard)
     compose_input: UserComposeInput = Field(default_factory=UserComposeInput)
     chat_assistant: ChatAssistant = Field(default_factory=ChatAssistant)
@@ -112,3 +136,12 @@ class AdminSettingPayload(BaseModel):
         description="UID of the enabled text model to use as the assistant. Leave blank/null to use the engine's default.",
         examples=[None],
     )
+
+    @field_validator("project_class_limits")
+    @classmethod
+    def _dedupe_project_class_limits(cls, value: list[ProjectClassLimit]) -> list[ProjectClassLimit]:
+        """Collapse repeated project_class_id, keeping the last value given."""
+        deduped: dict[int, ProjectClassLimit] = {}
+        for item in value:
+            deduped[item.project_class_id] = item
+        return list(deduped.values())

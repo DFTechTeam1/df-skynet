@@ -315,7 +315,7 @@ class ModelManagementController(CoreDependencies):
                                         user_agent=request.headers.get("User-Agent"),
                                     )
                                 )
-                                await delete_pattern(self.redis, cache_key.setting_detail("admin_setting"))
+                                await delete_pattern(self.redis, cache_key.setting_detail_pattern())
                                 await delete_pattern(self.redis, cache_key.setting_pagination_pattern())
                                 logging.info(
                                     f"user={self.user['user_id']} sync nulled engine setting refs "
