@@ -13,7 +13,6 @@ def _base_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "admin_view": {"see_all_asset": True},
         "limit": {"generate_per_min": 0, "enhance_per_min": 0},
-        "spend_ceiling": {"daily_ceiling_global_user": 0, "daily_ceiling_per_user": 0},
         "storyboard": {"max_storyboard_char": 4000, "max_scene_per_storyboard": 100, "max_shot_per_scene": 100},
         "compose_input": {"max_prompt_char": 4000},
         "chat_assistant": {"max_previous_conversation": 0},
@@ -66,6 +65,7 @@ async def test_changed_save_adds_a_log_entry_with_the_diff(authed_client, db_ses
     assert entry["incoming_data"]["admin_view"] == {"see_all_asset": False}
     assert entry["previous_data"]["admin_view"] == {"see_all_asset": True}
     assert entry["creator"] is not None
+    assert entry["changed_fields"] == ["admin_view"]
 
 
 @pytest.mark.asyncio

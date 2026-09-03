@@ -9,7 +9,7 @@ from uuid import uuid4
 from apps.secret import DB_ASYNC_URL, ERP_EMAIL, ERP_PASSWORD, LOGIN_URL
 from services.api_caller import APICaller
 from services.mysql import make_session
-from services.mysql.model import Employees, PositionBackups
+from services.mysql.model import Employees, PositionBackups, ProjectClasses, Projects
 
 EMPLOYEE_STATUS_RESIGNED = 6
 ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager"]
@@ -201,6 +201,23 @@ async def wrong_position_employee_uid(db_session) -> str:
 
     row = await _create_employee(db_session, status=1, position_id=position.id)
     return row.uid
+
+
+@pytest_asyncio.fixture
+async def project_uid(db_session) -> str:
+    """uid of an arbitrary existing project — the setting endpoints validate the
+    `project_limit_override` target against `projects.uid`."""
+    row = (await db_session.execute(select(Projects).limit(1))).scalars().first()
+    assert row is not None, "staging DB has no project row to fixture against"
+    return row.uid
+
+
+@pytest_asyncio.fixture
+async def project_class_id(db_session) -> int:
+    """id of an arbitrary existing project class — for the per-class limits payload."""
+    row = (await db_session.execute(select(ProjectClasses).limit(1))).scalars().first()
+    assert row is not None, "staging DB has no project_classes row to fixture against"
+    return row.id
 
 
 class _FakeOpenRouterResponse:

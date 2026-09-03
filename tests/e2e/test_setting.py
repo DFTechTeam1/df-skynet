@@ -18,7 +18,6 @@ def _base_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "admin_view": {"see_all_asset": True},
         "limit": {"generate_per_min": 0, "enhance_per_min": 0},
-        "spend_ceiling": {"daily_ceiling_global_user": 0, "daily_ceiling_per_user": 0},
         "storyboard": {"max_storyboard_char": 4000, "max_scene_per_storyboard": 100, "max_shot_per_scene": 100},
         "compose_input": {"max_prompt_char": 4000},
         "chat_assistant": {"max_previous_conversation": 0},
@@ -30,7 +29,7 @@ def _base_payload(**overrides: Any) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_sync):
+async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_sync, project_uid):
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
 
@@ -68,6 +67,24 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     assert newest["previous_data"]["limit"] == {"generate_per_min": 0, "enhance_per_min": 0}
     assert newest["incoming_data"]["enhancer_model"] == model.name
 
+    # 4b. a per-project override is upserted — GET scoped to that project returns it
+    #     as {project_name, limit} (project_uid is internal, never echoed).
+    await authed_client.call(
+        "POST",
+        SETTING_URL,
+        json=_base_payload(
+            enhancer_model=model.uid,
+            limit={"generate_per_min": 5, "enhance_per_min": 5},
+            project_limit_override={"project_uid": project_uid, "limit": 3},
+        ),
+    )
+    scoped = await authed_client.call("GET", SETTING_URL, params={"project_uid": project_uid})
+    override = scoped.json()["data"]["project_limit_override"]
+    assert override["limit"] == 3
+    assert set(override) == {"project_name", "limit"}
+    # the override change is itself audited
+    assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 2
+
     # 5. sync drops the model from OpenRouter — it's a main model still referenced
     #    by the enhancer setting, so sync flags it unavailable AND nulls the setting.
     rows = await available_model_rows(db_session, "text")
@@ -81,9 +98,9 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     after_sync = await authed_client.call("GET", SETTING_URL)
     assert after_sync.json()["data"]["enhancer_model"] is None
 
-    # 6. the sync cascade is an audited change — a second log entry now exists
+    # 6. the sync cascade is an audited change — another log entry now exists
     logs_after_sync = await authed_client.call("GET", LOGS_URL)
-    assert logs_after_sync.json()["data"]["totalData"] == 2
+    assert logs_after_sync.json()["data"]["totalData"] == 3
 
     # 7. the now-unavailable model can no longer be picked again
     rejected = await authed_client.call(

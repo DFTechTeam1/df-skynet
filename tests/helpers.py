@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
 from services.redis import CacheKeys
 
-SETTING_DETAIL_CACHE_KEY = CacheKeys().setting_detail("admin_setting")
+SETTING_DETAIL_CACHE_KEY = CacheKeys().setting_detail()
 SETTING_LOGS_CACHE_PATTERN = "setting:logs:*"
 from services.mysql.model import (
     DfEngineModelOptions,
