@@ -10,6 +10,7 @@ from services.mysql.model.df_engine_menus import DfEngineMenus
 from services.mysql.model.df_engine_model_options import DfEngineModelOptions
 from services.mysql.model.df_engine_openrouter_logs import DfEngineOpenrouterLogs
 from services.mysql.model.df_engine_preferences import DfEnginePreferences
+from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
 from services.mysql.model.df_engine_prompt_templates import DfEnginePromptTemplates
 from services.mysql.model.df_engine_setting_logs import DfEngineSettingLogs
 from services.mysql.model.df_engine_settings import DfEngineSettings
@@ -38,6 +39,7 @@ __all__ = [
     "DfEngineModelOptions",
     "DfEngineOpenrouterLogs",
     "DfEnginePreferences",
+    "DfEngineProjectSettings",
     "DfEnginePromptTemplates",
     "DfEngineSettingLogs",
     "DfEngineSettings",

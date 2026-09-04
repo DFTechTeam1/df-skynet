@@ -63,8 +63,7 @@ async def _clear_all_redis_caches():
         "prompt_template:detail:*",
         "model_option:*",
         "api_key_management:*",
-        "setting:detail:*",
-        "setting:logs:*",
+        "setting:*",
         "user_preference:*",
     ):
         await delete_pattern(redis, pattern)
@@ -218,6 +217,48 @@ async def project_class_id(db_session) -> int:
     row = (await db_session.execute(select(ProjectClasses).limit(1))).scalars().first()
     assert row is not None, "staging DB has no project_classes row to fixture against"
     return row.id
+
+
+@pytest_asyncio.fixture
+async def project_with_class(db_session) -> tuple[str, int, str]:
+    """`(uid, project_class_id, classification)` of an existing project that has a
+    project class assigned — the project-setting fallback path needs one."""
+    row = (
+        (
+            await db_session.execute(
+                select(Projects).where(Projects.project_class_id.isnot(None)).limit(1)  # type: ignore
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no project with a project_class_id to fixture against"
+    return row.uid, row.project_class_id, row.classification
+
+
+@pytest_asyncio.fixture
+async def project_without_class(db_session):
+    """uid of a project temporarily stripped of its project class, restored on teardown."""
+    row = (
+        (
+            await db_session.execute(
+                select(Projects).where(Projects.project_class_id.isnot(None)).limit(1)  # type: ignore
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no project to fixture against"
+    original = row.project_class_id
+    row.project_class_id = None
+    db_session.add(row)
+    await db_session.commit()
+    try:
+        yield row.uid
+    finally:
+        row.project_class_id = original
+        db_session.add(row)
+        await db_session.commit()
 
 
 class _FakeOpenRouterResponse:

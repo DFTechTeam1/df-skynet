@@ -146,6 +146,22 @@ Enum language_types {
     english
 }
 
+Table df_engine_project_settings {
+    id integer [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    project_id integer [not null]
+    token_usage_limit integer [not null]
+    concurent_generations integer [not null]
+    compose_input_max_chars integer [not null]
+    storyboard_prompt_chars integer [not null]
+    max_scene_per_storyboard integer [not null]
+    max_shot_per_scene integer [not null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+
 Table df_engine_api_keys {
     id integer [pk, increment]
     created_at timestamp [default: `now()`]
@@ -605,3 +621,6 @@ Ref: df_engine_prompt_templates.id < df_engine_feature_prompt_mappings.template_
 
 Ref: df_engine_menus.id < df_engine_menu_feature_mappings.menu_id
 Ref: df_engine_features.id < df_engine_menu_feature_mappings.feature_id
+Ref: projects.id < df_engine_project_settings.project_id
+Ref: users.id < df_engine_project_settings.created_by
+Ref: users.id < df_engine_project_settings.updated_by

@@ -5,12 +5,12 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
 from services.redis import CacheKeys
 
-SETTING_DETAIL_CACHE_KEY = CacheKeys().setting_detail()
-SETTING_LOGS_CACHE_PATTERN = "setting:logs:*"
+SETTING_CACHE_PATTERN = "setting:*"
 from services.mysql.model import (
     DfEngineModelOptions,
     DfEngineOpenrouterLogs,
     DfEnginePreferences,
+    DfEngineProjectSettings,
     DfEngineSettingLogs,
     DfEngineSettings,
     Users,
@@ -65,10 +65,9 @@ async def clear_setting_state(db_session: AsyncSession) -> None:
     """
     await db_session.execute(delete(DfEngineSettings).where(DfEngineSettings.code == SETTING_CODE))  # type: ignore
     await db_session.execute(delete(DfEngineSettingLogs))
+    await db_session.execute(delete(DfEngineProjectSettings))
     await db_session.commit()
-    redis = redis_client()
-    await redis.delete(SETTING_DETAIL_CACHE_KEY)
-    await delete_pattern(redis, SETTING_LOGS_CACHE_PATTERN)
+    await delete_pattern(redis_client(), SETTING_CACHE_PATTERN)
 
 
 async def clear_openrouter_logs(db_session: AsyncSession) -> None:
