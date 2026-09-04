@@ -162,14 +162,23 @@ class CacheKeys:
     def setting_detail_pattern(self) -> str:
         return "setting:detail:*"
 
-    def setting_pagination(self, page: int, items_per_page: int, search: Optional[str] = None) -> str:
+    def setting_logs_pagination(self, page: int, items_per_page: int, search: Optional[str] = None) -> str:
         return f"setting:logs:page={page}:size={items_per_page}:search={(search or '').strip().lower() or 'all'}"
 
-    def setting_pagination_pattern(self) -> str:
+    def setting_logs_pattern(self) -> str:
         return "setting:logs:*"
 
     def model_pagination_pattern(self) -> str:
         return "model_option:*"
+
+    def setting_global(self) -> str:
+        return "setting:global"
+
+    def setting_project(self, uid: UUID) -> str:
+        return f"setting:project:{uid}"
+
+    def setting_project_pattern(self) -> str:
+        return f"setting:project:*"
 
     def model_pagination(
         self,
