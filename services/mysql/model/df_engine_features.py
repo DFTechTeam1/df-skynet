@@ -1,4 +1,5 @@
 from datetime import datetime
+from functools import cached_property
 from typing import Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, Relationship, SQLModel
@@ -35,3 +36,7 @@ class DfEngineFeatures(SQLModel, table=True):
     df_engine_menu_feature_mappings: list["DfEngineMenuFeatureMappings"] = Relationship(  # type: ignore
         back_populates="df_engine_features"
     )
+
+    @cached_property
+    def df_engine_prompt_template_snapshots(self) -> list["DfEnginePromptTemplateSnapshots"]:  # type: ignore
+        return []

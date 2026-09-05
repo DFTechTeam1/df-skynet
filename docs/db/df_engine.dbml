@@ -123,7 +123,6 @@ Enum model_usage_types {
     image
 }
 
-
 Enum limit_reset_types {
     daily
     monthly
@@ -146,8 +145,31 @@ Enum language_types {
     english
 }
 
+Enum generation_file_types {
+    video
+    image
+}
+
+Table employees {
+    id bigint [pk, increment]
+}
+
+Table users {
+    id bigint [pk, increment]
+}
+
+Table projects {
+    id bigint [pk, increment]
+}
+
+Table tasks {
+    id bigint [pk, increment]
+    uid varchar(36) [not null, unique]
+    project_id integer [not null]
+}
+
 Table df_engine_project_settings {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     project_id integer [not null]
@@ -163,7 +185,7 @@ Table df_engine_project_settings {
 
 
 Table df_engine_api_keys {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
     uid varchar(36) [not null, unique]
@@ -181,8 +203,8 @@ Table df_engine_api_keys {
     updated_by integer [default: null]
 }
 
-Table df_engine_api_snapshots {
-    id integer [pk, increment]
+Table df_engine_api_key_snapshots {
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
     limit decimal(10, 2) [default: null]
@@ -200,7 +222,7 @@ Table df_engine_api_snapshots {
 }
 
 Table df_engine_openrouter_logs {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     name varchar(255) [default: null]
@@ -216,7 +238,7 @@ Table df_engine_openrouter_logs {
 }
 
 Table df_engine_api_key_rotation_issues {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     old_uid varchar(36) [not null, note: "df_engine_api_keys.uid this rotation was replacing — no FK, the old row is usually already deleted by the time this exists"]
@@ -230,7 +252,7 @@ Table df_engine_api_key_rotation_issues {
 
 
 Table df_engine_menus {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
@@ -243,7 +265,7 @@ Table df_engine_menus {
 
 
 Table df_engine_features {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
@@ -256,7 +278,7 @@ Table df_engine_features {
 
 
 Table df_engine_feature_prompt_mappings {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     feature_id integer [not null]
@@ -265,7 +287,7 @@ Table df_engine_feature_prompt_mappings {
 
 
 Table df_engine_menu_feature_mappings {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     feature_id integer [not null]
@@ -274,9 +296,8 @@ Table df_engine_menu_feature_mappings {
 
 
 
-
 Table df_engine_prompt_templates {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
@@ -289,14 +310,8 @@ Table df_engine_prompt_templates {
 }
 
 
-Table settings {
-    id integer [pk, increment]
-    key varchar(255) [not null, unique]
-    value json [not null]
-}
-
 Table df_engine_preferences {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     user_id bigint [unique, default: null]
@@ -308,28 +323,11 @@ Table df_engine_preferences {
     confirm_before_spending decimal(10, 2) [not null, default: 0.50, note: "Ask before any generation that costs more than this. No upper bound."]
 }
 
-Table employees {
-    id integer [pk, increment]
-}
-
-Table users {
-    id integer [pk, increment]
-}
-
-Table projects {
-    id integer [pk, increment]
-}
-
-Table tasks {
-    id integer [pk, increment]
-    uid varchar(36) [not null, unique]
-    project_id integer [not null]
-}
-
 
 Table df_engine_model_options {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     sync_at timestamp [default: `now()`] // video, image, text
+    deleted_at timestamp [default: null] // video, image, text
     name varchar(255) [not null, note: "Example: Muse-Spark"] // video, image, text
     created bigint [default: null] // video , image, text
     model_id varchar(255) [not null, note: "Example: meta/muse-spark-1.2"] // video, image, text
@@ -354,10 +352,13 @@ Table df_engine_model_options {
     top_provider json [default: null] // text
     knowledge_cutoff date [default: null] // text
     expiration_date date [default: null] // text
+    deleted_by bigint [default: null]
 }
 
+
+
 Table generation_prompts {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     archieved_at timestamp [default: null, note: "Only allowed to be archieved for assistant prompt types."]
     uid varchar(36) [not null, unique]
@@ -381,36 +382,202 @@ Table generation_prompts {
     endpoint varchar(255) [not null, note: "External endpoint. e.g.: 'https://openrouter.ai/api/v1/videos'"]
     response json [default: "{}", note: "A JSON object containing the responses generated for this prompt. e.g.: {\"text\": \"Generated text here\", \"image_url\": \"https://example.com/generated_image.png\"}"]
     status_code integer [default: null, note: "The HTTP status code returned by the model for this prompt. e.g.: 200 for success, 400 for bad request, etc."]
-    token_usage integer [default: 0, not null, note: '''
-    {
-        "prompt_tokens": 10,
-        "completion_tokens": 1120,
-        "total_tokens": 1130,
-        "cost": 0.067205,
-        "is_byok": false,
-        "prompt_tokens_details": {
-            "cached_tokens": 0,
-            "cache_write_tokens": 0,
-            "audio_tokens": 0,
-            "video_tokens": 0
-        },
-        "cost_details": {
-            "upstream_inference_cost": 0.067205,
-            "upstream_inference_prompt_cost": 0.000005,
-            "upstream_inference_completions_cost": 0.0672
-        },
-        "completion_tokens_details": {
-            "reasoning_tokens": 0,
-            "image_tokens": 1120
-        }
-    }
-    ''']
+    token_usage integer [default: 0, not null]
     cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
     created_by integer [not null, note: "The ID of the user who created this prompt."]
 }
 
+Table df_engine_upload_files {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null]
+    path text [not null]
+    md5 varchar(255) [default: null]
+    size bigint [not null]
+    project_id bigint [not null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_upload_file_snapshots {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null]
+    path text [not null]
+    size bigint [not null]
+    project_id bigint [not null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_generation_files {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null]
+    path text [not null]
+    size bigint [not null]
+    type generation_file_types [default: "image"]
+    task_id bigint [default: null]
+    project_id bigint [default: null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_generation_file_snapshots {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null]
+    path text [not null]
+    size bigint [not null]
+    type generation_file_types [default: "image"]
+    task_id bigint [default: null]
+    project_id bigint [default: null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_prompt_enhancers {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    model_id bigint [not null]
+    featureable_id bigint [not null]
+    featureable_type bigint [not null, note: "Will be polymorph df_engine_features or df_engine_feature_snapshots"]
+    sourceable_id bigint [not null]
+    sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+    project_id bigint [default: null]
+    task_id bigint [default: null]
+    raw text [default: null]
+    enhanced text [default: null]
+    is_processing bool [not null, default: True]
+    response json [default: null]
+    status_code integer [default: null]
+    token_usage integer [default: 0, not null]
+    cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
+    created_by integer [default: null]
+}
+
+
+Table df_engine_image_generations {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    model_id bigint [not null]
+    featureable_id bigint [not null]
+    featureable_type bigint [not null, note: "Will be polymorph df_engine_features or df_engine_feature_snapshots"]
+    sourceable_id bigint [not null]
+    sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+    project_id bigint [default: null]
+    task_id bigint [default: null]
+    enhancer_id bigint [default: null, note: "If filled, df_engine_image_generations.prompt value will be overiden with value from df_engine_prompt_enhancers.enhanced"]
+    x_min decimal(10, 2) [default: null]
+    x_max decimal(10, 2) [default: null]
+    y_min decimal(10, 2) [default: null]
+    y_max decimal(10, 2) [default: null]
+    prompt text [not null]
+    parameter json [default: "{}", note: "Custom params given by available model id."]
+    is_processing bool [not null, default: True]
+    response json [default: null]
+    status_code integer [default: null]
+    token_usage integer [default: 0, not null]
+    cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
+    created_by integer [default: null]
+}
+
+
+Table df_engine_upload_file_references {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    generation_id bigint [not null]
+    file_id bigint [not null]
+
+    note: "This table should be only fetch data with image type due to when generating image reference should also be images."
+}
+
+
+Table df_engine_image_generation_results {
+    id bigint [pk, increment]
+    uid varchar(36) [not null, unique]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    archieved_at timestamp [default: null]
+    generation_id bigint [default: null]
+    parent_id bigint [default: null]
+    md5 varchar(255) [default: null]
+    name varchar(255) [not null]
+    path text [not null]
+    size bigint [not null]
+    is_main bool [default: true]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+
+    note: "Constraint per parent_id should only allowed 1 is_main."
+}
+
+Table df_engine_feature_snapshots {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [default: null]
+    description text [default: null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+
+Table df_engine_prompt_template_snapshots {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    feature_snapshot_id bigint [not null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [default: null]
+    prompt text [default: null]
+    description text [default: null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+
+
+Table df_engine_generation_favourites {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    project_id bigint [not null]
+    user_id bigint [not null]
+    generation_file_id bigint [not null]
+}
+
+Table df_engine_setting_logs {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    user_email varchar(255) [default: null]
+    user_name varchar(255) [default: null]
+    previous_data json [default: null]
+    incoming_data json [default: null]
+    ip_address varchar(45) [default: null]
+    user_agent varchar(255) [default: null]
+    created_by integer [default: null]
+}
+
+
+Table df_engine_generation_shares {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    generation_file_id bigint [not null]
+    created_by integer [default: null]
+}
+
 Table df_engine_files {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     archieved_at timestamp [default: null, note: "Only allowed to be archieved file_status = generation, and only the owner can archieve it."]
     uid varchar(36) [not null, unique]
@@ -428,7 +595,7 @@ Table df_engine_files {
 }
 
 Table generation_references {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     prompt_id bigint [not null]
@@ -436,7 +603,7 @@ Table generation_references {
 }
 
 Table generation_favorite_files {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     task_id bigint [not null]
@@ -445,7 +612,7 @@ Table generation_favorite_files {
 }
 
 Table generation_galleries {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     name varchar(255) [not null, note: "Will be generated from prompt"]
@@ -456,7 +623,7 @@ Table generation_galleries {
 }
 
 Table gallery_details {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     prompt_id bigint [not null]
@@ -466,7 +633,7 @@ Table gallery_details {
 }
 
 Table project_generation_shares {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     project_id bigint [not null]
     task_id bigint [not null]
@@ -478,7 +645,7 @@ Table project_generation_shares {
 }
 
 Table elements_presets {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     name varchar(255) [not null]
@@ -490,7 +657,7 @@ Table elements_presets {
 }
 
 Table element_files {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     preset_id bigint [not null]
@@ -499,7 +666,7 @@ Table element_files {
 }
 
 Table storyboards {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     project_id bigint [not null]
@@ -511,7 +678,7 @@ Table storyboards {
 }
 
 Table storyboard_scenes {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     storyboard_id bigint [not null]
@@ -526,7 +693,7 @@ Table storyboard_scenes {
 }
 
 Table storyboard_shots {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     scene_id bigint [not null]
@@ -535,7 +702,7 @@ Table storyboard_shots {
 }
 
 Table storyboard_keyframes {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     shot_id bigint [not null]
@@ -548,7 +715,7 @@ Table storyboard_keyframes {
 }
 
 Table storyboard_motions {
-    id integer [pk, increment]
+    id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     shot_id bigint [not null]
@@ -624,3 +791,29 @@ Ref: df_engine_features.id < df_engine_menu_feature_mappings.feature_id
 Ref: projects.id < df_engine_project_settings.project_id
 Ref: users.id < df_engine_project_settings.created_by
 Ref: users.id < df_engine_project_settings.updated_by
+Ref: projects.id < df_engine_upload_files.project_id
+Ref: users.id < df_engine_upload_files.created_by
+Ref: users.id < df_engine_upload_files.updated_by
+Ref: users.id < df_engine_generation_files.created_by
+Ref: users.id < df_engine_generation_files.updated_by
+Ref: projects.id < df_engine_generation_favourites.project_id
+Ref: users.id < df_engine_generation_favourites.user_id
+Ref: df_engine_generation_files.id < df_engine_generation_favourites.generation_file_id
+Ref: users.id < df_engine_setting_logs.created_by
+Ref: tasks.id < df_engine_generation_files.task_id
+Ref: projects.id < df_engine_prompt_enhancers.project_id
+Ref: users.id < df_engine_prompt_enhancers.created_by
+Ref: users.id < df_engine_model_options.deleted_by
+Ref: df_engine_model_options.id < df_engine_prompt_enhancers.model_id
+Ref: tasks.id < df_engine_prompt_enhancers.task_id
+Ref: df_engine_feature_snapshots.id < df_engine_prompt_template_snapshots.feature_snapshot_id
+Ref: tasks.id < df_engine_image_generations.task_id
+Ref: projects.id < df_engine_image_generations.project_id
+Ref: users.id < df_engine_image_generations.created_by
+Ref: df_engine_prompt_enhancers.id < df_engine_image_generations.enhancer_id
+Ref: df_engine_image_generations.id < df_engine_upload_file_references.generation_id
+Ref: df_engine_upload_files.id < df_engine_upload_file_references.file_id
+Ref: df_engine_image_generations.id < df_engine_image_generation_results.generation_id
+Ref: df_engine_image_generation_results.id < df_engine_image_generation_results.parent_id
+Ref: users.id < df_engine_image_generation_results.created_by
+Ref: users.id < df_engine_image_generation_results.updated_by

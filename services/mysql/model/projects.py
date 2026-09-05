@@ -68,7 +68,4 @@ class Projects(SQLModel, table=True):
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_classes.id")),
     )
 
-    countries: Optional["Countries"] = Relationship(back_populates="projects")  # type: ignore
-    states: Optional["States"] = Relationship(back_populates="projects")  # type: ignore
-    cities: Optional["Cities"] = Relationship(back_populates="projects")  # type: ignore
     project_classes: Optional["ProjectClasses"] = Relationship(back_populates="projects")  # type: ignore

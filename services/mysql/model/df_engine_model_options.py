@@ -2,7 +2,7 @@ from datetime import date, datetime
 from enum import StrEnum, auto
 from typing import Any, Optional
 from uuid import uuid4
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -12,6 +12,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    ForeignKey,
     String,
     Text,
     UniqueConstraint,
@@ -85,3 +86,11 @@ class DfEngineModelOptions(SQLModel, table=True):
     )
     knowledge_cutoff: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
     expiration_date: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
+    deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+    deleted_by: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
+    )
+
+    deleted_by_user: Optional["Users"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineModelOptions.deleted_by]"}
+    )

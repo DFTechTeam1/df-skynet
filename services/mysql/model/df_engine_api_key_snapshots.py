@@ -7,13 +7,10 @@ from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
-class DfEngineApiSnapshots(SQLModel, table=True):
-    __tablename__ = "df_engine_api_snapshots"  # type: ignore
+class DfEngineApiKeySnapshots(SQLModel, table=True):
+    __tablename__ = "df_engine_api_key_snapshots"  # type: ignore
 
-    id: int = Field(
-        default=None,
-        sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True),
-    )
+    id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))

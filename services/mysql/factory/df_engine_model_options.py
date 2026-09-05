@@ -42,3 +42,5 @@ class DfEngineModelOptionsFactory(SQLAlchemyModelFactory):
     top_provider = None
     knowledge_cutoff = None
     expiration_date = None
+    deleted_at = None
+    deleted_by = None

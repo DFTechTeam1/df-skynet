@@ -13,7 +13,7 @@ from schemas.payload.api_key_management import CreateApiKeyPayload, UpdateApiKey
 from services.mysql.model import (
     DfEngineApiKeyRotationIssues,
     DfEngineApiKeys,
-    DfEngineApiSnapshots,
+    DfEngineApiKeySnapshots,
     DfEngineOpenrouterLogs,
     Employees,
     PositionBackups,
@@ -232,7 +232,7 @@ class APIKeyManagementController(CoreDependencies):
                     try:
                         async with self.db.begin_nested():
                             self.db.add(
-                                DfEngineApiSnapshots(
+                                DfEngineApiKeySnapshots(
                                     created_at=record.created_at,
                                     updated_at=record.updated_at,
                                     expires_at=record.expires_at,
@@ -351,7 +351,7 @@ class APIKeyManagementController(CoreDependencies):
                 try:
                     async with self.db.begin_nested():
                         self.db.add(
-                            DfEngineApiSnapshots(
+                            DfEngineApiKeySnapshots(
                                 created_at=record.created_at,
                                 updated_at=record.updated_at,
                                 expires_at=record.expires_at,
@@ -552,7 +552,7 @@ class APIKeyManagementController(CoreDependencies):
         summary="Delete a non-main API key.",
         description=(
             "Permanently revokes the key on OpenRouter, saves a copy of its details in "
-            "the archive (df_engine_api_snapshots), then removes it from the active "
+            "the archive (df_engine_api_key_snapshots), then removes it from the active "
             'list. A key currently marked as "main" can\'t be deleted this way — '
             "update it to no longer be main first. Every attempt to reach OpenRouter is "
             "recorded, whether it succeeds or fails. Returns the full, up-to-date list "
@@ -623,7 +623,7 @@ class APIKeyManagementController(CoreDependencies):
                 # a polymorphic FK; repoint those to the snapshot id here once that model
                 # is mapped in this service. Same TODO in the rotate flow.
                 self.db.add(
-                    DfEngineApiSnapshots(
+                    DfEngineApiKeySnapshots(
                         created_at=record.created_at,
                         updated_at=record.updated_at,
                         expires_at=record.expires_at,

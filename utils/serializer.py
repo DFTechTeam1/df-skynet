@@ -2,6 +2,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from functools import cached_property
 from typing import Any
 from sqlalchemy import Row, RowMapping
 from sqlalchemy.orm import attributes
@@ -71,6 +72,15 @@ def _serialize(data: Any, seen: set[int]) -> Any:
                 result[rel.key] = _serialize(value or [], seen)
             else:
                 result[rel.key] = _serialize(value, seen)
+
+        seen_keys: set[str] = set()
+        for klass in type(data).__mro__:
+            for key, value in vars(klass).items():
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                if isinstance(value, cached_property):
+                    result[key] = _serialize(getattr(data, key), seen)
 
         return result
 
