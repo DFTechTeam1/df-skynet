@@ -346,11 +346,52 @@ Table df_engine_prompt_enhancers {
     feature_id bigint [not null]
     sourceable_id bigint [not null]
     sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
-    project_id bigint [default: null]
-    task_id bigint [default: null]
+    project_id bigint [not null]
+    task_id bigint [not null]
     raw text [default: null]
     enhanced text [default: null]
     is_processing bool [not null, default: True]
+    response json [default: null]
+    status_code integer [default: null]
+    token_usage integer [default: 0, not null]
+    cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
+    created_by integer [default: null]
+}
+
+
+Table df_engine_chat_assistants {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    model_id bigint [not null]
+    parent_id bigint [default: null]
+    sourceable_id bigint [not null]
+    sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+    project_id bigint [not null]
+    task_id bigint [not null]
+    prompt text [not null]
+    status generation_statuses [not null, default: "processing", note: "If processing > admin setting parralel generation threshold, then status should be queued."]
+    response json [default: null]
+    status_code integer [default: null]
+    token_usage integer [default: 0, not null]
+    cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
+    created_by integer [default: null]
+
+    note: "Allowed references are list of images either from uploaded, image generated or elements owned by user"
+}
+
+
+Table df_engine_element_generations {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    model_id bigint [not null]
+    menu_id bigint [not null]
+    feature_id bigint [not null]
+    sourceable_id bigint [not null]
+    sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+    project_id bigint [not null]
+    task_id bigint [not null]
+    prompt text [not null]
+    status generation_statuses [not null, default: "processing", note: "If processing > admin setting parralel generation threshold, then status should be queued."]
     response json [default: null]
     status_code integer [default: null]
     token_usage integer [default: 0, not null]
@@ -382,6 +423,8 @@ Table df_engine_image_generations {
     token_usage integer [default: 0, not null]
     cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
     created_by integer [default: null]
+
+    note: "Allowed references are list of images either from uploaded, image generated or elements owned by user"
 }
 
 
@@ -404,6 +447,8 @@ Table df_engine_video_generations {
     token_usage integer [default: 0, not null]
     cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
     created_by integer [default: null]
+
+    note: "Allowed references are list of images either from uploaded, image generated, elements or videos 'depending  on its models' owned by user"
 }
 
 
@@ -412,12 +457,13 @@ Table df_engine_storyboards {
     created_at timestamp [default: `now()`]
     model_id bigint [not null]
     menu_id bigint [not null]
-    project_id bigint [not null]
-    task_id bigint [not null]
     feature_id bigint [not null]
     sourceable_id bigint [not null]
     sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+    project_id bigint [not null]
+    task_id bigint [not null]
     name varchar(255) [not null]
+    description text [default: null]
     prompt text [not null]
     status generation_statuses [not null, default: "processing", note: "If processing > admin setting parralel generation threshold, then status should be queued."]
     response json [default: null]
@@ -425,6 +471,8 @@ Table df_engine_storyboards {
     token_usage integer [default: 0, not null]
     cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
     created_by integer [default: null]
+
+    note: "Allowed references are list of images either from uploaded, image generated or elements owned by user"
 }
 
 Table df_engine_storyboard_scenes {
@@ -438,7 +486,9 @@ Table df_engine_scene_shots {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
+    archieved_at timestamp [default: null]
     scene_id bigint [not null]
+    name varchar(255) [default: null]
     interior_style interior_styles [default: "interior"]
     time_of_day time_of_days [default: "sunrise"]
     lighting_mood lighting_moods [default: 'natural']
@@ -451,6 +501,10 @@ Table df_engine_shot_keyframes {
     archieved_at timestamp [default: null]
     shot_id bigint [not null]
     model_id bigint [not null]
+    menu_id bigint [not null]
+    feature_id bigint [not null]
+    sourceable_id bigint [not null]
+    sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
     prompt text [default: null, note: "Placeholder storyboard breakdown will be placed here."]
     shot_size shot_sizes [default: "extreme_wide"]
     angel angels [default: "low"]
@@ -461,6 +515,7 @@ Table df_engine_shot_keyframes {
     status_code integer [default: null]
     token_usage integer [default: 0, not null]
     cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
+    created_by integer [default: null]
 }
 
 
@@ -471,6 +526,10 @@ Table df_engine_shot_motions {
     archieved_at timestamp [default: null]
     shot_id bigint [not null]
     model_id bigint [not null]
+    menu_id bigint [not null]
+    feature_id bigint [not null]
+    sourceable_id bigint [not null]
+    sourceable_type varchar(255) [not null, note: "Will be polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
     prompt text [default: null]
     motion motions [default: "static"]
     parameter json [default: "{}", note: "Custom params given by available model id."]
@@ -479,14 +538,17 @@ Table df_engine_shot_motions {
     status_code integer [default: null]
     token_usage integer [default: 0, not null]
     cost decimal(10, 2) [default: 0.00, not null, note: "The total cost incurred for this prompt."]
+    created_by integer [default: null]
 }
+
+
 
 
 Table df_engine_upload_file_references {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     generateable_id bigint [not null]
-    generateable_type bigint [default: null, note: "will be df_engine_image_generations, df_engine_video_generations, df_engine_shot_keyframes, or df_engine_shot_motions"]
+    generateable_type bigint [default: null, note: "will be df_engine_image_generations, df_engine_video_generations, df_engine_shot_keyframes, df_engine_shot_motions, df_engine_element_generations"]
     file_id bigint [not null]
 
     note: "If action come froms image generation, only fetch image data, else (video generation) fetch image and video from uploaded user."
@@ -496,7 +558,7 @@ Table df_engine_generation_references {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     generateable_id bigint [not null]
-    generatable_type bigint [not null, note: "will be df_engine_image_generations or df_engine_video_generations"]
+    generateable_type bigint [default: null, note: "will be df_engine_image_generations, df_engine_video_generations, df_engine_shot_keyframes, df_engine_shot_motions, df_engine_element_generations"]
     result_id bigint [not null]
 
     note: "References depends on its model, sometimes model can use only image reference, or combined images, audio, and video."
@@ -510,13 +572,14 @@ Table df_engine_generation_results {
     updated_at timestamp [default: null]
     archieved_at timestamp [default: null]
     generateable_id bigint [default: null]
-    generateable_type bigint [default: null, note: "will be df_engine_image_generations, df_engine_video_generations, df_engine_shot_keyframes, or df_engine_shot_motions"]
+    generateable_type bigint [default: null, note: "will be df_engine_image_generations, df_engine_video_generations, df_engine_shot_keyframes, df_engine_shot_motions, df_engine_element_generations"]
     parent_id bigint [default: null]
     md5 varchar(255) [default: null]
     name varchar(255) [not null]
     path text [not null]
     size bigint [not null]
     is_main bool [default: true]
+    is_favourite bool [default: false, note: "Only creator can favourite its own generated files."]
     created_by integer [default: null]
     updated_by integer [default: null]
 
@@ -558,18 +621,25 @@ Ref: users.id < df_engine_model_options.deleted_by
 Ref: users.id < df_engine_image_generations.created_by
 Ref: users.id < df_engine_video_generations.created_by
 Ref: users.id < df_engine_storyboards.created_by
+Ref: users.id < df_engine_shot_motions.created_by
+Ref: users.id < df_engine_shot_keyframes.created_by
+Ref: users.id < df_engine_chat_assistants.created_by
+Ref: users.id < df_engine_element_generations.created_by
 Ref: projects.id < df_engine_storyboards.project_id
 Ref: projects.id < tasks.project_id
 Ref: projects.id < df_engine_video_generations.project_id
 Ref: projects.id < df_engine_project_settings.project_id
 Ref: projects.id < df_engine_upload_files.project_id
 Ref: projects.id < df_engine_prompt_enhancers.project_id
+Ref: projects.id < df_engine_chat_assistants.project_id
 Ref: projects.id < df_engine_image_generations.project_id
+Ref: projects.id < df_engine_element_generations.project_id
 Ref: tasks.id < df_engine_prompt_enhancers.task_id
 Ref: tasks.id < df_engine_image_generations.task_id
 Ref: tasks.id < df_engine_video_generations.task_id
 Ref: tasks.id < df_engine_storyboards.task_id
-
+Ref: tasks.id < df_engine_chat_assistants.task_id
+Ref: tasks.id < df_engine_element_generations.task_id
 
 Ref: df_engine_features.id < df_engine_feature_prompt_mappings.feature_id
 Ref: df_engine_features.id < df_engine_menu_feature_mappings.feature_id
@@ -577,12 +647,18 @@ Ref: df_engine_features.id < df_engine_prompt_enhancers.feature_id
 Ref: df_engine_features.id < df_engine_image_generations.feature_id
 Ref: df_engine_features.id < df_engine_video_generations.feature_id
 Ref: df_engine_features.id < df_engine_storyboards.feature_id
+Ref: df_engine_features.id < df_engine_shot_motions.feature_id
+Ref: df_engine_features.id < df_engine_shot_keyframes.feature_id
+Ref: df_engine_features.id < df_engine_element_generations.feature_id
 
 Ref: df_engine_menus.id < df_engine_video_generations.menu_id
 Ref: df_engine_menus.id < df_engine_image_generations.menu_id
 Ref: df_engine_menus.id < df_engine_menu_feature_mappings.menu_id
 Ref: df_engine_menus.id < df_engine_prompt_enhancers.menu_id
 Ref: df_engine_menus.id < df_engine_storyboards.menu_id
+Ref: df_engine_menus.id < df_engine_shot_motions.menu_id
+Ref: df_engine_menus.id < df_engine_shot_keyframes.menu_id
+Ref: df_engine_menus.id < df_engine_element_generations.menu_id
 
 Ref: df_engine_model_options.id < df_engine_storyboards.model_id
 Ref: df_engine_model_options.id < df_engine_prompt_enhancers.model_id
@@ -590,6 +666,8 @@ Ref: df_engine_model_options.id < df_engine_image_generations.model_id
 Ref: df_engine_model_options.id < df_engine_video_generations.model_id
 Ref: df_engine_model_options.id < df_engine_shot_keyframes.model_id
 Ref: df_engine_model_options.id < df_engine_shot_motions.model_id
+Ref: df_engine_model_options.id < df_engine_chat_assistants.model_id
+Ref: df_engine_model_options.id < df_engine_element_generations.model_id
 
 Ref: df_engine_prompt_enhancers.id < df_engine_image_generations.enhancer_id
 Ref: df_engine_prompt_enhancers.id < df_engine_video_generations.enhancer_id
@@ -611,3 +689,6 @@ Ref: df_engine_generation_results.id < df_engine_generation_references.result_id
 Ref: df_engine_storyboards.id < df_engine_storyboard_scenes.story_id
 
 Ref: df_engine_storyboard_scenes.id < df_engine_scene_shots.scene_id
+
+
+Ref: df_engine_chat_assistants.id < df_engine_chat_assistants.parent_id
