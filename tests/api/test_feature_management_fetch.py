@@ -200,7 +200,7 @@ async def test_create_invalidates_the_list_cache(authed_client, user_id):
     assert await redis.exists("feature_management:list:all")
 
     name = f"Cache invalidation {uuid4().hex[:8]}"
-    await authed_client.call("POST", URL, json={"name": name})
+    await authed_client.call("POST", URL, json={"name": name, "type": "generate_image"})
 
     resp = await authed_client.call("GET", URL)
     assert name in response_names(resp.json())

@@ -1,6 +1,12 @@
+from enum import StrEnum, auto
 from typing import Any, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
+
+
+class FeatureTypes(StrEnum):
+    generate_image = auto()
+    generate_video = auto()
 
 
 class FeaturePayload(BaseModel):
@@ -21,6 +27,11 @@ class FeaturePayload(BaseModel):
         max_length=255,
         description="Unique, human-readable name identifying this feature.",
         examples=["Enhance prompt"],
+    )
+    type: FeatureTypes = Field(
+        ...,
+        description="Which generation pipeline this feature drives.",
+        examples=[FeatureTypes.generate_image],
     )
     description: Optional[str] = Field(
         default=None,

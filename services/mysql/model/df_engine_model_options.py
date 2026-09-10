@@ -13,9 +13,9 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
@@ -30,7 +30,7 @@ class ModelUsageTypes(StrEnum):
 class DfEngineModelOptions(SQLModel, table=True):
     __tablename__ = "df_engine_model_options"  # type: ignore
     __table_args__ = (
-        UniqueConstraint("model_id", "type", name="uq_df_engine_model_options_model_id_type"),
+        Index("idx_model_options_model_id", "model_id", "type", unique=True),
         CheckConstraint(
             "is_main = false OR is_enabled = true",
             name="ck_df_engine_model_options_is_main_requires_enabled",

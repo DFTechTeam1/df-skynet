@@ -1,0 +1,810 @@
+// ============================================================
+// ENUMS
+// ============================================================
+
+Enum interior_styles {
+    interior
+    exterior
+    interior_exterior
+}
+
+Enum shot_sizes {
+    extreme_wide
+    medium_wide
+    wide
+    medium
+    medium_close_up
+    close_up
+    extreme_close_up
+    insert
+}
+
+Enum motions {
+    static
+    pan
+    tilt
+    push_in
+    pull_back
+    track
+    crane
+    handheld
+}
+
+Enum angels {
+  eye_level
+  low
+  high
+  ground_level
+  knee_level
+  hip_level
+  over_the_shoulder
+  overhead
+  top_view
+  aerial
+  dutch
+  pov
+}
+
+Enum generation_statuses {
+    queued
+    processing
+    success
+    failed
+}
+
+Enum focal_lengths {
+  mm_14
+  mm_24
+  mm_35
+  mm_50
+  mm_85
+  mm_135
+}
+
+Enum element_types {
+  environment
+  character
+  object
+  styles
+}
+
+Enum time_of_days {
+  pre_dawn
+  sunrise
+  morning
+  midday
+  afternoon
+  golden_hour
+  dusk
+  blue_hour
+  night
+}
+
+Enum lighting_moods {
+  natural
+  soft_diffused
+  hard_high_contrast
+  warm_practical
+  moody_low_key
+  high_key_bright
+  silhouette_backlit
+  neon
+  overcast_flat
+}
+
+Enum model_usage_types {
+    text
+    video
+    image
+}
+
+Enum theme_types {
+    dark
+    light
+}
+
+Enum accent_types {
+    signal
+    violet
+    teal
+}
+
+Enum language_types {
+    indonesia
+    english
+}
+
+Enum upload_file_types {
+    video
+    image
+}
+
+Enum upload_statuses {
+    pending
+    success
+    failed
+}
+
+Enum limit_resets {
+    daily
+    weekly
+    monthly
+}
+
+Enum generation_kinds {
+  image
+  video
+  element
+  storyboard
+  keyframe
+  motion
+  chat
+  enhancer
+}
+
+// Queue lifecycle event types. NOTE: 'revoked' intentionally omitted --
+// there is no cancel-generation feature, so no code path would ever
+// produce that event. Add it back only if that feature gets built.
+Enum queue_event_types {
+    enqueued
+    started
+    retried
+    succeeded
+    failed
+}
+
+
+// ============================================================
+// CORE / EXTERNAL TABLES (unchanged)
+// ============================================================
+
+Table employees {
+    id bigint [pk, increment]
+}
+
+Table users {
+    id bigint [pk, increment]
+}
+
+Table projects {
+    id bigint [pk, increment]
+}
+
+Table tasks {
+    id bigint [pk, increment]
+    uid varchar(36) [not null, unique]
+    project_id integer [not null]
+}
+
+
+// ============================================================
+// SETTINGS / ACCESS CONTROL
+// ============================================================
+
+Table df_engine_project_settings {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    project_id integer [not null]
+    token_usage_limit integer [not null]
+    compose_input_max_chars integer [not null]
+    storyboard_prompt_chars integer [not null]
+    max_scene_per_storyboard integer [not null]
+    max_shot_per_scene integer [not null]
+    token_limit_threshold float [default: null, note: "Per-project override (0-1). NULL = inherit the project class's token_limit_threshold from the admin_setting project_class_limitations."]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_preferences {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    user_id bigint [unique, default: null]
+    theme theme_types [not null, default: "dark"]
+    accent accent_types [not null, default: "teal"]
+    language language_types [not null, default: "english"]
+    default_aspect_ratio varchar(20) [not null, default: "16:9", note: "One of: 16:9, 1:1, 9:16, 4:3, 3:4"]
+    default_size varchar(20) [not null, default: "4K", note: "One of: 1K, 2K, 4K"]
+    confirm_before_spending decimal(10, 2) [not null, default: 0.50, note: "Ask before any generation that costs more than this. No upper bound."]
+}
+
+Table df_engine_setting_logs {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    user_email varchar(255) [default: null]
+    user_name varchar(255) [default: null]
+    previous_data json [default: null]
+    incoming_data json [default: null]
+    ip_address varchar(45) [default: null]
+    user_agent varchar(255) [default: null]
+    created_by integer [default: null]
+}
+
+
+// ============================================================
+// API KEYS
+// ============================================================
+
+Table df_engine_api_keys {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
+    uid varchar(36) [not null, unique]
+    limit decimal(10, 2) [default: null]
+    limit_reset limit_resets [default: null]
+    key varchar(255) [not null, unique]
+    hash varchar(255) [default: null]
+    name varchar(255) [not null]
+    description text [default: null]
+    employee_id integer [default: null]
+    employee_name varchar(255) [default: null]
+    is_main boolean [not null, default: False, note: "This table supports multi employee_id and multi api_keys, create constraint is_main only can be choose 1 per api"]
+    updated_at timestamp [default: null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_api_key_snapshots {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
+    limit decimal(10, 2) [default: null]
+    limit_reset limit_resets [default: null]
+    uid varchar(36) [not null, unique]
+    key varchar(255) [not null, unique]
+    hash varchar(255) [default: null]
+    name varchar(255) [not null]
+    description text [default: null]
+    employee_id integer [default: null, note: "Denormalized copy, no FK — archival record must survive employee deletion"]
+    employee_name varchar(255) [default: null]
+    updated_at timestamp [default: null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_openrouter_logs {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [default: null]
+    generation_id bigint [default: null, note: "FK to df_engine_generations.id — null for non-generation calls (e.g. key management /keys endpoints)"]
+    attempt integer [default: null, note: "Ties this call to the attempt number in df_engine_queues for the same generation — null for non-generation calls"]
+    method varchar(10) [not null, note: "e.g. GET, POST, PUT, PATCH, DELETE"]
+    endpoint varchar(255) [not null, note: "e.g. /keys, /keys/{hash}, /chat/completions"]
+    request_headers json [default: null, note: "SENSITIVE — stored raw, including the live OpenRouter management key or per-generation API key used to authorize this call. Restrict read access."]
+    request_payload json [default: null]
+    response_status_code integer [default: null]
+    response_headers json [default: null]
+    response_body json [default: null, note: "SENSITIVE — full raw response stored every time, including generated media payloads for image/video calls. Restrict read access; mask before returning through any API."]
+    error_message text [default: null, note: "Populated when the call raised (timeout, non-2xx, network error, etc.)."]
+    duration_ms integer [default: null]
+
+    indexes {
+        (generation_id, attempt) [name: 'idx_openrouter_logs_generation_attempt']
+        response_status_code [name: 'idx_openrouter_logs_response_status']
+        (created_at, id) [name: 'idx_df_engine_openrouter_logs_created_at_id']
+    }
+}
+
+Table df_engine_api_key_rotation_issues {
+    id bigint [pk, increment]
+    created_at timestamp [not null, default: `now()`]
+    uid char(36) [not null, unique]
+    old_uid char(36) [not null, note: "df_engine_api_keys.uid this rotation was replacing — no FK, the old row is usually already deleted by the time this exists"]
+    new_uid char(36) [default: null, note: "df_engine_api_keys.uid of the replacement, when it was successfully saved locally"]
+    new_key_hash varchar(255) [default: null, note: "Set only for new_key_db_conflict — OpenRouter already created this key but the local row failed to save"]
+    new_key_value varchar(255) [default: null, note: "SENSITIVE — raw key value, same case as new_key_hash. Restrict read access; mask before returning through any API."]
+    issue_type varchar(50) [not null, note: "new_key_db_conflict | old_key_not_revoked | archive_failed"]
+    detail text [default: null, note: "The underlying exception text"]
+    resolved_at timestamp [default: null, note: "Null until a reconciliation job or human fixes the drift"]
+
+    indexes {
+        resolved_at [name: 'idx_df_engine_api_key_rotation_issues_unresolved']
+    }
+}
+
+
+// ============================================================
+// MENUS / FEATURES / TEMPLATES
+// ============================================================
+
+Table df_engine_menus {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null, unique]
+    description text [default: null]
+    is_active boolean [not null, default: true]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_features {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null, unique]
+    type varchar(255) [not null]
+    description text [default: null]
+    is_active boolean [not null, default: true]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+Table df_engine_feature_prompt_mappings {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    feature_id integer [not null]
+    template_id integer [not null]
+}
+
+Table df_engine_menu_feature_mappings {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    uid varchar(36) [not null, unique]
+    feature_id integer [not null]
+    menu_id integer [not null]
+}
+
+Table df_engine_prompt_templates {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    is_active boolean [not null, default: true]
+    name varchar(255) [not null, unique]
+    prompt text [not null]
+    description text [default: null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+
+// ============================================================
+// MODELS
+// ============================================================
+
+Table df_engine_model_options {
+    id bigint [pk, increment]
+    uid varchar(36) [not null, unique]
+    last_sync_at timestamp [default: `now()`] // video, image, text
+    deleted_at timestamp [default: null] // video, image, text
+    name varchar(255) [not null, note: "Example: Muse-Spark"] // video, image, text
+    created bigint [default: null] // video , image, text
+    model_id varchar(255) [not null, note: "Example: meta/muse-spark-1.2"] // video, image, text
+    description text [default: null] // video, image, text
+    architecture json [default: null] // image, text
+    type model_usage_types [not null]
+    is_main boolean [default: null] // video, image, text
+    is_enabled boolean [not null, default: false] // video, image, text
+    is_available boolean [not null, default: true] // video, image, text
+    supported_parameters json [default: null] // image, text
+    default_parameters json [default: null] // text
+    supports_streaming bool [default: null] // image
+    supported_resolutions json [default: null] // video
+    supported_aspect_ratios json [default: null] // video
+    supported_sizes json [default: null] // video
+    supported_durations json [default: null] // video
+    supported_frame_images json [default: null] // video
+    generate_audio boolean [default: null] // video
+    allowed_passthrough_parameters json [default: null] // video
+    pricing_skus json [default: null] // video
+    pricing json [default: null] // text
+    top_provider json [default: null] // text
+    knowledge_cutoff date [default: null] // text
+    expiration_date date [default: null] // text
+    deleted_by bigint [default: null]
+
+    indexes {
+        (model_id, type) [unique, name: 'idx_model_options_model_id']
+    }
+
+    note: "DB-level CHECK ck_df_engine_model_options_is_main_requires_enabled: is_main = false OR is_enabled = true."
+}
+
+
+// ============================================================
+// UPLOADS
+// ============================================================
+
+Table df_engine_upload_files {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    uid varchar(36) [not null, unique]
+    name varchar(255) [not null]
+    type upload_file_types [not null, default: "image"]
+    path text [not null]
+    md5 varchar(255) [default: null]
+    size bigint [not null]
+    project_id bigint [not null]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+}
+
+
+// ============================================================
+// UNIFIED GENERATIONS
+// ============================================================
+
+Table df_engine_generations {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    kind generation_kinds [not null, note: "Discriminator — determines which *_details table (if any) has the matching row"]
+    model_id bigint [not null]
+    menu_id bigint [not null]
+    feature_id bigint [not null]
+    sourceable_id bigint [not null]
+    sourceable_type varchar(255) [not null, note: "Polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+    project_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
+    task_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
+    prompt text [not null]
+    status generation_statuses [not null, default: "processing", note: "If processing count > admin setting parallel generation threshold, status should be queued. For kind='enhancer' this replaces the old is_processing boolean (processing = true, success/failed = false)."]
+    response json [default: null]
+    status_code integer [default: null]
+    token_usage integer [default: null]
+    cost decimal(10, 2) [default: null]
+    created_by integer [default: null]
+
+    indexes {
+        kind [name: 'idx_generations_kind']
+        (kind, created_by) [name: 'idx_generations_kind_created_by']
+        (project_id, task_id) [name: 'idx_generations_project_task']
+        created_by [name: 'idx_generations_created_by']
+        (status, created_at) [name: 'idx_generations_status_created_at']
+        (sourceable_id, sourceable_type) [name: 'idx_generations_sourceable']
+    }
+
+    note: "Allowed references depend on kind: images/videos/elements may reference uploaded, generated, or element images; kind=chat may reference any image/generated/element image owned by user."
+}
+
+// --- kind = image ---
+Table df_engine_image_generation_details {
+    id bigint [pk, increment]
+    generation_id bigint [not null]
+    enhancer_id bigint [default: null, note: "References df_engine_generations.id where kind = 'enhancer'. If filled, generations.prompt is overridden by that row's enhancer_details.enhanced"]
+    parameter json [default: "{}", note: "Custom params for the selected model."]
+    x_min decimal(10, 2) [default: null]
+    x_max decimal(10, 2) [default: null]
+    y_min decimal(10, 2) [default: null]
+    y_max decimal(10, 2) [default: null]
+}
+
+// --- kind = video ---
+Table df_engine_video_generation_details {
+    id bigint [pk, increment]
+    generation_id bigint [not null]
+    enhancer_id bigint [default: null, note: "References df_engine_generations.id where kind = 'enhancer'. If filled, generations.prompt is overridden by that row's enhancer_details.enhanced"]
+    parameter json [default: "{}", note: "Custom params for the selected model."]
+}
+
+// --- kind = storyboard ---
+Table df_engine_storyboard_details {
+    id bigint [pk, increment]
+    generation_id bigint [not null]
+    name varchar(255) [not null]
+    description text [default: null]
+}
+
+// --- kind = keyframe ---
+Table df_engine_keyframe_details {
+    id bigint [pk, increment]
+    generation_id bigint [not null]
+    updated_at timestamp [default: null]
+    archieved_at timestamp [default: null]
+    shot_id bigint [not null]
+    shot_size shot_sizes [default: "extreme_wide"]
+    angel angels [default: "low"]
+    focal focal_lengths [default: "mm_50"]
+    parameter json [default: "{}", note: "Custom params for the selected model."]
+
+    indexes {
+        shot_id [name: 'idx_keyframe_details_shot_id']
+    }
+}
+
+// --- kind = motion ---
+Table df_engine_motion_details {
+    id bigint [pk, increment]
+    generation_id bigint [not null]
+    updated_at timestamp [default: null]
+    archieved_at timestamp [default: null]
+    shot_id bigint [not null]
+    motion motions [default: "static"]
+    parameter json [default: "{}", note: "Custom params for the selected model."]
+
+    indexes {
+        shot_id [name: 'idx_motion_details_shot_id']
+    }
+}
+
+// --- kind = chat ---
+Table df_engine_chat_details {
+    id bigint [pk, increment]
+    generation_id bigint [not null]
+    parent_id bigint [default: null, note: "Parent chat turn — references another df_engine_generations.id where kind = 'chat'"]
+
+    indexes {
+        parent_id [name: 'idx_chat_details_parent_id']
+    }
+}
+
+// --- kind = enhancer ---
+Table df_engine_enhancer_details {
+    id bigint [pk, increment]
+    generation_id bigint [not null]
+    raw text [default: null]
+    enhanced text [default: null]
+}
+
+// kind = element uses ONLY the base df_engine_generations row — no details table needed at all.
+
+
+// ============================================================
+// GENERATION -> UDIN UPLOAD TRACKING
+// ============================================================
+
+Table df_engine_generation_uploads {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    uploaded_at timestamp [default: null, note: "Set once the upload to Udin has succeeded"]
+    generation_id bigint [not null]
+    upload_status upload_statuses [not null, default: "pending", note: "pending on creation; success once delivered to Udin; failed once sweep retries exhausted"]
+    sweep_attempts integer [not null, default: 0]
+    // NEW: fixes the "orphaned file on Udin, no matching results row" gap.
+    // Set true when the Udin upload itself succeeded but the local commit
+    // (upload_status write or generation_results upsert) kept failing after
+    // its local retry budget. Deliberately separate from upload_status=
+    // 'failed', which means the upload never landed at all and IS safe to
+    // retry -- needs_reconciliation means it's NOT safe to blindly retry,
+    // since a naive retry would re-upload a duplicate file to Udin.
+    needs_reconciliation boolean [not null, default: false, note: "True = file confirmed on Udin, local commit did not land. Do not auto-retry the upload; see df_engine_generation_reconciliation_issues for detail and resolve manually or via a dedicated reconciliation job."]
+    reconciled_at timestamp [default: null, note: "Set once a human or reconciliation job confirms the results row now matches the uploaded file"]
+
+    indexes {
+        generation_id [unique, name: 'idx_generation_uploads_generation_id']
+        (upload_status, uploaded_at) [name: 'idx_generation_uploads_status_uploaded_at']
+        needs_reconciliation [name: 'idx_generation_uploads_needs_reconciliation']
+    }
+}
+
+// NEW: detail log for Udin upload reconciliation cases, mirroring the
+// existing df_engine_api_key_rotation_issues pattern (issue_type + detail
+// + resolved_at). needs_reconciliation above is the fast filterable flag;
+// this table is where the actual investigation trail lives, and supports
+// more than one issue per upload over time if reconciliation itself fails.
+Table df_engine_generation_reconciliation_issues {
+    id bigint [pk, increment]
+    created_at timestamp [not null, default: `now()`]
+    uid char(36) [not null, unique]
+    generation_id bigint [not null]
+    upload_id bigint [default: null, note: "df_engine_generation_uploads.id at time of failure"]
+    issue_type varchar(50) [not null, note: "db_commit_failed | other future reconciliation cases"]
+    detail text [default: null, note: "The underlying exception text"]
+    resolved_at timestamp [default: null, note: "Null until a reconciliation job or human fixes the drift"]
+    resolved_by integer [default: null]
+
+    indexes {
+        generation_id [name: 'idx_reconciliation_issues_generation_id']
+        resolved_at [name: 'idx_reconciliation_issues_unresolved']
+    }
+}
+
+
+// ============================================================
+// QUEUE LIFECYCLE LOG
+// Append-only event log for Celery task lifecycle. Populated by
+// the producer (enqueued, before dispatch) and by the custom
+// GenerationTask base class handlers (started/retried/succeeded/
+// failed) — see application code, not signals, for succeeded/
+// retried/failed, since a caught business-logic failure doesn't
+// raise, so Celery's own signals would be misleading for those.
+// ============================================================
+
+Table df_engine_queues {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    task_uid varchar(36) [not null, note: "Celery task_id (uuid, auto-generated by Celery) — NOT a reference to tasks.uid (project tasks). Links every event for one task attempt chain."]
+    generation_id bigint [default: null, note: "FK to df_engine_generations.id when this queue event is generation-related"]
+    queue_name varchar(255) [not null, note: "e.g. generate_images, generate_videos"]
+    event_type queue_event_types [not null]
+    attempt integer [not null, default: 1]
+    detail json [default: null, note: "error message, retry reason/source, or task args snapshot"]
+
+    indexes {
+        task_uid [name: 'idx_queues_task_uid']
+        (generation_id, event_type) [name: 'idx_queues_generation_event']
+        (queue_name, event_type) [name: 'idx_queues_queue_event']
+        (generation_id, created_at) [name: 'idx_queues_generation_created_at']
+    }
+}
+
+
+// ============================================================
+// STORYBOARD STRUCTURE
+// ============================================================
+
+Table df_engine_storyboard_scenes {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    story_id bigint [not null, note: "References df_engine_generations.id where kind = 'storyboard'"]
+
+    indexes {
+        (story_id, created_at) [name: 'idx_storyboard_scenes_story_created_at']
+    }
+}
+
+Table df_engine_scene_shots {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    archieved_at timestamp [default: null]
+    scene_id bigint [not null]
+    name varchar(255) [default: null]
+    interior_style interior_styles [default: "interior"]
+    time_of_day time_of_days [default: "sunrise"]
+    lighting_mood lighting_moods [default: 'natural']
+
+    indexes {
+        scene_id [name: 'idx_scene_shots_scene_id']
+    }
+}
+
+
+// ============================================================
+// GENERATION OUTPUT / REFERENCES
+// ============================================================
+
+Table df_engine_upload_file_references {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    generation_id bigint [not null]
+    file_id bigint [not null]
+
+    indexes {
+        generation_id [name: 'idx_upload_file_references_generation_id']
+        file_id [name: 'idx_upload_file_references_file_id']
+        // NEW: one generation may only reference a given file once.
+        // App-level validation is added on top of this per your request.
+        (generation_id, file_id) [unique, name: 'idx_upload_file_references_unique_pair']
+    }
+
+    note: "If action comes from image generation, only fetch image data; if video generation, fetch image and video from uploaded user."
+}
+
+Table df_engine_generation_references {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    generation_id bigint [not null]
+    result_id bigint [not null]
+
+    indexes {
+        generation_id [name: 'idx_generation_references_generation_id']
+        result_id [name: 'idx_generation_references_result_id']
+        // NEW: one generation may only reference a given result once.
+        // App-level validation is added on top of this per your request.
+        (generation_id, result_id) [unique, name: 'idx_generation_references_unique_pair']
+    }
+
+    note: "References depend on the model: some accept only image reference, others combined image, audio, and video."
+}
+
+Table df_engine_generation_results {
+    id bigint [pk, increment]
+    uid varchar(36) [not null, unique]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    archieved_at timestamp [default: null]
+    generation_id bigint [default: null]
+    parent_id bigint [default: null]
+    md5 varchar(255) [default: null]
+    name varchar(255) [not null]
+    path text [not null]
+    size bigint [not null]
+    is_main bool [default: true]
+    is_favourite bool [default: false, note: "Only creator can favourite its own generated files."]
+    created_by integer [default: null]
+    updated_by integer [default: null]
+
+    indexes {
+        generation_id [name: 'idx_generation_results_generation_id']
+        parent_id [name: 'idx_generation_results_parent_id']
+    }
+
+    note: "Constraint: per parent_id, only 1 row may have is_main = true. NOTE: MySQL cannot enforce this via a partial/filtered unique index (no native support) — must be enforced at the application layer or via a generated-column + unique-index workaround if DB-level guarantee is required."
+}
+
+
+// ============================================================
+// RELATIONSHIPS (ALL foreign keys declared here, none inline)
+// ============================================================
+
+// users
+Ref: users.id < df_engine_menus.created_by
+Ref: users.id < df_engine_menus.updated_by
+Ref: users.id < df_engine_features.created_by
+Ref: users.id < df_engine_features.updated_by
+Ref: users.id < df_engine_prompt_templates.created_by
+Ref: users.id < df_engine_prompt_templates.updated_by
+Ref: users.id < df_engine_preferences.user_id
+Ref: users.id < df_engine_api_keys.created_by
+Ref: users.id < df_engine_api_keys.updated_by
+Ref: users.id < df_engine_project_settings.created_by
+Ref: users.id < df_engine_project_settings.updated_by
+Ref: users.id < df_engine_upload_files.created_by
+Ref: users.id < df_engine_upload_files.updated_by
+Ref: users.id < df_engine_setting_logs.created_by
+Ref: users.id < df_engine_generation_results.created_by
+Ref: users.id < df_engine_generation_results.updated_by
+Ref: users.id < df_engine_generations.created_by
+Ref: users.id < df_engine_generation_reconciliation_issues.resolved_by
+Ref: users.id < df_engine_model_options.deleted_by
+
+// projects / tasks
+Ref: projects.id < tasks.project_id
+Ref: projects.id < df_engine_project_settings.project_id
+Ref: projects.id < df_engine_upload_files.project_id
+Ref: projects.id < df_engine_generations.project_id
+Ref: tasks.id < df_engine_generations.task_id
+
+// menus / features
+Ref: df_engine_features.id < df_engine_feature_prompt_mappings.feature_id
+Ref: df_engine_features.id < df_engine_menu_feature_mappings.feature_id
+Ref: df_engine_features.id < df_engine_generations.feature_id
+Ref: df_engine_menus.id < df_engine_menu_feature_mappings.menu_id
+Ref: df_engine_menus.id < df_engine_generations.menu_id
+Ref: df_engine_prompt_templates.id < df_engine_feature_prompt_mappings.template_id
+
+// models
+Ref: df_engine_model_options.id < df_engine_generations.model_id
+
+// enhancer -> image/video details (self-reference into df_engine_generations)
+Ref: df_engine_generations.id < df_engine_image_generation_details.enhancer_id
+Ref: df_engine_generations.id < df_engine_video_generation_details.enhancer_id
+
+// employees
+Ref: employees.id < df_engine_api_keys.employee_id
+
+// uploads
+Ref: df_engine_upload_files.id < df_engine_upload_file_references.file_id
+Ref: df_engine_generations.id < df_engine_upload_file_references.generation_id
+
+// generation results / references
+Ref: df_engine_generation_results.id < df_engine_generation_results.parent_id
+Ref: df_engine_generation_results.id < df_engine_generation_references.result_id
+Ref: df_engine_generations.id < df_engine_generation_references.generation_id
+Ref: df_engine_generations.id < df_engine_generation_results.generation_id
+
+// unified generations -> details (1:1 subtype tables)
+Ref: df_engine_generations.id - df_engine_image_generation_details.generation_id
+Ref: df_engine_generations.id - df_engine_video_generation_details.generation_id
+Ref: df_engine_generations.id - df_engine_storyboard_details.generation_id
+Ref: df_engine_generations.id - df_engine_keyframe_details.generation_id
+Ref: df_engine_generations.id - df_engine_motion_details.generation_id
+Ref: df_engine_generations.id - df_engine_chat_details.generation_id
+Ref: df_engine_generations.id - df_engine_enhancer_details.generation_id
+Ref: df_engine_generations.id < df_engine_openrouter_logs.generation_id
+
+// unified generations -> upload tracking (1:1, only for uploadable kinds)
+Ref: df_engine_generations.id - df_engine_generation_uploads.generation_id
+
+// upload tracking -> reconciliation issues
+Ref: df_engine_generation_uploads.id < df_engine_generation_reconciliation_issues.upload_id
+Ref: df_engine_generations.id < df_engine_generation_reconciliation_issues.generation_id
+
+// unified generations -> queue lifecycle log
+Ref: df_engine_generations.id < df_engine_queues.generation_id
+
+// storyboard structure
+Ref: df_engine_generations.id < df_engine_storyboard_scenes.story_id
+Ref: df_engine_storyboard_scenes.id < df_engine_scene_shots.scene_id
+Ref: df_engine_scene_shots.id < df_engine_keyframe_details.shot_id
+Ref: df_engine_scene_shots.id < df_engine_motion_details.shot_id
+
+// chat self-reference (parent turn)
+Ref: df_engine_generations.id < df_engine_chat_details.parent_id

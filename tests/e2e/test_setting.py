@@ -24,12 +24,13 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 0
 
     # 2. first save — rows inserted; the client sends the model UID, it is stored
-    #    and returned as the name; not logged (no prior state)
+    #    and returned as {"uid", "name"}; not logged (no prior state)
+    model_ref = {"uid": model.uid, "name": model.name}
     first_save = await authed_client.call(
         "POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}, "enhancer_model": model.uid}
     )
     assert first_save.status_code == 200
-    assert first_save.json()["data"]["enhancer_model"] == model.name
+    assert first_save.json()["data"]["enhancer_model"] == model_ref
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 0
 
     # 3. no-op save — same values, no log
@@ -38,7 +39,7 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     )
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 0
 
-    # 4. real change — admin_view flipped; one log records the diff (names, not UIDs)
+    # 4. real change — admin_view flipped; one log records the diff (model as {"uid", "name"})
     await authed_client.call(
         "POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}, "enhancer_model": model.uid}
     )
@@ -47,7 +48,7 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     newest = logs["paginated"][0]
     assert newest["incoming_data"]["admin_view"] == {"see_all_asset": False}
     assert newest["previous_data"]["admin_view"] == {"see_all_asset": True}
-    assert newest["incoming_data"]["enhancer_model"] == model.name
+    assert newest["incoming_data"]["enhancer_model"] == model_ref
     assert newest["changed_fields"] == ["admin_view"]
 
     # 5. a per-project override — GET /setting/{uid} now serves it instead of the class fallback
@@ -55,16 +56,15 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
         "POST",
         f"{SETTING_URL}/{project_uid}",
         json={
-            "token_usage_limit": 3,
-            "concurent_generations": 1,
             "compose_input_max_chars": 2000,
             "storyboard_prompt_chars": 2000,
             "max_scene_per_storyboard": 2000,
             "max_shot_per_scene": 2000,
+            "token_limit_threshold": 0.25,
         },
     )
     scoped = (await authed_client.call("GET", f"{SETTING_URL}/{project_uid}")).json()["data"]
-    assert scoped["token_usage_limit"] == 3
+    assert scoped["token_limit_threshold"] == 0.25  # per-project override wins over the global value
     # the per-project save is not part of the global settings history
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 1
 

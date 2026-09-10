@@ -131,6 +131,74 @@ async def test_sync_refreshes_present_model_and_flags_missing_one_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_sync_leaves_a_soft_deleted_model_frozen_when_still_on_openrouter(
+    authed_client, db_session, mock_model_sync
+):
+    """A soft-deleted model that OpenRouter still lists is skipped entirely by
+    sync — its is_available and metadata are left exactly as they were."""
+    from utils import local_time
+
+    deleted = DfEngineModelOptionsFactory.create(
+        type="text",
+        name="Frozen Original",
+        is_available=True,
+        is_enabled=False,
+        is_main=False,
+        deleted_at=local_time(),
+        deleted_by=1,
+    )
+
+    rows = await _available_text_rows(db_session)
+    items = [
+        {**_item_from_row(r), "name": "Should Not Be Applied"} if r.model_id == deleted.model_id else _item_from_row(r)
+        for r in rows
+    ]
+    mock_model_sync.set(TEXT_PATH, items)
+
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+
+    await db_session.rollback()
+    after = (
+        await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == deleted.id))
+    ).scalar_one()
+    assert after.is_available is True  # not touched
+    assert after.name == "Frozen Original"  # metadata not refreshed
+    assert after.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_does_not_flag_a_soft_deleted_model_unavailable_when_gone_from_openrouter(
+    authed_client, db_session, mock_model_sync
+):
+    """A soft-deleted model absent from OpenRouter's response is NOT flagged
+    is_available=False — deleted models keep their availability frozen."""
+    from utils import local_time
+
+    deleted = DfEngineModelOptionsFactory.create(
+        type="text",
+        is_available=True,
+        is_enabled=False,
+        is_main=False,
+        deleted_at=local_time(),
+        deleted_by=1,
+    )
+
+    rows = await _available_text_rows(db_session)
+    items = [_item_from_row(r) for r in rows if r.model_id != deleted.model_id]
+    mock_model_sync.set(TEXT_PATH, items)
+
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+
+    await db_session.rollback()
+    after = (
+        await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == deleted.id))
+    ).scalar_one()
+    assert after.is_available is True
+
+
+@pytest.mark.asyncio
 async def test_sync_ignores_items_without_an_id(authed_client, db_session, mock_model_sync):
     """An item missing `id` is skipped, not inserted; valid items alongside it
     still sync."""
@@ -162,8 +230,9 @@ async def test_sync_nulls_engine_setting_when_main_model_goes_unavailable(authed
     and the change is written to df_engine_setting_logs."""
     await clear_setting_state(db_session)
     main_model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
+    model_ref = {"uid": main_model.uid, "name": main_model.name}
     db_session.add_all(
-        DfEngineSettings(code="admin_setting", key=key, value=json.dumps(main_model.name))
+        DfEngineSettings(code="admin_setting", key=key, value=json.dumps(model_ref))
         for key in ("enhancer_model", "assistant_model")
     )
     await db_session.commit()
@@ -193,12 +262,12 @@ async def test_sync_nulls_engine_setting_when_main_model_goes_unavailable(authed
     logs = (await db_session.execute(select(DfEngineSettingLogs))).scalars().all()
     assert len(logs) == 1
     assert logs[0].previous_data == {
-        "enhancer_model": json.dumps(main_model.name),
-        "assistant_model": json.dumps(main_model.name),
+        "enhancer_model": model_ref,
+        "assistant_model": model_ref,
     }
     assert logs[0].incoming_data == {
-        "enhancer_model": json.dumps(None),
-        "assistant_model": json.dumps(None),
+        "enhancer_model": None,
+        "assistant_model": None,
     }
 
     model_after = (

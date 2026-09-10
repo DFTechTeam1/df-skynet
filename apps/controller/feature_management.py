@@ -160,7 +160,8 @@ class FeatureManagementController(CoreDependencies):
         summary="Create a feature.",
         description=(
             "Registers a new feature (`df_engine_features` row) and, in the same call, "
-            "links it to the prompt templates given in `template_uids` — every uid must "
+            "links it to the prompt templates given in `template_uids`. `type` is required "
+            "and one of `generate_image` / `generate_video`. Every template uid must "
             "reference an existing prompt template, or the whole request fails with a 422 "
             "listing the offending indices. `template_uids` has no minimum length: omit it "
             "(or pass an empty list) to create a feature with no linked template yet, or "
@@ -199,6 +200,7 @@ class FeatureManagementController(CoreDependencies):
 
             feature = DfEngineFeatures(
                 name=schema.name,
+                type=schema.type.value,
                 description=schema.description,
                 is_active=schema.is_active,
                 created_by=int(self.user["user_id"]),
@@ -264,8 +266,9 @@ class FeatureManagementController(CoreDependencies):
         summary="Update a feature.",
         description=(
             "Replaces the feature identified by `uid` — the request body carries the full "
-            "record (`name`, `description`, `is_active`, `template_uids`), not a partial "
-            "diff. `template_uids` is the complete desired set of linked prompt templates: "
+            "record (`name`, `type`, `description`, `is_active`, `template_uids`), not a "
+            "partial diff. `type` is one of `generate_image` / `generate_video`. "
+            "`template_uids` is the complete desired set of linked prompt templates: "
             "any currently linked template missing from the list is unlinked, any new uid "
             "is linked, and unchanged ones keep their existing mapping row (not deleted "
             "and recreated). It has no minimum length — pass an empty list to unlink every "
@@ -322,6 +325,7 @@ class FeatureManagementController(CoreDependencies):
                 raise DataNotFoundError(message="feature_not_found")
 
             feature.name = schema.name
+            feature.type = schema.type.value
             feature.description = schema.description
             feature.is_active = schema.is_active
             feature.updated_by = int(self.user["user_id"])

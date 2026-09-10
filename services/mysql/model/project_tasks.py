@@ -19,9 +19,7 @@ class ProjectTasks(SQLModel, table=True):
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     uid: str = Field(sa_column=Column(CHAR(36), nullable=False))
     project_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("projects.id"), nullable=False))
-    project_board_id: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_boards.id"), nullable=False)
-    )
+    project_board_id: int = Field(sa_column=Column(BIGINT(unsigned=True), nullable=False))
     start_date: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
     end_date: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

@@ -27,6 +27,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
         URL,
         json={
             "name": feature_name,
+            "type": "generate_image",
             "description": "v1 desc",
             "template_uids": [template_a_uid, template_b_uid],
         },
@@ -34,6 +35,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     assert create_resp.status_code == 200
     created = find_by_name(create_resp.json()["data"], feature_name)
     feature_uid = created["uid"]
+    assert created["type"] == "generate_image"
     assert {t["template_uid"] for t in created["templates"]} == {
         template_a_uid,
         template_b_uid,
@@ -54,6 +56,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
         f"{URL}/{feature_uid}",
         json={
             "name": renamed,
+            "type": "generate_video",
             "description": "v2 desc",
             "is_active": False,
             "template_uids": [template_a_uid],
@@ -61,6 +64,7 @@ async def test_full_feature_lifecycle(authed_client, db_session):
     )
     assert update_resp.status_code == 200
     updated = find_by_name(update_resp.json()["data"], renamed)
+    assert updated["type"] == "generate_video"
     assert updated["is_active"] is False
     assert updated["description"] == "v2 desc"
     assert {t["template_uid"] for t in updated["templates"]} == {template_a_uid}
@@ -105,10 +109,10 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
     alpha_name = f"Alpha-{suffix}"
     beta_name = f"Beta-{suffix}"
 
-    alpha_resp = await authed_client.call("POST", URL, json={"name": alpha_name})
+    alpha_resp = await authed_client.call("POST", URL, json={"name": alpha_name, "type": "generate_image"})
     assert alpha_resp.status_code == 200
 
-    beta_resp = await authed_client.call("POST", URL, json={"name": beta_name})
+    beta_resp = await authed_client.call("POST", URL, json={"name": beta_name, "type": "generate_image"})
     assert beta_resp.status_code == 200
     beta_uid = find_by_name(beta_resp.json()["data"], beta_name)["uid"]
 
@@ -116,13 +120,15 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
     rename_conflict = await authed_client.call(
         "PATCH",
         f"{URL}/{beta_uid}",
-        json={"name": alpha_name},
+        json={"name": alpha_name, "type": "generate_image"},
         raise_for_status=False,
     )
     assert rename_conflict.status_code == 409
 
     # creating a second "alpha" from scratch conflicts too — same guard, different trigger
-    create_conflict = await authed_client.call("POST", URL, json={"name": alpha_name}, raise_for_status=False)
+    create_conflict = await authed_client.call(
+        "POST", URL, json={"name": alpha_name, "type": "generate_image"}, raise_for_status=False
+    )
     assert create_conflict.status_code == 409
 
     # beta was never actually renamed by the failed attempt
@@ -138,7 +144,9 @@ async def test_deactivating_a_mapped_template_keeps_it_in_feature_response(authe
     template_uid = find_by_name(create_template.json()["data"], template_name)["uid"]
 
     feature_name = f"Fadeout Feature {uuid4().hex[:8]}"
-    create_feature = await authed_client.call("POST", URL, json={"name": feature_name, "template_uids": [template_uid]})
+    create_feature = await authed_client.call(
+        "POST", URL, json={"name": feature_name, "type": "generate_image", "template_uids": [template_uid]}
+    )
     created = find_by_name(create_feature.json()["data"], feature_name)
     feature_uid = created["uid"]
     assert template_uid in [t["template_uid"] for t in created["templates"]]
@@ -167,12 +175,12 @@ async def test_same_template_linked_to_multiple_features(authed_client):
     await authed_client.call(
         "POST",
         URL,
-        json={"name": feature_one_name, "template_uids": [shared_template_uid]},
+        json={"name": feature_one_name, "type": "generate_image", "template_uids": [shared_template_uid]},
     )
     await authed_client.call(
         "POST",
         URL,
-        json={"name": feature_two_name, "template_uids": [shared_template_uid]},
+        json={"name": feature_two_name, "type": "generate_video", "template_uids": [shared_template_uid]},
     )
 
     resp = await authed_client.call("GET", URL)

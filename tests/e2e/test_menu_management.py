@@ -15,9 +15,9 @@ async def test_full_menu_lifecycle(authed_client, db_session):
     feature_b_name = f"Journey Feature {uuid4().hex[:8]}-B"
 
     # 1. create the two features through the existing feature-management API
-    create_a = await authed_client.call("POST", FEATURE_URL, json={"name": feature_a_name})
+    create_a = await authed_client.call("POST", FEATURE_URL, json={"name": feature_a_name, "type": "generate_image"})
     feature_a_uid = find_by_name(create_a.json()["data"], feature_a_name)["uid"]
-    create_b = await authed_client.call("POST", FEATURE_URL, json={"name": feature_b_name})
+    create_b = await authed_client.call("POST", FEATURE_URL, json={"name": feature_b_name, "type": "generate_image"})
     feature_b_uid = find_by_name(create_b.json()["data"], feature_b_name)["uid"]
 
     # 2. create a menu linked to both features
@@ -134,7 +134,9 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_client, db_session):
     """200 OK; a mapped feature stays in the menu's features array even after its own is_active goes False, and the mapping row is left intact."""
     feature_name = f"Fadeout Feature {uuid4().hex[:8]}"
-    create_feature = await authed_client.call("POST", FEATURE_URL, json={"name": feature_name})
+    create_feature = await authed_client.call(
+        "POST", FEATURE_URL, json={"name": feature_name, "type": "generate_image"}
+    )
     feature_uid = find_by_name(create_feature.json()["data"], feature_name)["uid"]
 
     menu_name = f"Fadeout Menu {uuid4().hex[:8]}"
@@ -155,7 +157,7 @@ async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_cl
     deactivate = await authed_client.call(
         "PATCH",
         f"{FEATURE_URL}/{feature_uid}",
-        json={"name": feature_name, "is_active": False},
+        json={"name": feature_name, "type": "generate_image", "is_active": False},
     )
     assert deactivate.status_code == 200
 
@@ -174,7 +176,9 @@ async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_cl
 async def test_same_feature_linked_to_multiple_menus(authed_client):
     """200 OK; the same feature can be mapped to two different menus simultaneously."""
     shared_feature_name = f"Shared {uuid4().hex[:8]}"
-    feature_resp = await authed_client.call("POST", FEATURE_URL, json={"name": shared_feature_name})
+    feature_resp = await authed_client.call(
+        "POST", FEATURE_URL, json={"name": shared_feature_name, "type": "generate_image"}
+    )
     shared_feature_uid = find_by_name(feature_resp.json()["data"], shared_feature_name)["uid"]
 
     menu_one_name = f"Menu One {uuid4().hex[:8]}"

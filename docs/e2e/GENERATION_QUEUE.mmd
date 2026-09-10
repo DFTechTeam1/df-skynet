@@ -1,0 +1,145 @@
+flowchart TD
+    Start([Start]) --> TriggerGenration
+    TriggerGenration--> ValidateProjectStatus{"Project status Ongoing?"}
+    ValidateProjectStatus-->|False|RaiseValidationError
+    ValidateProjectStatus-->|True|ValidateUserShouldAssignedonTask{"User inside project tasks?"}
+    ValidateUserShouldAssignedonTask-->|False|RaiseValidationError
+    ValidateUserShouldAssignedonTask-->|True|ValidateActiveEmployee{"Is employee still active?"}
+    ValidateActiveEmployee-->|False|RaiseValidationError
+    ValidateActiveEmployee-->|True|ValidateAPIKey{"Is main API key valid?"}
+    ValidateAPIKey-->|False|RaiseValidationError
+    ValidateAPIKey-->|True|ValidatePayload{"Validate payload against chosen model"}
+    ValidatePayload -->|True| InsertInitRecord["Insert initial df_engine_generations record<br/>(status = queued)"]
+    ValidatePayload -->|False| RaiseValidationError
+    InsertInitRecord --> ReturnUserLocationResponse["Build response per generation<br/>(status: queued, processing, success, or failed)"]
+    ReturnUserLocationResponse --> SetCache
+    SetCache --> End([End])
+    RaiseValidationError --> End
+
+    InsertInitRecord-->|"kind = image | video"|LogEnqueued["INSERT df_engine_queues<br/>event=enqueued, attempt=1<br/>(producer-side, before_task_publish -- unchanged)"]
+    LogEnqueued-->ProcessGenerationChain
+
+    %% ================= RELIABILITY NOTES (READ FIRST) =================
+    %% R1 -- UNIFIED RETRY POLICY (replaces the old "5xx=instant fail,
+    %%   4xx=1 retry" split, which was backwards):
+    %%   Every external call (Openrouter, Udin) is wrapped in a single
+    %%   try/except-all. ANY exception -- HTTPError, Timeout,
+    %%   ConnectionError, SoftTimeLimitExceeded, JSONDecodeError, etc --
+    %%   is normalized into GenerationStageError(source, status_code,
+    %%   retryable) before it can escape un-typed.
+    %%   Classification (shared by Openrouter and Udin stages):
+    %%     - 5xx, timeout, connection/network errors, SoftTimeLimitExceeded -> retryable
+    %%     - 429                                                            -> retryable, honor Retry-After header
+    %%     - 4xx (anything else)                                            -> NOT retryable (final)
+    %%   Backoff: exponential + jitter (base 2s, cap 60s), max_retries=5.
+    %%   Celery: acks_late=True, reject_on_worker_lost=True,
+    %%           retry_backoff=True, retry_jitter=True.
+    %%   Task: soft_time_limit=280s, time_limit=300s around each stage call
+    %%   (a SoftTimeLimitExceeded is caught and fed into the same classifier
+    %%   as a retryable error -- fixes the "hung call occupies a worker
+    %%   forever" gap).
+    %%
+    %% R2 -- IDEMPOTENCY GUARD (fixes "retry restarts the whole chain" AND
+    %%   makes acks_late-driven worker-crash redelivery SAFE instead of
+    %%   dangerous):
+    %%   First thing run() does is re-read the generation's current state:
+    %%     - status already 'success'              -> replay retval from stored row, no-op into on_success
+    %%     - openrouter response already stored     -> skip Stage 1 entirely, resume at Udin
+    %%     - upload_status already 'success'        -> skip Stage 2 entirely, resume at commit
+    %%   Every retry / redelivery / reaper requeue goes through this same
+    %%   check, so nothing already durably completed is ever re-billed
+    %%   (Openrouter) or re-uploaded (Udin).
+    %%
+    %% R3 -- COMMIT SPLIT FROM UPLOAD (fixes the orphan-file risk: Udin
+    %%   upload succeeds but the local DB write after it fails):
+    %%   The instant Udin upload succeeds, upload_status=success is
+    %%   persisted FIRST, via a short local retry loop (3x, small backoff --
+    %%   this is a local DB write, not worth a full Celery retry cycle).
+    %%   Only after that succeeds is df_engine_generation_results upserted
+    %%   (idempotent on generation_id, safe to re-run). If the local writes
+    %%   keep failing, raise GenerationStageError(source='db_commit',
+    %%   final=True, needs_reconciliation=True) -- on_failure marks this
+    %%   generation for manual/ops reconciliation instead of a normal
+    %%   can_retry=true failure, because blindly retrying would re-upload a
+    %%   duplicate file to Udin for work that already landed.
+    %%
+    %% R4 -- WATCHDOG / REAPER (fixes a task getting stuck at 'processing'
+    %%   forever if a worker is killed or a message is lost, even with
+    %%   acks_late):
+    %%   Celery-beat job, every 60s, scans df_engine_queues for
+    %%   event=started with no matching succeeded/failed/retried within
+    %%   (soft_time_limit + grace). Re-enqueues through the SAME
+    %%   idempotency-guarded run() (safe per R2), capped at 2 reaper
+    %%   attempts, then force-fails with can_retry=true so it's at least
+    %%   visible and actionable instead of silently stuck.
+    %%
+    %% R5 -- PUSHER ISOLATION (a notification outage must never block the
+    %%   state-of-record writes it's reporting on):
+    %%   Every handler wraps pusher.trigger(...) in its own try/except;
+    %%   failures are logged + counted, never re-raised. The df_engine_queues
+    %%   insert and Redis cache write always happen first and are
+    %%   unaffected by pusher failing.
+    %% =====================================================================
+
+    subgraph GenerationTaskHandlers["GenerationTask base class -- acks_late=True, reject_on_worker_lost=True -- fires around run()"]
+        direction TB
+        H_before_start["before_start()<br/>INSERT df_engine_queues: event=started, attempt=request.retries+1<br/>UPDATE Redis cache: status='On Process'<br/>try: pusher(status=processing) except: log &amp; continue (R5)"]
+        H_on_retry["on_retry(exc)<br/>reads exc.source / exc.status_code / exc.retryable<br/>INSERT df_engine_queues: event=retried, attempt=request.retries+2<br/>backoff = min(2^attempt + jitter, 60s); honor Retry-After if present (429)<br/>try: pusher(status=retrying) except: log &amp; continue<br/>-- no cache write: still 'On Process' externally"]
+        H_on_failure["on_failure(exc)<br/>reads exc.source / exc.status_code / exc.final / exc.needs_reconciliation<br/>INSERT df_engine_queues: event=failed, attempt=request.retries+1<br/>IF exc.source=='db_commit': UPDATE cache: status='Failed', needs_reconciliation=true, can_retry=false<br/>ELSE: UPDATE cache: status='Failed', can_retry=true, can_archieve=true<br/>try: pusher(status=failed) except: log &amp; continue"]
+        H_on_success["on_success(retval)<br/>INSERT df_engine_queues: event=succeeded, attempt=request.retries+1<br/>UPDATE Redis cache: status='Success', can_retry=false, can_archieve=true,<br/>&nbsp;&nbsp;name/size/md5/path from retval<br/>try: pusher(status=success) except: log &amp; continue"]
+    end
+
+    subgraph ProcessGenerationChain["Queue: ImageGeneration OR VideoGeneration, autoscale(10,1), rate_limit 10/s -- soft_time_limit=280s, time_limit=300s"]
+
+        WorkerPickup["Worker picks up task<br/>(queue = ImageGeneration if kind=image, VideoGeneration if kind=video)"] -.->|triggers| H_before_start
+        H_before_start --> IdempotencyGuard{"R2: resume-point check --<br/>status already 'success'? /<br/>openrouter response already stored? /<br/>upload_status already 'success'?"}
+
+        IdempotencyGuard -->|"already success"| SkipToSuccessReplay["Build retval from existing<br/>generation_results row (no external calls)"]
+        SkipToSuccessReplay -.->|"return (idempotent no-op)"| H_on_success
+
+        IdempotencyGuard -->|"openrouter done, udin pending"| UdinFileUploader
+        IdempotencyGuard -->|"nothing done yet"| SetProcessing["Update record status = processing"]
+
+        subgraph OpenrouterGenerationCaller["Stage 1: Call Openrouter (every exception normalized)"]
+            SetProcessing --> OpenouterGeneration["Call Openrouter API<br/>(duration_ms timer; capped by soft_time_limit)"]
+            OpenouterGeneration-->|Success|UpdateGenerationRecordSuccess["UPDATE df_engine_generations: response, status_code, token_usage, cost<br/>INSERT df_engine_generation_uploads (generation_id, upload_status='pending')<br/>INSERT df_engine_openrouter_logs: full req/resp, duration_ms"]
+            OpenouterGeneration-->|"any exception (5xx / timeout / network / 429 / other 4xx / soft-time-limit)"|ClassifyOpenrouter{"R1 classifier:<br/>5xx, timeout, network, 429 -> retryable<br/>other 4xx -> final"}
+            ClassifyOpenrouter -->|"retryable, retries &lt; 5"| DoRetryOpenrouter["INSERT df_engine_openrouter_logs: error, duration_ms<br/>raise self.retry(exc=GenerationStageError(source='openrouter', retryable=True), backoff+jitter)"]
+            ClassifyOpenrouter -->|"retryable, retries exhausted"| DoFailOpenrouterExhausted["INSERT df_engine_openrouter_logs: error, duration_ms<br/>raise GenerationStageError(source='openrouter', final=True)"]
+            ClassifyOpenrouter -->|"final (non-429 4xx)"| RaiseFailFromOpenrouter["INSERT df_engine_openrouter_logs: error, duration_ms<br/>raise GenerationStageError(source='openrouter', final=True)"]
+            DoRetryOpenrouter-.->|caught by|H_on_retry
+            DoFailOpenrouterExhausted-.->|caught by|H_on_failure
+            RaiseFailFromOpenrouter-.->|caught by|H_on_failure
+            H_on_retry-.->|"redelivers after backoff -- idempotency guard skips completed work"| WorkerPickup
+            UpdateGenerationRecordSuccess-->UdinFileUploader
+        end
+
+        subgraph UdinFileUploaderCaller["Stage 2: Call Udin (every exception normalized)"]
+            UdinFileUploader["Call Udin API<br/>(duration_ms timer; capped by soft_time_limit)"]
+            UdinFileUploader-->|Success|MarkUploadSuccessFirst["R3: UPDATE df_engine_generation_uploads:<br/>uploaded_at=now(), upload_status=success<br/>(local retry x3, short backoff -- plain DB write, not a Celery retry)"]
+            MarkUploadSuccessFirst -->|"local write ok"| InsertGenerationResult["UPSERT df_engine_generation_results (by generation_id, idempotent)<br/>return {generation_id, status: success, name, size, md5, path}"]
+            MarkUploadSuccessFirst -->|"local write keeps failing after 3x"| RaiseDbCommitError["raise GenerationStageError(source='db_commit', final=True,<br/>needs_reconciliation=True) -- file IS on Udin, DB not caught up yet"]
+            RaiseDbCommitError-.->|caught by|H_on_failure
+            InsertGenerationResult-.->|triggers|H_on_success
+            UdinFileUploader-->|"any exception (5xx / timeout / network / 429 / other 4xx / soft-time-limit)"|ClassifyUdin{"R1 classifier (same rule as Stage 1)"}
+            ClassifyUdin -->|"retryable, retries &lt; 5"| DoRetryUdin["UPDATE df_engine_generation_uploads: sweep_attempts += 1<br/>raise self.retry(exc=GenerationStageError(source='udin', retryable=True), backoff+jitter)"]
+            ClassifyUdin -->|"retryable, retries exhausted"| DoFailUdinExhausted["UPDATE df_engine_generation_uploads: upload_status=failed<br/>raise GenerationStageError(source='udin', final=True)"]
+            ClassifyUdin -->|"final (non-429 4xx)"| RaiseFailFromUdin["UPDATE df_engine_generation_uploads: upload_status=failed<br/>raise GenerationStageError(source='udin', final=True)"]
+            DoRetryUdin-.->|caught by|H_on_retry
+            DoFailUdinExhausted-.->|caught by|H_on_failure
+            RaiseFailFromUdin-.->|caught by|H_on_failure
+            H_on_retry-.->|"redelivers after backoff -- idempotency guard resumes at Udin, never re-uploads if already success"| WorkerPickup
+        end
+    end
+
+    subgraph WatchdogReaper["R4: Celery-beat periodic reaper -- every 60s, independent of GenerationTaskHandlers"]
+        direction TB
+        ScanStale["Scan df_engine_queues for event=started<br/>with no succeeded/failed/retried within (soft_time_limit + grace)"]
+        ScanStale --> CheckReaperAttempts{"reaper_attempts &lt; 2?"}
+        CheckReaperAttempts -->|Yes| Requeue["Re-enqueue same generation through idempotency-guarded run()<br/>reaper_attempts += 1"]
+        CheckReaperAttempts -->|No| ForceFail["Force status=Failed, can_retry=true, can_archieve=true<br/>try: pusher(status=failed, reason=stalled) except: log"]
+        Requeue -.-> WorkerPickup
+    end
+
+    H_on_failure-->End
+    H_on_success-->End

@@ -21,12 +21,12 @@ def project_class_config(project_classes: list[ProjectClasses]) -> list[dict]:
             "id": pc.id,
             "name": pc.name,
             "color": pc.color,
-            "token_usage_limit": 1,
-            "concurent_generations": 1,
+            "token_usage_limit": 10,
             "compose_input_max_chars": 2000,
             "storyboard_prompt_chars": 2000,
             "max_scene_per_storyboard": 10,
             "max_shot_per_scene": 100,
+            "token_limit_threshold": 0.8,
         }
         for pc in project_classes
     ]
@@ -49,7 +49,6 @@ async def seed() -> None:
         "project_class_limitations": project_class_config(project_classes),
         "enhancer_model": None,
         "assistant_model": None,
-        "threshold_token_usage_limit": 0.8,
     }
     for key, value in settings.items():
         DfEngineSettingsFactory.create(key=key, value=json.dumps(value), code=SETTING_CODE)

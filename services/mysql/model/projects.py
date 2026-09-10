@@ -61,8 +61,7 @@ class Projects(SQLModel, table=True):
     latitude: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
     feedback: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     project_class_id: Optional[int] = Field(
-        default=None,
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_classes.id")),
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_classes.id"))
     )
 
     project_classes: Optional["ProjectClasses"] = Relationship(back_populates="projects")  # type: ignore

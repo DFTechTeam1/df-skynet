@@ -131,12 +131,18 @@ async def test_pagination_shape_and_total_data(authed_client):
 
 @pytest.mark.asyncio
 async def test_action_flags_available_enabled_not_main(authed_client):
-    """200 OK; an available, enabled, non-main model can both be toggled and set main."""
+    """200 OK; an available, enabled, non-main model can be toggled and set main,
+    but not deleted (it's enabled) and not recovered (it's not deleted)."""
     row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert item["action"] == {"can_enable_disable": True, "can_set_as_main": True}
+    assert item["action"] == {
+        "can_enable_disable": True,
+        "can_set_as_main": True,
+        "can_delete": False,
+        "can_recover": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -148,17 +154,28 @@ async def test_action_flags_already_main_can_set_main_again(authed_client):
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert item["action"] == {"can_enable_disable": True, "can_set_as_main": True}
+    assert item["action"] == {
+        "can_enable_disable": True,
+        "can_set_as_main": True,
+        "can_delete": False,
+        "can_recover": False,
+    }
 
 
 @pytest.mark.asyncio
 async def test_action_flags_disabled_cannot_set_main(authed_client):
-    """200 OK; a disabled model shows can_set_as_main=False (not eligible until enabled)."""
+    """200 OK; a disabled, available, non-main model shows can_set_as_main=False
+    but can_delete=True (eligible for soft-delete)."""
     row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert item["action"] == {"can_enable_disable": True, "can_set_as_main": False}
+    assert item["action"] == {
+        "can_enable_disable": True,
+        "can_set_as_main": False,
+        "can_delete": True,
+        "can_recover": False,
+    }
 
 
 @pytest.mark.asyncio

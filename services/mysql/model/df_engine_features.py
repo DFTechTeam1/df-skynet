@@ -1,5 +1,4 @@
 from datetime import datetime
-from functools import cached_property
 from typing import Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, Relationship, SQLModel
@@ -16,6 +15,7 @@ class DfEngineFeatures(SQLModel, table=True):
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     name: str = Field(sa_column=Column(String(255), nullable=False, unique=True))
+    type: str = Field(sa_column=Column(String(255), nullable=False))
     description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     is_active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     created_by: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=False))
@@ -36,7 +36,3 @@ class DfEngineFeatures(SQLModel, table=True):
     df_engine_menu_feature_mappings: list["DfEngineMenuFeatureMappings"] = Relationship(  # type: ignore
         back_populates="df_engine_features"
     )
-
-    @cached_property
-    def df_engine_prompt_template_snapshots(self) -> list["DfEnginePromptTemplateSnapshots"]:  # type: ignore
-        return []

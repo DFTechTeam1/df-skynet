@@ -1,7 +1,7 @@
 import json
 import time
 import traceback
-from typing import Any, Optional, Literal
+from typing import Optional, Literal
 from uuid import UUID
 from fastapi import status, Path, Query, Request
 from fastapi_controller import controller
@@ -14,14 +14,16 @@ from services.redis import get_json, set_json, delete_pattern, CacheKeys
 from log import logging
 from apps.secret import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
-from utils import epoch_to_wib, local_time
-from utils.formatter import format_datetime
+from utils import local_time
 from utils.serializer import serialize
 from services.mysql import query
-from utils.serializer import serialize
 from services.api_caller import APICaller
+from services.model_management import ModelManagement
 from services.mysql.model import Employees, DfEngineOpenrouterLogs, DfEngineSettings, DfEngineSettingLogs, Users
 from utils.formatter import format_date
+
+
+model_management_service = ModelManagement()
 
 
 class ModelManagementController(CoreDependencies):
@@ -30,12 +32,14 @@ class ModelManagementController(CoreDependencies):
         summary="List models synced from OpenRouter.",
         description=(
             "Returns `df_engine_model_options` rows still available on OpenRouter "
-            "(`is_available = true`), paginated and ordered by type then name. Models "
-            "the sync endpoint has flagged unavailable are excluded. Pass `type` to "
-            "restrict results to one usage type, `search` to filter by name "
-            "(case-insensitive, prefix match), and/or `is_enabled` to view only "
-            "enabled or only disabled models — e.g. list enabled models as the pool "
-            "to pick a new main from, without a separate endpoint."
+            "(`is_available = true`) and not soft-deleted, paginated and ordered by "
+            "type then name. Models the sync endpoint has flagged unavailable are "
+            "excluded. Pass `type` to restrict results to one usage type, `search` to "
+            "filter by name (case-insensitive, prefix match), and/or `is_enabled` to "
+            "view only enabled or only disabled models. Pass `is_deleted=true` to list "
+            "the soft-deleted models instead (the recovery view) — availability is "
+            "ignored there. Each row's `action` block reports `can_delete` / "
+            "`can_recover` alongside the enable/main flags."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],
@@ -57,27 +61,31 @@ class ModelManagementController(CoreDependencies):
             default=None,
             description="Filter by enabled state. Omit to include both enabled and disabled models.",
         ),
+        is_deleted: Optional[bool] = Query(
+            default=None,
+            description=(
+                "Omit or pass false for the normal list (available, not deleted). Pass true to list only "
+                "soft-deleted models — the recovery view; `is_available` is not applied there."
+            ),
+        ),
         page: int = Query(default=1, ge=1, description="1-indexed page number to fetch."),
         itemsPerPage: int = Query(default=500, ge=1, le=500, description="Number of records to return per page."),
     ) -> Response:
         response = Response()
         cache_key = CacheKeys()
         try:
-            models_cache_key = cache_key.model_pagination(page, itemsPerPage, search, type, is_enabled)
+            models_cache_key = cache_key.model_pagination(page, itemsPerPage, search, type, is_enabled, is_deleted)
             cached = await get_json(self.redis, models_cache_key)
             if cached is not None:
                 logging.info(f"user={self.user['user_id']} listed model options source=cache key={models_cache_key}")
                 response.data = PaginationResponse(paginated=cached["models"], totalData=cached["total_data"])
                 return response
 
-            conditions: list[Any] = [DfEngineModelOptions.is_available.is_(True)]  # type: ignore
-            if type:
-                conditions.append(DfEngineModelOptions.type == type)  # type: ignore
-            if search:
-                conditions.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
-            if is_enabled is not None:
-                conditions.append(DfEngineModelOptions.is_enabled.is_(is_enabled))  # type: ignore
-            filters = tuple(conditions)
+            filters = tuple(
+                model_management_service.list_conditions(
+                    is_deleted=is_deleted, type=type, search=search, is_enabled=is_enabled
+                )
+            )
 
             total_data = (
                 await query(
@@ -99,21 +107,12 @@ class ModelManagementController(CoreDependencies):
                 offset=(page - 1) * itemsPerPage,
             )
 
-            models = []
-            for record in serialize(records):
-                record["last_sync_at"] = format_datetime(record["last_sync_at"])
-                record["created"] = format_datetime(epoch_to_wib(record["created"]))
-                record["action"] = {
-                    "can_enable_disable": True,
-                    "can_set_as_main": True if record["is_enabled"] else False,
-                }
-                record.pop("is_available", None)
-                record.pop("id", None)
-                models.append(record)
+            models = [model_management_service.format(record, for_list=True) for record in serialize(records)]
 
             logging.info(
                 f"user={self.user['user_id']} listed model options type={type!r} search={search!r} "
-                f"is_enabled={is_enabled} page={page} size={itemsPerPage} count={len(models)} total={total_data}"
+                f"is_enabled={is_enabled} is_deleted={is_deleted} page={page} size={itemsPerPage} "
+                f"count={len(models)} total={total_data}"
             )
             await set_json(self.redis, models_cache_key, {"models": models, "total_data": total_data})
             response.data = PaginationResponse(paginated=models, totalData=total_data)
@@ -174,16 +173,101 @@ class ModelManagementController(CoreDependencies):
                 f"is_enabled={model.is_enabled} is_main={model.is_main}"
             )
 
-            formatted_model = serialize(model)
-            formatted_model["last_sync_at"] = format_datetime(formatted_model["last_sync_at"])
-            formatted_model["created"] = format_datetime(epoch_to_wib(formatted_model["created"]))
-            formatted_model.pop("id", None)
-            formatted_model["action"] = {
-                "can_enable_disable": True,
-                "can_set_as_main": True if formatted_model["is_enabled"] else False,
-            }
             await delete_pattern(self.redis, cache_key.model_pagination_pattern())
-            response.data = formatted_model
+            response.data = model_management_service.format(serialize(model))
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.delete(
+        "/models/{uid}",
+        summary="Soft-delete a model.",
+        description=(
+            "Marks a model as deleted (`deleted_at` set to now, `deleted_by` set to the "
+            "authenticated user) so it drops out of the default list. Only allowed when "
+            "the model is still available on OpenRouter, is not enabled, and is not the "
+            "main model — 422 otherwise. Nothing is removed from the database; recover it "
+            "with `PATCH /models/{uid}/recover`. Returns the updated model."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Model Management"],
+        response_model=Response,
+    )
+    async def model_management_to_delete_model(
+        self,
+        uid: UUID = Path(..., description="Model UID.", examples=["8d96ff4e-5c35-4329-bd5d-827e2c68599d"]),
+    ) -> Response:
+        response = Response()
+        cache_key = CacheKeys()
+        try:
+            model = await query(
+                db=self.db, table=DfEngineModelOptions, filters=(DfEngineModelOptions.uid == str(uid),), fetch_one=True
+            )
+            if not model:
+                raise DataNotFoundError(message="model_option_not_found")
+            if model.deleted_at is not None:
+                raise DataValidationError(message="model_option_already_deleted")
+            # is_main implies is_enabled (DB check constraint), so test main first
+            # or its message would never surface.
+            if model.is_main:
+                raise DataValidationError(message="model_option_main_cannot_be_deleted")
+            if model.is_enabled:
+                raise DataValidationError(message="model_option_active_cannot_be_deleted")
+            if model.is_available is False:
+                raise DataValidationError(message="model_option_unavailable_cannot_be_deleted")
+
+            model.deleted_at = local_time()
+            model.deleted_by = int(self.user["user_id"])
+            await self.db.flush()
+            logging.info(f"user={self.user['user_id']} soft-deleted model uid={model.uid} model_id={model.model_id}")
+
+            await delete_pattern(self.redis, cache_key.model_pagination_pattern())
+            response.data = model_management_service.format(serialize(model))
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/models/{uid}/recover",
+        summary="Recover a soft-deleted model.",
+        description=(
+            "Undoes a soft-delete: clears `deleted_at` and `deleted_by` so the model "
+            "returns to the normal list. 422 if the model is not currently deleted. "
+            "Its `is_available` is whatever the last sync left it at — run a sync to "
+            "refresh it. Returns the updated model."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Model Management"],
+        response_model=Response,
+    )
+    async def model_management_to_recover_model(
+        self,
+        uid: UUID = Path(..., description="Model UID.", examples=["8d96ff4e-5c35-4329-bd5d-827e2c68599d"]),
+    ) -> Response:
+        response = Response()
+        cache_key = CacheKeys()
+        try:
+            model = await query(
+                db=self.db, table=DfEngineModelOptions, filters=(DfEngineModelOptions.uid == str(uid),), fetch_one=True
+            )
+            if not model:
+                raise DataNotFoundError(message="model_option_not_found")
+            if model.deleted_at is None:
+                raise DataValidationError(message="model_option_not_deleted")
+
+            model.deleted_at = None
+            model.deleted_by = None
+            await self.db.flush()
+            logging.info(f"user={self.user['user_id']} recovered model uid={model.uid} model_id={model.model_id}")
+
+            await delete_pattern(self.redis, cache_key.model_pagination_pattern())
+            response.data = model_management_service.format(serialize(model))
         except BaseError:
             raise
         except Exception:
@@ -200,7 +284,9 @@ class ModelManagementController(CoreDependencies):
             "models not seen before are inserted, models already on file are refreshed "
             "and marked available, and models on file that OpenRouter no longer returns "
             "are flagged `is_available = false` rather than deleted, so `is_main` / "
-            "`is_enabled` history is preserved. Every OpenRouter call — success or "
+            "`is_enabled` history is preserved. Soft-deleted models are skipped entirely "
+            "— their `is_available` is left frozen until they are recovered. Every "
+            "OpenRouter call — success or "
             "failure — is recorded in the audit log."
         ),
         status_code=status.HTTP_200_OK,
@@ -249,6 +335,10 @@ class ModelManagementController(CoreDependencies):
                                 model_id=model_id,
                                 type=model_type,  # type: ignore
                             )
+                            # A soft-deleted model stays frozen: sync neither refreshes
+                            # it nor touches its is_available. Recover it to bring it back.
+                            if row.deleted_at is not None:
+                                continue
                             row.name = item.get("name") or model_id
                             row.created = item.get("created")
                             row.description = item.get("description")
@@ -273,11 +363,14 @@ class ModelManagementController(CoreDependencies):
                             self.db.add(row)
 
                         disabled_main_names: set[str] = set()
+                        disabled_main_uids: set[str] = set()
                         for model_id, row in saved_by_model_id.items():
-                            if model_id not in fetched_model_ids:
+                            # Deleted models keep their is_available frozen, matched or not.
+                            if model_id not in fetched_model_ids and row.deleted_at is None:
                                 row.is_available = False
                                 if row.is_main:
                                     disabled_main_names.add(row.name)
+                                    disabled_main_uids.add(row.uid)
 
                         if model_type == "text" and disabled_main_names:
                             setting_rows = await query(
@@ -285,16 +378,25 @@ class ModelManagementController(CoreDependencies):
                                 table=DfEngineSettings,
                                 filters=(DfEngineSettings.key.in_(["assistant_model", "enhancer_model"]),),  # type: ignore
                             )
-                            previous = {row.key: row.value for row in setting_rows}
+                            previous = {row.key: (json.loads(row.value) if row.value else None) for row in setting_rows}
                             cleared = False
                             for row in setting_rows:
-                                if (row.value or "").strip('"') in disabled_main_names:
+                                stored = json.loads(row.value) if row.value else None
+                                # New shape: {"uid", "name"} — match on uid. Legacy shape: bare name string.
+                                matched = (
+                                    stored.get("uid") in disabled_main_uids
+                                    if isinstance(stored, dict)
+                                    else stored in disabled_main_names
+                                )
+                                if matched:
                                     row.value = json.dumps(None)
                                     row.updated_at = local_time()
                                     cleared = True
 
                             if cleared:
-                                incoming = {row.key: row.value for row in setting_rows}
+                                incoming = {
+                                    row.key: (json.loads(row.value) if row.value else None) for row in setting_rows
+                                }
                                 user_data = await query(
                                     db=self.db,
                                     table=Users,

@@ -104,23 +104,8 @@ async def get_user(
                 options={"require_exp": True, "require_iat": True},
             )
         except JWTError as e:
-            new_timestamp = (local_time() + timedelta(days=1)).timestamp()
-            current_timestamp = local_time().timestamp()
-            logging.warning(f"auth: DEV BYPASS active, forging root claims on {route} from {client_ip}: {e}")
-
-            claims = {
-                "iss": JWT_ISSUER,
-                "aud": JWT_AUDIENCE,
-                "sub": "42",
-                "jti": str(uuid4()),
-                "iat": current_timestamp,
-                "exp": new_timestamp,
-                "roles": ["root"],
-                "permissions": [],
-            }
-        # except JWTError as e:
-        #     logging.warning(f"auth: token rejected on {route} from {client_ip}: {e}")
-        #     raise AuthenticationError()
+            logging.warning(f"auth: token rejected on {route} from {client_ip}: {e}")
+            raise AuthenticationError()
         user_id = claims.get("sub")
         if not user_id:
             logging.warning(f"auth: valid token with no 'sub' claim on {route} from {client_ip}")

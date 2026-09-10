@@ -26,14 +26,14 @@ async def test_fetch_returns_saved_values(authed_client, db_session, project_cla
         URL,
         json={
             "admin_view": {"see_all_asset": False},
-            "project_class_limitations": [{"id": project_class_id, "token_usage_limit": 25}],
+            "project_class_limitations": [{"id": project_class_id, "compose_input_max_chars": 25}],
         },
     )
 
     body = (await authed_client.call("GET", URL)).json()["data"]
     assert body["admin_view"] == {"see_all_asset": False}
     saved = next(row for row in body["project_class_limitations"] if row["id"] == project_class_id)
-    assert saved["token_usage_limit"] == 25
+    assert saved["compose_input_max_chars"] == 25
 
 
 @pytest.mark.asyncio
@@ -42,17 +42,17 @@ async def test_fetch_lists_every_project_class(authed_client, db_session, projec
     with its name and colour, even when only one class was sent."""
     await clear_setting_state(db_session)
     await authed_client.call(
-        "POST", URL, json={"project_class_limitations": [{"id": project_class_id, "token_usage_limit": 3}]}
+        "POST", URL, json={"project_class_limitations": [{"id": project_class_id, "compose_input_max_chars": 3}]}
     )
 
     rows = (await authed_client.call("GET", URL)).json()["data"]["project_class_limitations"]
     assert len(rows) >= 2
-    assert all({"id", "name", "color", "token_usage_limit"} <= set(row) for row in rows)
+    assert all({"id", "name", "color", "compose_input_max_chars"} <= set(row) for row in rows)
 
 
 @pytest.mark.asyncio
-async def test_fetch_returns_enhancer_and_assistant_model_name(authed_client, db_session):
-    """200 OK; enhancer_model/assistant_model come back as the model name, not a bare UID."""
+async def test_fetch_returns_enhancer_and_assistant_model_ref(authed_client, db_session):
+    """200 OK; enhancer_model/assistant_model come back as {"uid", "name"}, not a bare UID or name."""
     await clear_setting_state(db_session)
     enhancer = DfEngineModelOptionsFactory.create(
         name="Enhancer-A", type="text", is_available=True, is_enabled=True, is_main=False
@@ -63,8 +63,8 @@ async def test_fetch_returns_enhancer_and_assistant_model_name(authed_client, db
     await authed_client.call("POST", URL, json={"enhancer_model": enhancer.uid, "assistant_model": assistant.uid})
 
     body = (await authed_client.call("GET", URL)).json()["data"]
-    assert body["enhancer_model"] == enhancer.name
-    assert body["assistant_model"] == assistant.name
+    assert body["enhancer_model"] == {"uid": enhancer.uid, "name": enhancer.name}
+    assert body["assistant_model"] == {"uid": assistant.uid, "name": assistant.name}
 
 
 @pytest.mark.asyncio

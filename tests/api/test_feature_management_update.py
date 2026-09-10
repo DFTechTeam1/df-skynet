@@ -24,17 +24,18 @@ def _make_template(user_id):
 
 @pytest.mark.asyncio
 async def test_update_replaces_name_description_and_active(authed_client, user_id):
-    """200 OK; PATCH is a full replace of name/description/is_active, not a partial diff."""
+    """200 OK; PATCH is a full replace of name/type/description/is_active, not a partial diff."""
     feature = _make_feature(user_id)
     renamed = f"{feature.name}-v2"
 
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{feature.uid}",
-        json={"name": renamed, "description": "new desc", "is_active": False},
+        json={"name": renamed, "type": "generate_video", "description": "new desc", "is_active": False},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], renamed)
+    assert item["type"] == "generate_video"
     assert item["description"] == "new desc"
     assert item["is_active"] is False
 
@@ -55,6 +56,7 @@ async def test_update_add_and_remove_templates_in_one_call(authed_client, user_i
         f"{URL}/{feature.uid}",
         json={
             "name": feature.name,
+            "type": "generate_image",
             "template_uids": [kept.uid, added.uid],
         },
     )
@@ -76,7 +78,7 @@ async def test_update_preserves_mapping_uid_for_unchanged_template(authed_client
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{feature.uid}",
-        json={"name": feature.name, "template_uids": [template.uid]},
+        json={"name": feature.name, "type": "generate_image", "template_uids": [template.uid]},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], feature.name)
@@ -101,7 +103,7 @@ async def test_update_empty_template_uids_unlinks_everything(authed_client, user
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{feature.uid}",
-        json={"name": feature.name, "template_uids": []},
+        json={"name": feature.name, "type": "generate_image", "template_uids": []},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], feature.name)
@@ -118,7 +120,7 @@ async def test_update_deactivating_keeps_its_menu_mappings(authed_client, db_ses
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{feature.uid}",
-        json={"name": feature.name, "is_active": False},
+        json={"name": feature.name, "type": "generate_image", "is_active": False},
     )
     assert resp.status_code == 200
     await db_session.commit()
@@ -141,7 +143,7 @@ async def test_update_unknown_uid_is_404(authed_client):
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{uuid4()}",
-        json={"name": f"Ghost {uuid4().hex[:8]}"},
+        json={"name": f"Ghost {uuid4().hex[:8]}", "type": "generate_image"},
         raise_for_status=False,
     )
     assert resp.status_code == 404
@@ -157,7 +159,7 @@ async def test_update_unknown_template_uid_is_422(authed_client, user_id):
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{feature.uid}",
-        json={"name": feature.name, "template_uids": [unknown_uid]},
+        json={"name": feature.name, "type": "generate_image", "template_uids": [unknown_uid]},
         raise_for_status=False,
     )
     assert resp.status_code == 422
@@ -175,7 +177,7 @@ async def test_update_rename_into_collision_is_409(authed_client, user_id):
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{other.uid}",
-        json={"name": existing.name},
+        json={"name": existing.name, "type": "generate_image"},
         raise_for_status=False,
     )
     assert resp.status_code == 409
@@ -189,7 +191,7 @@ async def test_requires_auth(client, user_id):
     resp = await client.call(
         "PATCH",
         f"{URL}/{feature.uid}",
-        json={"name": feature.name},
+        json={"name": feature.name, "type": "generate_image"},
         raise_for_status=False,
     )
     assert resp.status_code == 401
@@ -203,7 +205,7 @@ async def test_update_invalidates_the_detail_cache(authed_client, user_id):
     assert detail_before.json()["data"]["name"] == feature.name
 
     renamed = f"{feature.name}-v2"
-    await authed_client.call("PATCH", f"{URL}/{feature.uid}", json={"name": renamed})
+    await authed_client.call("PATCH", f"{URL}/{feature.uid}", json={"name": renamed, "type": "generate_image"})
 
     detail_after = await authed_client.call("GET", f"{URL}/{feature.uid}")
     assert detail_after.json()["data"]["name"] == renamed
@@ -217,7 +219,7 @@ async def test_update_invalidates_the_list_cache(authed_client, user_id):
     assert await redis_client().exists("feature_management:list:all")
 
     renamed = f"{feature.name}-v2"
-    await authed_client.call("PATCH", f"{URL}/{feature.uid}", json={"name": renamed})
+    await authed_client.call("PATCH", f"{URL}/{feature.uid}", json={"name": renamed, "type": "generate_image"})
 
     resp = await authed_client.call("GET", URL)
     found = response_names(resp.json())

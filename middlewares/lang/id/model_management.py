@@ -12,5 +12,16 @@ class ModelManagementMessage:
             "model_option_unavailable_cannot_set_main": (
                 "Model ini sudah tidak tersedia dari OpenRouter dan tidak dapat dijadikan utama."
             ),
+            "model_option_already_deleted": "Model ini sudah dihapus.",
+            "model_option_not_deleted": "Model ini tidak dalam keadaan terhapus, sehingga tidak dapat dipulihkan.",
+            "model_option_active_cannot_be_deleted": (
+                "Model yang aktif tidak dapat dihapus. Nonaktifkan terlebih dahulu."
+            ),
+            "model_option_main_cannot_be_deleted": (
+                "Model utama tidak dapat dihapus. Jadikan model lain sebagai utama terlebih dahulu."
+            ),
+            "model_option_unavailable_cannot_be_deleted": (
+                "Model yang sudah tidak tersedia dari OpenRouter tidak dapat dihapus."
+            ),
             "openrouter_model_fetch_failed": ("Gagal mengambil daftar model dari OpenRouter. Silakan coba lagi nanti."),
         }
