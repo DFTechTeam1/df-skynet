@@ -9,11 +9,11 @@ cache_key = CacheKeys()
 
 LIMIT_FIELDS = {
     "token_usage_limit",
-    "concurent_generations",
     "compose_input_max_chars",
     "storyboard_prompt_chars",
     "max_scene_per_storyboard",
     "max_shot_per_scene",
+    "token_limit_threshold",
 }
 
 
@@ -21,12 +21,13 @@ def _url(uid: str) -> str:
     return f"{SETTING_URL}/{uid}"
 
 
-async def _configure_global(authed_client, class_id: int, token_usage_limit: int = 1) -> None:
-    await authed_client.call(
-        "POST",
-        SETTING_URL,
-        json={"project_class_limitations": [{"id": class_id, "token_usage_limit": token_usage_limit}]},
-    )
+async def _configure_global(
+    authed_client, class_id: int, compose_input_max_chars: int = 2000, token_limit_threshold: float | None = None
+) -> None:
+    entry: dict = {"id": class_id, "compose_input_max_chars": compose_input_max_chars}
+    if token_limit_threshold is not None:
+        entry["token_limit_threshold"] = token_limit_threshold
+    await authed_client.call("POST", SETTING_URL, json={"project_class_limitations": [entry]})
 
 
 @pytest.mark.asyncio
@@ -44,11 +45,11 @@ async def test_fetch_falls_back_to_class_limits_when_no_override(authed_client, 
     """200 OK; with no per-project row the limits come from the global settings for the project's class."""
     uid, class_id, classification = project_with_class
     await clear_setting_state(db_session)
-    await _configure_global(authed_client, class_id, token_usage_limit=17)
+    await _configure_global(authed_client, class_id, compose_input_max_chars=17)
 
     body = (await authed_client.call("GET", _url(uid))).json()["data"]
     assert body["classification"] == classification
-    assert body["token_usage_limit"] == 17
+    assert body["compose_input_max_chars"] == 17
     assert LIMIT_FIELDS <= set(body)
 
 
@@ -57,12 +58,12 @@ async def test_fetch_returns_the_saved_override_when_present(authed_client, db_s
     """200 OK; a saved per-project row wins over the class fallback."""
     uid, class_id, _ = project_with_class
     await clear_setting_state(db_session)
-    await _configure_global(authed_client, class_id, token_usage_limit=5)
-    await authed_client.call("POST", _url(uid), json={"token_usage_limit": 99, "concurent_generations": 4})
+    await _configure_global(authed_client, class_id, compose_input_max_chars=5)
+    await authed_client.call("POST", _url(uid), json={"storyboard_prompt_chars": 99, "compose_input_max_chars": 1234})
 
     body = (await authed_client.call("GET", _url(uid))).json()["data"]
-    assert body["token_usage_limit"] == 99
-    assert body["concurent_generations"] == 4
+    assert body["storyboard_prompt_chars"] == 99
+    assert body["compose_input_max_chars"] == 1234
 
 
 @pytest.mark.asyncio
@@ -107,16 +108,52 @@ async def test_save_invalidates_the_fetch_cache(authed_client, db_session, proje
     """200 OK; POST clears the cached project setting so the next GET reflects the override."""
     uid, class_id, _ = project_with_class
     await clear_setting_state(db_session)
-    await _configure_global(authed_client, class_id, token_usage_limit=2)
+    await _configure_global(authed_client, class_id, compose_input_max_chars=2)
 
     await authed_client.call("GET", _url(uid))  # warm cache with the fallback
     assert await redis_client().exists(cache_key.setting_project(uid))
 
-    await authed_client.call("POST", _url(uid), json={"token_usage_limit": 40})
+    await authed_client.call("POST", _url(uid), json={"compose_input_max_chars": 40})
     assert not await redis_client().exists(cache_key.setting_project(uid))
 
     body = (await authed_client.call("GET", _url(uid))).json()["data"]
-    assert body["token_usage_limit"] == 40
+    assert body["compose_input_max_chars"] == 40
+
+
+@pytest.mark.asyncio
+async def test_fetch_token_usage_limit_comes_from_the_class(authed_client, db_session, project_with_class):
+    """200 OK; token_usage_limit (USD cap) is one of the class-inherited limits."""
+    uid, class_id, _ = project_with_class
+    await clear_setting_state(db_session)
+    await authed_client.call(
+        "POST", SETTING_URL, json={"project_class_limitations": [{"id": class_id, "token_usage_limit": 50}]}
+    )
+
+    body = (await authed_client.call("GET", _url(uid))).json()["data"]
+    assert body["token_usage_limit"] == 50
+
+
+@pytest.mark.asyncio
+async def test_fetch_threshold_falls_back_to_class_when_no_project_row(authed_client, db_session, project_with_class):
+    """200 OK; with no per-project row, token_limit_threshold comes from the project's class."""
+    uid, class_id, _ = project_with_class
+    await clear_setting_state(db_session)
+    await _configure_global(authed_client, class_id, token_limit_threshold=0.55)
+
+    body = (await authed_client.call("GET", _url(uid))).json()["data"]
+    assert body["token_limit_threshold"] == 0.55
+
+
+@pytest.mark.asyncio
+async def test_fetch_threshold_project_override_wins(authed_client, db_session, project_with_class):
+    """200 OK; a saved per-project token_limit_threshold beats the global value."""
+    uid, class_id, _ = project_with_class
+    await clear_setting_state(db_session)
+    await _configure_global(authed_client, class_id, token_limit_threshold=0.55)
+    await authed_client.call("POST", _url(uid), json={"token_limit_threshold": 0.2})
+
+    body = (await authed_client.call("GET", _url(uid))).json()["data"]
+    assert body["token_limit_threshold"] == 0.2
 
 
 @pytest.mark.asyncio

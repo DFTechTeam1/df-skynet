@@ -187,8 +187,14 @@ class CacheKeys:
         search: Optional[str] = None,
         type: Optional[Literal["text", "video", "image"]] = None,
         is_enabled: Optional[bool] = None,
+        is_deleted: Optional[bool] = None,
     ) -> str:
-        return f"model_option:page={page}:size={items_per_page}:search={(search or '').strip().lower() or 'all'}:type={(type or '').strip().lower() or 'all'}:is_enabled={is_enabled if is_enabled is not None else 'all'}"
+        return (
+            f"model_option:page={page}:size={items_per_page}:search={(search or '').strip().lower() or 'all'}"
+            f":type={(type or '').strip().lower() or 'all'}"
+            f":is_enabled={is_enabled if is_enabled is not None else 'all'}"
+            f":is_deleted={is_deleted if is_deleted is not None else 'all'}"
+        )
 
     def api_key_management(self) -> str:
         return "api_key_management:list:all"

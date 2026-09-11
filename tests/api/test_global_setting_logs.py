@@ -8,8 +8,8 @@ SETTING_URL = "/api/setting"
 LOGS_URL = "/api/setting/logs"
 
 
-def _class_limit_payload(class_id: int, token_usage_limit: int) -> dict:
-    return {"project_class_limitations": [{"id": class_id, "token_usage_limit": token_usage_limit}]}
+def _class_limit_payload(class_id: int, compose_input_max_chars: int) -> dict:
+    return {"project_class_limitations": [{"id": class_id, "compose_input_max_chars": compose_input_max_chars}]}
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@ from uuid import uuid4
 from apps.secret import DB_SYNC_URL
 from factory.alchemy import SQLAlchemyModelFactory
 from services.mysql import make_sync_session
-from factory.declarations import LazyFunction, RelatedFactory
+from factory.declarations import Iterator, LazyFunction, RelatedFactory
 from factory.faker import Faker
 from services.mysql.model.df_engine_features import DfEngineFeatures
 from utils import local_time
@@ -19,6 +19,7 @@ class DfEngineFeaturesFactory(SQLAlchemyModelFactory):
     updated_at = None
     uid = LazyFunction(lambda: str(uuid4()))
     name = LazyFunction(lambda: f"Feature {uuid4().hex[:8]}")
+    type = Iterator(["generate_image", "generate_video"])
     description = Faker("sentence")
     is_active = True
     created_by = None

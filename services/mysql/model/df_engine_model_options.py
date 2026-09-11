@@ -2,7 +2,7 @@ from datetime import date, datetime
 from enum import StrEnum, auto
 from typing import Any, Optional
 from uuid import uuid4
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -12,9 +12,10 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    ForeignKey,
+    Index,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
@@ -29,7 +30,7 @@ class ModelUsageTypes(StrEnum):
 class DfEngineModelOptions(SQLModel, table=True):
     __tablename__ = "df_engine_model_options"  # type: ignore
     __table_args__ = (
-        UniqueConstraint("model_id", "type", name="uq_df_engine_model_options_model_id_type"),
+        Index("idx_model_options_model_id", "model_id", "type", unique=True),
         CheckConstraint(
             "is_main = false OR is_enabled = true",
             name="ck_df_engine_model_options_is_main_requires_enabled",
@@ -51,7 +52,7 @@ class DfEngineModelOptions(SQLModel, table=True):
     )
     is_main: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     is_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
-    is_available: bool = Field(default=False, sa_column=Column(Boolean, nullable=True))
+    is_available: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     supported_parameters: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON(none_as_null=True), nullable=True)
     )
@@ -85,3 +86,11 @@ class DfEngineModelOptions(SQLModel, table=True):
     )
     knowledge_cutoff: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
     expiration_date: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
+    deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+    deleted_by: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
+    )
+
+    deleted_by_user: Optional["Users"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineModelOptions.deleted_by]"}
+    )

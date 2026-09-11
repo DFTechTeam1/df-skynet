@@ -34,14 +34,14 @@ async def test_update_overwrites_instead_of_duplicating(authed_client, db_sessio
 async def test_update_accepts_enabled_available_text_model(authed_client, db_session):
     """200 OK; a type=text, enabled, available model can be saved as enhancer_model.
 
-    The client sends the model UID; it is stored and returned as the model name.
+    The client sends the model UID; it is stored and returned as {"uid", "name"}.
     """
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("POST", URL, json={"enhancer_model": model.uid})
     assert resp.status_code == 200
-    assert resp.json()["data"]["enhancer_model"] == model.name
+    assert resp.json()["data"]["enhancer_model"] == {"uid": model.uid, "name": model.name}
 
 
 @pytest.mark.asyncio
@@ -118,8 +118,8 @@ async def test_update_rejects_unknown_project_class_id(authed_client, db_session
         URL,
         json={
             "project_class_limitations": [
-                {"id": project_class_id, "token_usage_limit": 3},
-                {"id": 999999999, "token_usage_limit": 5},
+                {"id": project_class_id, "compose_input_max_chars": 3},
+                {"id": 999999999, "compose_input_max_chars": 5},
             ]
         },
         raise_for_status=False,
@@ -141,14 +141,14 @@ async def test_update_dedupes_project_class_limitations_keeping_the_last(authed_
         URL,
         json={
             "project_class_limitations": [
-                {"id": project_class_id, "token_usage_limit": 10},
-                {"id": project_class_id, "token_usage_limit": 2},
+                {"id": project_class_id, "compose_input_max_chars": 10},
+                {"id": project_class_id, "compose_input_max_chars": 2},
             ]
         },
     )
     body = (await authed_client.call("GET", URL)).json()["data"]
     saved = next(row for row in body["project_class_limitations"] if row["id"] == project_class_id)
-    assert saved["token_usage_limit"] == 2
+    assert saved["compose_input_max_chars"] == 2
 
 
 @pytest.mark.asyncio
@@ -156,15 +156,17 @@ async def test_update_leaves_unlisted_classes_at_their_current_values(authed_cli
     """200 OK; sending one class only touches that class — the rest keep what they had."""
     await clear_setting_state(db_session)
     await authed_client.call(
-        "POST", URL, json={"project_class_limitations": [{"id": project_class_id, "token_usage_limit": 7}]}
+        "POST", URL, json={"project_class_limitations": [{"id": project_class_id, "compose_input_max_chars": 7}]}
     )
 
     # a second save for a different value on the same class; other classes untouched
     body = (await authed_client.call("GET", URL)).json()["data"]["project_class_limitations"]
     touched = next(row for row in body if row["id"] == project_class_id)
     others = [row for row in body if row["id"] != project_class_id]
-    assert touched["token_usage_limit"] == 7
-    assert others and all(row["token_usage_limit"] == 1 for row in others)
+    assert touched["compose_input_max_chars"] == 7
+    assert touched["token_usage_limit"] == 10  # not sent -> class default
+    assert others and all(row["compose_input_max_chars"] == 2000 for row in others)
+    assert all(row["token_usage_limit"] == 10 for row in others)
 
 
 @pytest.mark.asyncio
@@ -174,6 +176,53 @@ async def test_update_accepts_empty_project_class_limitations(authed_client, db_
 
     resp = await authed_client.call("POST", URL, json={"project_class_limitations": []}, raise_for_status=False)
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_update_token_limit_threshold_defaults_to_point_eight_per_class(
+    authed_client, db_session, project_class_id
+):
+    """200 OK; a class entry with no token_limit_threshold gets the 0.8 default."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("POST", URL, json={"project_class_limitations": [{"id": project_class_id}]})
+    assert resp.status_code == 200
+    entry = next(c for c in resp.json()["data"]["project_class_limitations"] if c["id"] == project_class_id)
+    assert entry["token_limit_threshold"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_update_token_limit_threshold_round_trips_a_custom_per_class_value(
+    authed_client, db_session, project_class_id
+):
+    """200 OK; a per-class token_limit_threshold within 0-1 is stored and returned as given."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call(
+        "POST",
+        URL,
+        json={"project_class_limitations": [{"id": project_class_id, "token_limit_threshold": 0.5}]},
+    )
+    assert resp.status_code == 200
+
+    body = (await authed_client.call("GET", URL)).json()["data"]
+    entry = next(c for c in body["project_class_limitations"] if c["id"] == project_class_id)
+    assert entry["token_limit_threshold"] == 0.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [-0.1, 1.5], ids=["below_zero", "above_one"])
+async def test_update_rejects_out_of_range_token_limit_threshold(authed_client, db_session, project_class_id, value):
+    """422 when a class's token_limit_threshold is outside the 0-1 range."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call(
+        "POST",
+        URL,
+        json={"project_class_limitations": [{"id": project_class_id, "token_limit_threshold": value}]},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio

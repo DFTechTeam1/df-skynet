@@ -51,12 +51,9 @@ class Projects(SQLModel, table=True):
     led_detail: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     uid: str = Field(sa_column=Column(CHAR(36), nullable=False))
     showreels: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
-    country_id: Optional[int] = Field(
-        default=None,
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("countries.id")),
-    )
-    state_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("states.id")))
-    city_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("cities.id")))
+    country_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True)))
+    state_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True)))
+    city_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True)))
     city_name: Optional[str] = Field(default=None, sa_column=Column(String(22), nullable=True))
     classification: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     showreels_status: Optional[int] = Field(default=None, sa_column=Column(SmallInteger, nullable=True))
@@ -64,11 +61,7 @@ class Projects(SQLModel, table=True):
     latitude: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
     feedback: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     project_class_id: Optional[int] = Field(
-        default=None,
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_classes.id")),
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_classes.id"))
     )
 
-    countries: Optional["Countries"] = Relationship(back_populates="projects")  # type: ignore
-    states: Optional["States"] = Relationship(back_populates="projects")  # type: ignore
-    cities: Optional["Cities"] = Relationship(back_populates="projects")  # type: ignore
     project_classes: Optional["ProjectClasses"] = Relationship(back_populates="projects")  # type: ignore

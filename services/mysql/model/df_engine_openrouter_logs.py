@@ -1,15 +1,19 @@
 from datetime import datetime
 from typing import Any, Optional
 from uuid import uuid4
-from sqlmodel import Column, Field, SQLModel
-from sqlalchemy import CHAR, DateTime, Index, Integer, JSON, String, Text
+from sqlmodel import Column, Field, Relationship, SQLModel
+from sqlalchemy import CHAR, DateTime, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
 class DfEngineOpenrouterLogs(SQLModel, table=True):
     __tablename__ = "df_engine_openrouter_logs"  # type: ignore
-    __table_args__ = (Index("ix_df_engine_openrouter_logs_created_at_id", "created_at", "id"),)
+    __table_args__ = (
+        Index("idx_df_engine_openrouter_logs_created_at_id", "created_at", "id"),
+        Index("idx_openrouter_logs_generation_attempt", "generation_id", "attempt"),
+        Index("idx_openrouter_logs_response_status", "response_status_code"),
+    )
 
     id: int = Field(
         default=None,
@@ -18,6 +22,11 @@ class DfEngineOpenrouterLogs(SQLModel, table=True):
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     name: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
+    generation_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_generations.id"), nullable=True),
+    )
+    attempt: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     method: str = Field(sa_column=Column(String(10), nullable=False))
     endpoint: str = Field(sa_column=Column(String(255), nullable=False))
     request_headers: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -27,3 +36,7 @@ class DfEngineOpenrouterLogs(SQLModel, table=True):
     response_body: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     duration_ms: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
+
+    generation: Optional["DfEngineGenerations"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineOpenrouterLogs.generation_id]"}
+    )

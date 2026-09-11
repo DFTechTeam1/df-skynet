@@ -22,8 +22,6 @@ TABLE_NAME = "df_engine_openrouter_logs"
 
 
 def upgrade() -> None:
-    """Serve `ORDER BY created_at DESC, id DESC` from an index so paging the logs
-    never filesorts the table's large JSON columns (MySQL error 1038)."""
     op.create_index(INDEX_NAME, TABLE_NAME, ["created_at", "id"])
 
 

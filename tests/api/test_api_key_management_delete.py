@@ -3,7 +3,7 @@ from datetime import timedelta
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineApiKeys, DfEngineApiSnapshots, DfEngineOpenrouterLogs, Employees
+from services.mysql.model import DfEngineApiKeys, DfEngineApiKeySnapshots, DfEngineOpenrouterLogs, Employees
 from services.mysql.factory import DfEngineApiKeysFactory
 from utils import local_time
 from tests.helpers import response_names
@@ -54,7 +54,7 @@ async def test_delete_is_hard_row_no_longer_exists(authed_client, db_session, us
 
 @pytest.mark.asyncio
 async def test_delete_archives_a_snapshot_on_clean_revoke(authed_client, db_session, user_id, active_employee_uid):
-    """200 OK; when OpenRouter confirms the revoke, a df_engine_api_snapshots row is
+    """200 OK; when OpenRouter confirms the revoke, a df_engine_api_key_snapshots row is
     written carrying the key's details."""
     employee = await _employee(db_session, active_employee_uid)
     nickname = employee.nickname  # capture before rollback expires the ORM instance
@@ -66,7 +66,7 @@ async def test_delete_archives_a_snapshot_on_clean_revoke(authed_client, db_sess
 
     await db_session.rollback()
     snapshot = (
-        await db_session.execute(select(DfEngineApiSnapshots).where(DfEngineApiSnapshots.key == row_key))
+        await db_session.execute(select(DfEngineApiKeySnapshots).where(DfEngineApiKeySnapshots.key == row_key))
     ).scalar_one()
     assert snapshot.name == row_name
     assert snapshot.employee_name == nickname
@@ -89,7 +89,7 @@ async def test_delete_blocks_main_key(authed_client, db_session, user_id, active
     ).scalar_one_or_none()
     assert still_there is not None
     no_snapshot = (
-        await db_session.execute(select(DfEngineApiSnapshots).where(DfEngineApiSnapshots.key == row_key))
+        await db_session.execute(select(DfEngineApiKeySnapshots).where(DfEngineApiKeySnapshots.key == row_key))
     ).scalar_one_or_none()
     assert no_snapshot is None
 

@@ -22,13 +22,12 @@ class ProjectClassLimitations(BaseModel):
 
     id: int = Field(default=1, description="ID of the project class these limits apply to.", ge=1)
     token_usage_limit: int = Field(
-        default=1,
-        description="Spend cap on AI generations per project, in USD. Once reached, that project can't generate until the cap is raised.",
-        ge=1,
-    )
-    concurent_generations: int = Field(
-        default=1,
-        description="How many generations a single user can run at the same time in this project class.",
+        default=10,
+        description=(
+            "Spend cap on AI generations per project in this class, in whole USD "
+            "(e.g. 50, 100). Once reached, projects in this class can't generate until "
+            "the cap is raised."
+        ),
         ge=1,
     )
     compose_input_max_chars: int = Field(
@@ -50,6 +49,16 @@ class ProjectClassLimitations(BaseModel):
         default=2000,
         description="Most shots a single scene can hold.",
         ge=1,
+    )
+    token_limit_threshold: float = Field(
+        default=0.8,
+        ge=0,
+        le=1,
+        description=(
+            "Fraction of a project's token allowance (0-1) at which projects in this "
+            "class warn the user they're close to the cap. Default 0.8 = warn at 80%."
+        ),
+        examples=[0.8],
     )
 
 
@@ -58,13 +67,8 @@ class ProjectSettingPayload(BaseModel):
     project inherits the limits configured for its class in the global settings."""
 
     token_usage_limit: int = Field(
-        default=1,
-        description="Spend cap on AI generations for this project, in USD.",
-        ge=1,
-    )
-    concurent_generations: int = Field(
-        default=1,
-        description="How many generations a single user can run at the same time in this project.",
+        default=10,
+        description="Spend cap on AI generations for this project, in whole USD.",
         ge=1,
     )
     compose_input_max_chars: int = Field(
@@ -86,6 +90,17 @@ class ProjectSettingPayload(BaseModel):
         default=2000,
         description="Most shots a single scene can hold.",
         ge=1,
+    )
+    token_limit_threshold: float = Field(
+        default=0.8,
+        ge=0,
+        le=1,
+        description=(
+            "Per-project token-limit warning threshold (0-1). Defaults to 0.8. A project "
+            "with a saved override always carries its own value; projects with no saved "
+            "row fall back to their project class's value from the global settings."
+        ),
+        examples=[0.8],
     )
 
 

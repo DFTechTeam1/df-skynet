@@ -14,7 +14,7 @@ class CommonController(PlainDependencies):
         tags=["Common"],
     )
     async def restricted_page(self) -> FileResponse:
-        RESTRICTED_PAGE = get_project_root() / "static" / "restricted.html"
+        RESTRICTED_PAGE = get_project_root() / "static" / "html" / "restricted.html"
         return FileResponse(RESTRICTED_PAGE)
 
     @controller.get(

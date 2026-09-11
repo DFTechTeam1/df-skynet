@@ -183,8 +183,9 @@ class SettingController(CoreDependencies):
         summary="Update global setting.",
         description=(
             "Saves the workspace-wide DF Engine settings: Library visibility, the "
-            "per-project-class usage limits, and which models power the prompt enhancer "
-            "and the assistant. Send the whole settings document — this replaces the "
+            "per-project-class usage limits (including each class's token-limit warning "
+            "threshold), and which models power the prompt enhancer and the assistant. "
+            "Send the whole settings document — this replaces the "
             "saved settings, it is not a partial update. Any change is recorded in the "
             "history together with who made it."
         ),
@@ -200,7 +201,7 @@ class SettingController(CoreDependencies):
         response = Response()
         cache_key = CacheKeys()
         try:
-            resolved_model: dict[str, Optional[str]] = {"enhancer_model": None, "assistant_model": None}
+            resolved_model: dict[str, Optional[dict[str, str]]] = {"enhancer_model": None, "assistant_model": None}
             for field in ("enhancer_model", "assistant_model"):
                 model_uid = getattr(schema, field)
                 if model_uid is None:
@@ -219,7 +220,7 @@ class SettingController(CoreDependencies):
                     raise DataValidationError(message="setting_engine_model_must_be_enabled")
                 if not model.is_available:
                     raise DataValidationError(message="setting_engine_model_must_be_available")
-                resolved_model[field] = model.name
+                resolved_model[field] = {"uid": model.uid, "name": model.name}
 
             project_classes = await query(db=self.db, table=ProjectClasses)  # type: ignore
             class_by_id = {pc.id: pc for pc in project_classes}
@@ -252,7 +253,11 @@ class SettingController(CoreDependencies):
                 "assistant_model": resolved_model["assistant_model"],
                 "project_class_limitations": [
                     {
-                        **(saved_limits.get(pc.id) or ProjectClassLimitations(id=pc.id).model_dump(mode="json")),
+                        # defaults first so every class always carries the full
+                        # field set (incl. token_limit_threshold=0.8) even if an
+                        # older saved row is missing a key
+                        **ProjectClassLimitations(id=pc.id).model_dump(mode="json"),
+                        **(saved_limits.get(pc.id) or {}),
                         **requested_limits.get(pc.id, {}),
                         "id": pc.id,
                         "name": pc.name,
@@ -261,6 +266,11 @@ class SettingController(CoreDependencies):
                     for pc in project_classes
                 ],
             }
+
+            # token_limit_threshold is per-class now — drop any stale top-level row.
+            stale_threshold_row = rows_by_key.pop("token_limit_threshold", None)
+            if stale_threshold_row is not None:
+                await self.db.delete(stale_threshold_row)
 
             previous = {
                 key: (json.loads(row.value) if row.value else None)
@@ -323,10 +333,13 @@ class SettingController(CoreDependencies):
         "/setting/{uid}",
         summary="Get project setting.",
         description=(
-            "Returns the effective generation limits for one project. If the project has "
-            "its own saved limits, those are used; otherwise they fall back to the global "
-            "settings for the project's class. The global settings must have been "
-            "configured at least once."
+            "Returns the effective generation limits for one project — `token_usage_limit` "
+            "(USD spend cap), `compose_input_max_chars`, `storyboard_prompt_chars`, "
+            "`max_scene_per_storyboard`, `max_shot_per_scene` and `token_limit_threshold` "
+            "(0-1 warn fraction). Every value is resolved the same way: the project's own "
+            "saved override if it has one, otherwise the entry for the project's class in "
+            "the global `project_class_limitations`. The global settings must have been "
+            "configured at least once, and the project must be assigned to a class."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Setting"],
@@ -339,11 +352,11 @@ class SettingController(CoreDependencies):
         cache_key = CacheKeys()
         limit_fields = (
             "token_usage_limit",
-            "concurent_generations",
             "compose_input_max_chars",
             "storyboard_prompt_chars",
             "max_scene_per_storyboard",
             "max_shot_per_scene",
+            "token_limit_threshold",
         )
         try:
             project_setting_cache_key = cache_key.setting_project(uid)
@@ -368,11 +381,12 @@ class SettingController(CoreDependencies):
                 filters=(DfEngineProjectSettings.project_id == project.id,),  # type: ignore
                 fetch_one=True,
             )
+
             if saved:
                 limits = {field: getattr(saved, field) for field in limit_fields}
                 source = "project"
             else:
-                row = await query(
+                class_limits_row = await query(
                     db=self.db,
                     table=DfEngineSettings,
                     filters=(
@@ -381,12 +395,12 @@ class SettingController(CoreDependencies):
                     ),
                     fetch_one=True,
                 )
-                if not row or not row.value:
+                if not class_limits_row or not class_limits_row.value:
                     raise DataValidationError(message="global_setting_not_configured")
                 if project.project_class_id is None:
                     raise DataValidationError(message="project_class_not_assigned")
                 class_limit = next(
-                    (item for item in json.loads(row.value) if item.get("id") == project.project_class_id),
+                    (item for item in json.loads(class_limits_row.value) if item.get("id") == project.project_class_id),
                     None,
                 )
                 if not class_limit:
@@ -394,7 +408,11 @@ class SettingController(CoreDependencies):
                 limits = {field: class_limit.get(field) for field in limit_fields}
                 source = "project_class_default"
 
-            data = {"project": project.name, "classification": project.classification, **limits}
+            data = {
+                "project": project.name,
+                "classification": project.classification,
+                **limits,
+            }
             await set_json(self.redis, project_setting_cache_key, data)
             logging.info(f"user={self.user['user_id']} fetched project setting uid={uid} source={source}")
             response.data = data
@@ -414,10 +432,13 @@ class SettingController(CoreDependencies):
         "/setting/{uid}",
         summary="Save project setting.",
         description=(
-            "Saves a per-project override of the generation limits. Send all six limit "
-            "fields — they replace whatever this project had before. While the override "
-            "exists the project uses these values instead of its class limits from the "
-            "global settings."
+            "Saves a per-project override of the generation limits. Send the whole set — "
+            "`token_usage_limit`, `compose_input_max_chars`, `storyboard_prompt_chars`, "
+            "`max_scene_per_storyboard`, `max_shot_per_scene`, `token_limit_threshold` — "
+            "they replace whatever this project had before. While the override exists the "
+            "project uses these values instead of its project class defaults. Omitted "
+            "fields fall back to their payload defaults (`token_usage_limit` 10, "
+            "`token_limit_threshold` 0.8, char/scene/shot limits 2000)."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Setting"],

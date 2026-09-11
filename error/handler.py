@@ -17,7 +17,7 @@ def _wants_html(request: Request) -> bool:
 
 
 def _error_page(filename: str, status_code: int) -> FileResponse:
-    return FileResponse(get_project_root() / "static" / filename, status_code=status_code)
+    return FileResponse(get_project_root() / "static" / "html" / filename, status_code=status_code)
 
 
 class CustomError:

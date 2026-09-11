@@ -2,13 +2,14 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, SQLModel
-from sqlalchemy import CHAR, DateTime, String, Text
+from sqlalchemy import CHAR, DateTime, String, Text, Index
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
 class DfEngineApiKeyRotationIssues(SQLModel, table=True):
     __tablename__ = "df_engine_api_key_rotation_issues"  # type: ignore
+    __table_args__ = (Index("idx_df_engine_api_key_rotation_issues_unresolved", "resolved_at"),)
 
     id: int = Field(
         default=None,

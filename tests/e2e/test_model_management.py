@@ -65,3 +65,50 @@ async def test_main_model_cannot_be_disabled_then_sync_drop_blocks_actions_journ
     )
     assert blocked_enable.status_code == 422
     assert blocked_enable.json()["message"] == resolve_message("model_option_unavailable_cannot_set_enabled", "en")
+
+
+@pytest.mark.asyncio
+async def test_delete_then_recover_model_journey(authed_client, db_session):
+    """A disabled, available, non-main model can be soft-deleted (disappears from
+    the default list, shows in the is_deleted view), then recovered back."""
+    row = DfEngineModelOptionsFactory.create(type="image", is_available=True, is_enabled=False, is_main=False)
+
+    # 1. live and flagged deletable
+    item = await _fetch_item(authed_client, row.name)
+    assert item["action"]["can_delete"] is True
+    assert item["action"]["can_recover"] is False
+
+    # 2. soft-delete it
+    deleted = await authed_client.call("DELETE", f"{URL}/{row.uid}")
+    assert deleted.status_code == 200
+    assert deleted.json()["data"]["deleted_at"] is not None
+
+    # 3. gone from the default view, present in the recovery view
+    default_view = await authed_client.call("GET", URL, params={"search": row.name})
+    assert default_view.json()["data"]["paginated"] == []
+
+    deleted_view = await authed_client.call("GET", URL, params={"search": row.name, "is_deleted": True})
+    d_item = deleted_view.json()["data"]["paginated"][0]
+    assert d_item["name"] == row.name
+    assert d_item["action"]["can_recover"] is True
+
+    # 4. a second delete is rejected
+    again = await authed_client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
+    assert again.status_code == 422
+    assert again.json()["message"] == resolve_message("model_option_already_deleted", "en")
+
+    # 5. recover — back in the default list, gone from the recovery view
+    recovered = await authed_client.call("PATCH", f"{URL}/{row.uid}/recover")
+    assert recovered.status_code == 200
+    assert recovered.json()["data"]["deleted_at"] is None
+
+    back = await _fetch_item(authed_client, row.name)
+    assert back["action"]["can_delete"] is True
+
+    empty_deleted_view = await authed_client.call("GET", URL, params={"search": row.name, "is_deleted": True})
+    assert empty_deleted_view.json()["data"]["paginated"] == []
+
+    # 6. recovering again is rejected
+    no_op = await authed_client.call("PATCH", f"{URL}/{row.uid}/recover", raise_for_status=False)
+    assert no_op.status_code == 422
+    assert no_op.json()["message"] == resolve_message("model_option_not_deleted", "en")

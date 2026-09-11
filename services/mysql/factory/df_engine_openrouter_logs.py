@@ -19,6 +19,8 @@ class DfEngineOpenrouterLogsFactory(SQLAlchemyModelFactory):
     created_at = LazyFunction(local_time)
     uid = LazyFunction(lambda: str(uuid4()))
     name = None
+    generation_id = None
+    attempt = None
     method = "GET"
     endpoint = Faker("uri_path")
     request_headers = None
