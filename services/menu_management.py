@@ -62,6 +62,7 @@ class MenuManagementService:
                     "updated_at": format_datetime(feature.get("updated_at")),
                     "feature_uid": feature.get("uid"),
                     "name": feature.get("name"),
+                    "type": feature.get("type"),
                     "description": feature.get("description"),
                     "is_active": feature.get("is_active"),
                     "creator": format_user_employees(feature.get("created_by_user")),
