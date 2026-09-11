@@ -137,12 +137,12 @@ async def test_recover_unknown_uid_is_404(authed_client):
 
 @pytest.mark.asyncio
 async def test_is_deleted_filter_lists_only_deleted_models(authed_client):
-    """200 OK; is_deleted=true returns soft-deleted rows (availability ignored), the default view hides them."""
+    """200 OK; is_deleted=true returns soft-deleted rows still available, the default view hides them."""
     from utils import local_time
 
     prefix = f"Filter{uuid4().hex[:8]}"
     live = _deletable(name=f"{prefix}-live")
-    gone = _deletable(name=f"{prefix}-gone", is_available=False, deleted_at=local_time())
+    gone = _deletable(name=f"{prefix}-gone", deleted_at=local_time())
 
     default_view = await authed_client.call("GET", URL, params={"search": prefix})
     names = [i["name"] for i in default_view.json()["data"]["paginated"]]
