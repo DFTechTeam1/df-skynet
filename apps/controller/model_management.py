@@ -37,8 +37,8 @@ class ModelManagementController(CoreDependencies):
             "excluded. Pass `type` to restrict results to one usage type, `search` to "
             "filter by name (case-insensitive, prefix match), and/or `is_enabled` to "
             "view only enabled or only disabled models. Pass `is_deleted=true` to list "
-            "the soft-deleted models instead (the recovery view) — availability is "
-            "ignored there. Each row's `action` block reports `can_delete` / "
+            "the soft-deleted models instead (the recovery view) — `is_available = true` "
+            "is still required either way. Each row's `action` block reports `can_delete` / "
             "`can_recover` alongside the enable/main flags."
         ),
         status_code=status.HTTP_200_OK,
@@ -107,7 +107,7 @@ class ModelManagementController(CoreDependencies):
                 offset=(page - 1) * itemsPerPage,
             )
 
-            models = [model_management_service.format(record, for_list=True) for record in serialize(records)]
+            models = [model_management_service.format(record) for record in serialize(records)]
 
             logging.info(
                 f"user={self.user['user_id']} listed model options type={type!r} search={search!r} "
@@ -159,6 +159,9 @@ class ModelManagementController(CoreDependencies):
             )
             if not model:
                 raise DataNotFoundError(message="model_option_not_found")
+
+            if model.deleted_at is not None:
+                raise DataValidationError(message="model_option_deleted_cannot_set_enabled")
 
             if model.is_available is False:
                 raise DataValidationError(message="model_option_unavailable_cannot_set_enabled")

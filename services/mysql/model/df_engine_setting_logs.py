@@ -16,7 +16,9 @@ class DfEngineSettingLogs(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
-    created_by: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=False))
+    created_by: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
+    )
     user_email: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     user_name: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     previous_data: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))

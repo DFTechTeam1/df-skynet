@@ -9,6 +9,9 @@ class ModelManagementMessage:
             "model_option_unavailable_cannot_set_enabled": (
                 "This model is no longer available from OpenRouter and its enabled state cannot be changed."
             ),
+            "model_option_deleted_cannot_set_enabled": (
+                "This model is deleted. Recover it before changing its enabled state."
+            ),
             "model_option_unavailable_cannot_set_main": (
                 "This model is no longer available from OpenRouter and cannot be set as main."
             ),

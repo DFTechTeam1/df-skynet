@@ -98,22 +98,6 @@ Enum model_usage_types {
     image
 }
 
-Enum theme_types {
-    dark
-    light
-}
-
-Enum accent_types {
-    signal
-    violet
-    teal
-}
-
-Enum language_types {
-    indonesia
-    english
-}
-
 Enum upload_file_types {
     video
     image
@@ -123,12 +107,6 @@ Enum upload_statuses {
     pending
     success
     failed
-}
-
-Enum limit_resets {
-    daily
-    weekly
-    monthly
 }
 
 Enum generation_kinds {
@@ -196,26 +174,38 @@ Table df_engine_project_settings {
     updated_by integer [default: null]
 }
 
+Table df_engine_settings {
+    id bigint [pk, increment]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    key varchar(255) [default: null]
+    value text [default: null]
+    code varchar(255) [default: null, note: "Groups related key/value rows, e.g. code='admin_setting' for keys like 'project_class_limitations', 'assistant_model', 'enhancer_model'."]
+
+    note: "Generic key/value settings store, referenced by df_engine_project_settings.token_limit_threshold's admin_setting fallback."
+}
+
 Table df_engine_preferences {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     user_id bigint [unique, default: null]
-    theme theme_types [not null, default: "dark"]
-    accent accent_types [not null, default: "teal"]
-    language language_types [not null, default: "english"]
+    theme varchar(20) [not null, default: "dark", note: "Formerly enum theme_types (dark, light) — now validated at the application level instead of the DB, so new values don't require a migration."]
+    accent varchar(20) [not null, default: "teal", note: "Formerly enum accent_types (signal, violet, teal) — now validated at the application level instead of the DB, so new values don't require a migration."]
+    language varchar(20) [not null, default: "english", note: "Formerly enum language_types (indonesia, english) — now validated at the application level instead of the DB, so new values don't require a migration."]
     default_aspect_ratio varchar(20) [not null, default: "16:9", note: "One of: 16:9, 1:1, 9:16, 4:3, 3:4"]
     default_size varchar(20) [not null, default: "4K", note: "One of: 1K, 2K, 4K"]
-    confirm_before_spending decimal(10, 2) [not null, default: 0.50, note: "Ask before any generation that costs more than this. No upper bound."]
+    confirm_before_spending varchar(255) [not null, default: "over_0.5", note: "Labeled spend-confirmation threshold (e.g. 'over_0.5'), not a raw decimal amount. Not a DB enum — validated at the application level so new thresholds don't require a migration."]
 }
 
 Table df_engine_setting_logs {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
+    uid char(36) [not null, unique]
     user_email varchar(255) [default: null]
     user_name varchar(255) [default: null]
     previous_data json [default: null]
-    incoming_data json [default: null]
+    incoming_data json [not null]
     ip_address varchar(45) [default: null]
     user_agent varchar(255) [default: null]
     created_by integer [default: null]
@@ -232,7 +222,7 @@ Table df_engine_api_keys {
     expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
     uid varchar(36) [not null, unique]
     limit decimal(10, 2) [default: null]
-    limit_reset limit_resets [default: null]
+    limit_reset varchar(20) [default: null, note: "Formerly enum limit_resets (daily, weekly, monthly) — now validated at the application level instead of the DB, so new values don't require a migration."]
     key varchar(255) [not null, unique]
     hash varchar(255) [default: null]
     name varchar(255) [not null]
@@ -250,7 +240,7 @@ Table df_engine_api_key_snapshots {
     created_at timestamp [default: `now()`]
     expires_at timestamp [default: null, note: "e.g: 2027-12-31T23:59:59Z"]
     limit decimal(10, 2) [default: null]
-    limit_reset limit_resets [default: null]
+    limit_reset varchar(20) [default: null, note: "Formerly enum limit_resets (daily, weekly, monthly) — now validated at the application level instead of the DB, so new values don't require a migration."]
     uid varchar(36) [not null, unique]
     key varchar(255) [not null, unique]
     hash varchar(255) [default: null]
@@ -378,8 +368,8 @@ Table df_engine_model_options {
     model_id varchar(255) [not null, note: "Example: meta/muse-spark-1.2"] // video, image, text
     description text [default: null] // video, image, text
     architecture json [default: null] // image, text
-    type model_usage_types [not null]
-    is_main boolean [default: null] // video, image, text
+    type model_usage_types [not null, default: "image"]
+    is_main boolean [not null, default: false] // video, image, text
     is_enabled boolean [not null, default: false] // video, image, text
     is_available boolean [not null, default: true] // video, image, text
     supported_parameters json [default: null] // image, text

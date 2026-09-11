@@ -9,6 +9,9 @@ class ModelManagementMessage:
             "model_option_unavailable_cannot_set_enabled": (
                 "Model ini sudah tidak tersedia dari OpenRouter dan status aktifnya tidak dapat diubah."
             ),
+            "model_option_deleted_cannot_set_enabled": (
+                "Model ini sudah dihapus. Pulihkan terlebih dahulu sebelum mengubah status aktifnya."
+            ),
             "model_option_unavailable_cannot_set_main": (
                 "Model ini sudah tidak tersedia dari OpenRouter dan tidak dapat dijadikan utama."
             ),

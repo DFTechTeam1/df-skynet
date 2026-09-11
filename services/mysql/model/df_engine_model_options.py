@@ -52,7 +52,7 @@ class DfEngineModelOptions(SQLModel, table=True):
     )
     is_main: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     is_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
-    is_available: bool = Field(default=False, sa_column=Column(Boolean, nullable=True))
+    is_available: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     supported_parameters: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON(none_as_null=True), nullable=True)
     )
