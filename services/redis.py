@@ -210,3 +210,6 @@ class CacheKeys:
 
     def api_key_management_pattern(self) -> str:
         return "api_key_management:*"
+
+    def user_files(self, user_id: int, task_id: int) -> str:
+        return f"user_files:task={task_id}:user_id={user_id}"

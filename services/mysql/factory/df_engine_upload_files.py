@@ -24,5 +24,6 @@ class DfEngineUploadFilesFactory(SQLAlchemyModelFactory):
     md5 = LazyFunction(lambda: uuid4().hex)
     size = Faker("random_int", min=1024, max=10_485_760)
     project_id = None
+    task_id = None
     created_by = None
     updated_by = None

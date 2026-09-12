@@ -412,6 +412,7 @@ Table df_engine_upload_files {
     md5 varchar(255) [default: null]
     size bigint [not null]
     project_id bigint [not null]
+    task_id bigint [default: null]
     created_by integer [default: null]
     updated_by integer [default: null]
 }
@@ -739,6 +740,7 @@ Ref: users.id < df_engine_model_options.deleted_by
 Ref: projects.id < tasks.project_id
 Ref: projects.id < df_engine_project_settings.project_id
 Ref: projects.id < df_engine_upload_files.project_id
+Ref: tasks.id < df_engine_upload_files.task_id
 Ref: projects.id < df_engine_generations.project_id
 Ref: tasks.id < df_engine_generations.task_id
 
