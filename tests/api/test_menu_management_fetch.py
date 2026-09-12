@@ -202,14 +202,14 @@ async def test_list_response_is_cached_with_a_ttl(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_create_invalidates_the_list_cache(authed_client, user_id):
+async def test_create_invalidates_the_list_cache(authed_client, user_id, menu_type_factory):
     """200 OK; a POST clears the cached list so the next GET reflects the new row, not the stale cache."""
     redis = redis_client()
     await authed_client.call("GET", URL)
     assert await redis.exists("menu_management:list:all")
 
     name = f"Cache invalidation {uuid4().hex[:8]}"
-    await authed_client.call("POST", URL, json={"name": name})
+    await authed_client.call("POST", URL, json={"name": name, "type": await menu_type_factory()})
 
     resp = await authed_client.call("GET", URL)
     assert name in response_names(resp.json())

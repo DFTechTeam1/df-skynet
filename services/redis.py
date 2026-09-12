@@ -150,6 +150,9 @@ class CacheKeys:
     def menu_management_detail(self, uid: UUID) -> str:
         return f"menu_management:detail:{uid}"
 
+    def menu_management_options(self) -> str:
+        return "menu_management:options"
+
     def feature_managements(self, name: Optional[str] = None) -> str:
         return f"feature_management:list:{(name or '').strip().lower() or 'all'}"
 

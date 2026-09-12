@@ -22,6 +22,16 @@ class MenuPayload(BaseModel):
         description="Unique, human-readable name identifying this menu.",
         examples=["Generate"],
     )
+    type: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description=(
+            "Unique menu type, one of the option values from "
+            "`GET /menu-management/options` (df_engine_settings key=menu_management_options)."
+        ),
+        examples=["generations"],
+    )
     description: Optional[str] = Field(
         default=None,
         min_length=1,

@@ -19,6 +19,7 @@ class DfEngineMenusFactory(SQLAlchemyModelFactory):
     updated_at = None
     uid = LazyFunction(lambda: str(uuid4()))
     name = LazyFunction(lambda: f"Menu {uuid4().hex[:8]}")
+    type = LazyFunction(lambda: f"menu_type_{uuid4().hex[:8]}")
     description = Faker("sentence")
     is_active = True
     created_by = None

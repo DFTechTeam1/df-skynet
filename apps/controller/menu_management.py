@@ -4,7 +4,6 @@ from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
 from sqlalchemy import delete
-from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.menu_management import MenuPayload
@@ -17,7 +16,7 @@ from services.mysql.model import (
 from services.redis import get_json, set_json, CacheKeys
 from services.menu_management import MenuManagementService
 from log import logging
-from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
+from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from utils import local_time
 from utils.serializer import serialize
 
@@ -30,16 +29,10 @@ class MenuManagementController(CoreDependencies):
         "/menu-management",
         summary="List or search menus.",
         description=(
-            "Returns menus (`df_engine_menus` rows), newest first — both active and "
-            "inactive, since this screen manages and toggles inactive menus too. Pass "
-            "`name` to search — only menus whose name starts with that text "
-            "(case-insensitive prefix match) are returned, in the exact same shape as the "
-            "unfiltered list. Each menu includes a nested `features` array built from "
-            "`df_engine_menu_feature_mappings` — every linked feature, active or inactive, "
-            "each carrying its own `is_active` flag. One menu can list many features, and "
-            "the same feature can be linked to many different menus. Each menu also "
-            "includes its resolved `creator` / `updater` and an `action` block reflecting "
-            "which menu-management actions the current user is permitted to perform."
+            "Shows all menus, newest first, including both active and inactive ones. "
+            "Type text into `name` to search for a menu by its name. Each menu also "
+            "lists the features linked to it, plus who created and last updated it, "
+            "and what actions the current user is allowed to do."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -86,13 +79,48 @@ class MenuManagementController(CoreDependencies):
         return response
 
     @controller.get(
+        "/menu-management/options",
+        summary="List menu type options.",
+        description=(
+            "Shows the menu types you can pick from when creating or editing a menu. "
+            "A type already used by another menu is marked unavailable, since each "
+            "type can only belong to one menu at a time."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Menu Management"],
+        response_model=Response,
+    )
+    async def menu_management_to_fetch_options(self) -> Response:
+        response = Response()
+        cache_key = CacheKeys()
+        try:
+            options_cache_key = cache_key.menu_management_options()
+            cached_options = await get_json(self.redis, options_cache_key)
+            if cached_options is not None:
+                response.data = cached_options
+                return response
+
+            options = await menu_management_service.fetch_type_options(self.db)
+
+            used_types = set(await query(db=self.db, table=DfEngineMenus, columns=(DfEngineMenus.type,)))  # type: ignore
+
+            records = [{"type": option, "action": {"can_set_menu": option not in used_types}} for option in options]
+            await set_json(self.redis, options_cache_key, records)
+            response.data = records
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.get(
         "/menu-management/{uid}",
         summary="Detail of a menu.",
         description=(
-            "Returns a single menu (`df_engine_menus` row) identified by `uid`, in the "
-            "exact same shape as one item from the list endpoint — including its nested "
-            "`features` array, resolved `creator` / `updater`, and `action` block. 404s if "
-            "no menu matches `uid`."
+            "Shows the full details of one menu, including its linked features, who "
+            "created and last updated it, and what the current user can do with it. "
+            "Returns a not-found error if the menu doesn't exist."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -158,15 +186,13 @@ class MenuManagementController(CoreDependencies):
         "/menu-management",
         summary="Create a menu.",
         description=(
-            "Registers a new menu (`df_engine_menus` row) and, in the same call, links it "
-            "to the features given in `feature_uids` — every uid must reference an existing "
-            "feature, or the whole request fails with a 422 listing the offending indices. "
-            "`feature_uids` has no minimum length: omit it (or pass an empty list) to "
-            "create a menu with no linked feature yet, or pass one or many to wire them up "
-            "immediately. `name` must be unique across all existing menus. The record's "
-            "`created_by` is taken from the authenticated user resolved from the bearer "
-            "token, not from the request body. Returns the full, up-to-date list of menus, "
-            "so the frontend can refresh its list without a separate re-fetch."
+            "Creates a new menu and, at the same time, links it to any features you "
+            "list in `feature_uids`. Every feature you list must already exist, "
+            "otherwise the request is rejected and you're told which ones weren't "
+            "found. You can also leave `feature_uids` empty to create a menu with no "
+            "features yet and link them later. The menu name must be unique — you "
+            "can't reuse a name that's already taken. Returns the full, up-to-date "
+            "list of menus."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -176,6 +202,8 @@ class MenuManagementController(CoreDependencies):
         response = Response()
         cache_key = CacheKeys()
         try:
+            await menu_management_service.validate_type(self.db, schema.type)
+
             map_feature: dict[str, int] = {}
             if schema.feature_uids:
                 features = await query(
@@ -195,17 +223,17 @@ class MenuManagementController(CoreDependencies):
                         },
                     )
 
+            await menu_management_service.validate_uniqueness(self.db, schema.name, schema.type)
+
             menu = DfEngineMenus(
                 name=schema.name,
+                type=schema.type,
                 description=schema.description,
                 is_active=schema.is_active,
                 created_by=int(self.user["user_id"]),
             )
             self.db.add(menu)
-            try:
-                await self.db.flush()
-            except IntegrityError:
-                raise DataConflictError(message="menu_already_exists")
+            await self.db.flush()
 
             for feature_id in map_feature.values():
                 self.db.add(
@@ -237,6 +265,7 @@ class MenuManagementController(CoreDependencies):
                 cache_key.menu_management_detail(menu.uid),  # type: ignore
                 new_record,
             )
+            await self.redis.delete(cache_key.menu_management_options())
 
             list_cache_key = cache_key.menu_managements()
             cached_list = await get_json(self.redis, list_cache_key)
@@ -261,18 +290,15 @@ class MenuManagementController(CoreDependencies):
         "/menu-management/{uid}",
         summary="Update a menu.",
         description=(
-            "Replaces the menu identified by `uid` — the request body carries the full "
-            "record (`name`, `description`, `is_active`, `feature_uids`), not a partial "
-            "diff. `feature_uids` is the complete desired set of linked features: any "
-            "currently linked feature missing from the list is unlinked, any new uid is "
-            "linked, and unchanged ones keep their existing mapping row (not deleted and "
-            "recreated). It has no minimum length — pass an empty list to unlink every "
-            "feature. Every uid must reference an existing feature or the request fails "
-            "with a 422. `name` must remain unique across all existing menus. The record's "
-            "`updated_by` is taken from the authenticated user resolved from the bearer "
-            "token, not from the request body. Deactivating a menu (`is_active` = `false`) "
-            "keeps it in the list, flagged inactive, and does not touch its feature links. "
-            "Returns the full, up-to-date list of menus."
+            "Updates a menu's details. Send the full menu information each time — "
+            "not just the fields that changed. `feature_uids` should be the complete "
+            "list of features this menu should have going forward: anything you leave "
+            "out gets unlinked, anything new gets linked, and unchanged features stay "
+            "as they are. You can pass an empty list to remove all linked features. "
+            "Every feature you list must already exist. The menu name must stay "
+            "unique. Turning a menu off (`is_active` = false) just hides it from "
+            "active use — it stays in the list and keeps its linked features. Returns "
+            "the full, up-to-date list of menus."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -290,6 +316,8 @@ class MenuManagementController(CoreDependencies):
         response = Response()
         cache_key = CacheKeys()
         try:
+            await menu_management_service.validate_type(self.db, schema.type)
+
             map_feature: dict[str, int] = {}
             if schema.feature_uids:
                 features = await query(
@@ -319,16 +347,15 @@ class MenuManagementController(CoreDependencies):
             if menu is None:
                 raise DataNotFoundError(message="menu_not_found")
 
+            await menu_management_service.validate_uniqueness(self.db, schema.name, schema.type, exclude_uid=str(uid))
+
             menu.name = schema.name
+            menu.type = schema.type
             menu.description = schema.description
             menu.is_active = schema.is_active
             menu.updated_by = int(self.user["user_id"])
             menu.updated_at = local_time()
-
-            try:
-                await self.db.flush()
-            except IntegrityError:
-                raise DataConflictError(message="menu_already_exists")
+            await self.db.flush()
 
             desired_ids = set(map_feature.values())
 
@@ -380,6 +407,7 @@ class MenuManagementController(CoreDependencies):
                 cache_key.menu_management_detail(uid),
                 updated_menu,
             )
+            await self.redis.delete(cache_key.menu_management_options())
 
             list_cache_key = cache_key.menu_managements()
             cached_list = await get_json(self.redis, list_cache_key)
@@ -402,10 +430,10 @@ class MenuManagementController(CoreDependencies):
         "/menu-management/{uid}",
         summary="Delete a menu.",
         description=(
-            "Permanently deletes the menu identified by `uid`, along with every "
-            "`df_engine_menu_feature_mappings` row linking it to a feature — there's no "
-            "separate unlink step. 404s if no menu matches `uid`. Returns the full, "
-            "up-to-date list of remaining menus."
+            "Permanently deletes a menu and removes all of its links to features — "
+            "you don't need to unlink features first. Returns a not-found error if "
+            "the menu doesn't exist. Returns the full, up-to-date list of the "
+            "remaining menus."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -442,6 +470,7 @@ class MenuManagementController(CoreDependencies):
             logging.info(f"user={self.user['user_id']} deleted menu uid={menu.uid} name={menu.name!r}")
 
             await self.redis.delete(cache_key.menu_management_detail(uid))
+            await self.redis.delete(cache_key.menu_management_options())
 
             list_cache_key = cache_key.menu_managements()
             cached_list = await get_json(self.redis, list_cache_key)

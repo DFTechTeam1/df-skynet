@@ -9,7 +9,7 @@ FEATURE_URL = "/api/feature-management"
 
 
 @pytest.mark.asyncio
-async def test_full_menu_lifecycle(authed_client, db_session):
+async def test_full_menu_lifecycle(authed_client, db_session, menu_type_factory):
     """Walks create -> fetch -> update -> list -> delete for one menu, checking each response and the mapping cascade at the end."""
     feature_a_name = f"Journey Feature {uuid4().hex[:8]}-A"
     feature_b_name = f"Journey Feature {uuid4().hex[:8]}-B"
@@ -22,11 +22,13 @@ async def test_full_menu_lifecycle(authed_client, db_session):
 
     # 2. create a menu linked to both features
     menu_name = f"Journey Menu {uuid4().hex[:8]}"
+    menu_type = await menu_type_factory()
     create_resp = await authed_client.call(
         "POST",
         URL,
         json={
             "name": menu_name,
+            "type": menu_type,
             "description": "v1 desc",
             "feature_uids": [feature_a_uid, feature_b_uid],
         },
@@ -54,6 +56,7 @@ async def test_full_menu_lifecycle(authed_client, db_session):
         f"{URL}/{menu_uid}",
         json={
             "name": renamed,
+            "type": menu_type,
             "description": "v2 desc",
             "is_active": False,
             "feature_uids": [feature_a_uid],
@@ -99,16 +102,19 @@ async def test_full_menu_lifecycle(authed_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_name_conflict_from_create_and_update(authed_client):
+async def test_duplicate_name_conflict_from_create_and_update(authed_client, menu_type_factory):
     """409 from both create and rename-via-update when the target name is already taken, and a failed rename leaves the original name intact."""
     suffix = uuid4().hex[:8]
     alpha_name = f"Alpha-{suffix}"
     beta_name = f"Beta-{suffix}"
 
-    alpha_resp = await authed_client.call("POST", URL, json={"name": alpha_name})
+    alpha_type = await menu_type_factory()
+    beta_type = await menu_type_factory()
+
+    alpha_resp = await authed_client.call("POST", URL, json={"name": alpha_name, "type": alpha_type})
     assert alpha_resp.status_code == 200
 
-    beta_resp = await authed_client.call("POST", URL, json={"name": beta_name})
+    beta_resp = await authed_client.call("POST", URL, json={"name": beta_name, "type": beta_type})
     assert beta_resp.status_code == 200
     beta_uid = find_by_name(beta_resp.json()["data"], beta_name)["uid"]
 
@@ -116,13 +122,15 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
     rename_conflict = await authed_client.call(
         "PATCH",
         f"{URL}/{beta_uid}",
-        json={"name": alpha_name},
+        json={"name": alpha_name, "type": beta_type},
         raise_for_status=False,
     )
     assert rename_conflict.status_code == 409
 
     # creating a second "alpha" from scratch conflicts too — same guard, different trigger
-    create_conflict = await authed_client.call("POST", URL, json={"name": alpha_name}, raise_for_status=False)
+    create_conflict = await authed_client.call(
+        "POST", URL, json={"name": alpha_name, "type": await menu_type_factory()}, raise_for_status=False
+    )
     assert create_conflict.status_code == 409
 
     # beta was never actually renamed by the failed attempt
@@ -131,7 +139,7 @@ async def test_duplicate_name_conflict_from_create_and_update(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_client, db_session):
+async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_client, db_session, menu_type_factory):
     """200 OK; a mapped feature stays in the menu's features array even after its own is_active goes False, and the mapping row is left intact."""
     feature_name = f"Fadeout Feature {uuid4().hex[:8]}"
     create_feature = await authed_client.call(
@@ -140,7 +148,9 @@ async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_cl
     feature_uid = find_by_name(create_feature.json()["data"], feature_name)["uid"]
 
     menu_name = f"Fadeout Menu {uuid4().hex[:8]}"
-    create_menu = await authed_client.call("POST", URL, json={"name": menu_name, "feature_uids": [feature_uid]})
+    create_menu = await authed_client.call(
+        "POST", URL, json={"name": menu_name, "type": await menu_type_factory(), "feature_uids": [feature_uid]}
+    )
     created = find_by_name(create_menu.json()["data"], menu_name)
     menu_uid = created["uid"]
     assert feature_uid in [f["feature_uid"] for f in created["features"]]
@@ -173,7 +183,7 @@ async def test_deactivating_a_mapped_feature_keeps_it_in_menu_response(authed_cl
 
 
 @pytest.mark.asyncio
-async def test_same_feature_linked_to_multiple_menus(authed_client):
+async def test_same_feature_linked_to_multiple_menus(authed_client, menu_type_factory):
     """200 OK; the same feature can be mapped to two different menus simultaneously."""
     shared_feature_name = f"Shared {uuid4().hex[:8]}"
     feature_resp = await authed_client.call(
@@ -187,12 +197,12 @@ async def test_same_feature_linked_to_multiple_menus(authed_client):
     await authed_client.call(
         "POST",
         URL,
-        json={"name": menu_one_name, "feature_uids": [shared_feature_uid]},
+        json={"name": menu_one_name, "type": await menu_type_factory(), "feature_uids": [shared_feature_uid]},
     )
     await authed_client.call(
         "POST",
         URL,
-        json={"name": menu_two_name, "feature_uids": [shared_feature_uid]},
+        json={"name": menu_two_name, "type": await menu_type_factory(), "feature_uids": [shared_feature_uid]},
     )
 
     resp = await authed_client.call("GET", URL)

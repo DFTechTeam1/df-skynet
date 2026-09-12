@@ -12,8 +12,13 @@ from tests.helpers import find_by_name, response_names
 URL = "/api/menu-management"
 
 
-def _make_menu(user_id):
-    return DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+async def _make_menu(user_id, menu_type_factory):
+    """A menu whose `type` is already a registered option, since update tests
+    echo it straight back through the real PATCH endpoint (which now validates
+    `type` against the live `menu_management_options` list)."""
+    return DfEngineMenusFactory.create(
+        created_by=int(user_id), type=await menu_type_factory(), df_engine_menu_feature_mapping=None
+    )
 
 
 def _make_feature(user_id):
@@ -21,15 +26,15 @@ def _make_feature(user_id):
 
 
 @pytest.mark.asyncio
-async def test_update_replaces_name_description_and_active(authed_client, user_id):
+async def test_update_replaces_name_description_and_active(authed_client, user_id, menu_type_factory):
     """200 OK; PATCH is a full replace of name/description/is_active, not a partial diff."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     renamed = f"{menu.name}-v2"
 
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{menu.uid}",
-        json={"name": renamed, "description": "new desc", "is_active": True},
+        json={"name": renamed, "type": menu.type, "description": "new desc", "is_active": True},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], renamed)
@@ -38,9 +43,9 @@ async def test_update_replaces_name_description_and_active(authed_client, user_i
 
 
 @pytest.mark.asyncio
-async def test_update_add_and_remove_features_in_one_call(authed_client, user_id):
+async def test_update_add_and_remove_features_in_one_call(authed_client, user_id, menu_type_factory):
     """200 OK; process diffs feature_uids against existing mappings — unlinks removed, links added, in one call."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     kept = _make_feature(user_id)
     removed = _make_feature(user_id)
     added = _make_feature(user_id)
@@ -53,6 +58,7 @@ async def test_update_add_and_remove_features_in_one_call(authed_client, user_id
         f"{URL}/{menu.uid}",
         json={
             "name": menu.name,
+            "type": menu.type,
             "feature_uids": [kept.uid, added.uid],
         },
     )
@@ -63,16 +69,18 @@ async def test_update_add_and_remove_features_in_one_call(authed_client, user_id
 
 
 @pytest.mark.asyncio
-async def test_update_preserves_mapping_uid_for_unchanged_feature(authed_client, db_session, user_id):
+async def test_update_preserves_mapping_uid_for_unchanged_feature(
+    authed_client, db_session, user_id, menu_type_factory
+):
     """200 OK; process leaves an unchanged mapping row untouched instead of deleting and recreating it."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     feature = _make_feature(user_id)
     mapping = DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{menu.uid}",
-        json={"name": menu.name, "feature_uids": [feature.uid]},
+        json={"name": menu.name, "type": menu.type, "feature_uids": [feature.uid]},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], menu.name)
@@ -88,16 +96,16 @@ async def test_update_preserves_mapping_uid_for_unchanged_feature(authed_client,
 
 
 @pytest.mark.asyncio
-async def test_update_empty_feature_uids_unlinks_everything(authed_client, user_id):
+async def test_update_empty_feature_uids_unlinks_everything(authed_client, user_id, menu_type_factory):
     """200 OK; passing an empty feature_uids list unlinks every currently-mapped feature."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     feature = _make_feature(user_id)
     DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{menu.uid}",
-        json={"name": menu.name, "feature_uids": []},
+        json={"name": menu.name, "type": menu.type, "feature_uids": []},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], menu.name)
@@ -105,16 +113,16 @@ async def test_update_empty_feature_uids_unlinks_everything(authed_client, user_
 
 
 @pytest.mark.asyncio
-async def test_update_deactivating_keeps_its_feature_mappings(authed_client, db_session, user_id):
+async def test_update_deactivating_keeps_its_feature_mappings(authed_client, db_session, user_id, menu_type_factory):
     """200 OK; setting is_active False leaves the menu's df_engine_menu_feature_mappings rows untouched."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     feature = _make_feature(user_id)
     mapping = DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
 
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{menu.uid}",
-        json={"name": menu.name, "is_active": False, "feature_uids": [feature.uid]},
+        json={"name": menu.name, "type": menu.type, "is_active": False, "feature_uids": [feature.uid]},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], menu.name)
@@ -135,12 +143,12 @@ async def test_update_deactivating_keeps_its_feature_mappings(authed_client, db_
 
 
 @pytest.mark.asyncio
-async def test_update_unknown_uid_is_404(authed_client):
+async def test_update_unknown_uid_is_404(authed_client, menu_type_factory):
     """404 menu_not_found when the path uid matches no menu."""
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{uuid4()}",
-        json={"name": f"Ghost {uuid4().hex[:8]}"},
+        json={"name": f"Ghost {uuid4().hex[:8]}", "type": await menu_type_factory()},
         raise_for_status=False,
     )
     assert resp.status_code == 404
@@ -148,15 +156,15 @@ async def test_update_unknown_uid_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_update_unknown_feature_uid_is_422(authed_client, user_id):
+async def test_update_unknown_feature_uid_is_422(authed_client, user_id, menu_type_factory):
     """422; process rejects the whole update if a given feature_uid doesn't exist."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     unknown_uid = str(uuid4())
 
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{menu.uid}",
-        json={"name": menu.name, "feature_uids": [unknown_uid]},
+        json={"name": menu.name, "type": menu.type, "feature_uids": [unknown_uid]},
         raise_for_status=False,
     )
     assert resp.status_code == 422
@@ -166,15 +174,15 @@ async def test_update_unknown_feature_uid_is_422(authed_client, user_id):
 
 
 @pytest.mark.asyncio
-async def test_update_rename_into_collision_is_409(authed_client, user_id):
+async def test_update_rename_into_collision_is_409(authed_client, user_id, menu_type_factory):
     """409 when renaming a menu to a name another menu already has."""
-    existing = _make_menu(user_id)
-    other = _make_menu(user_id)
+    existing = await _make_menu(user_id, menu_type_factory)
+    other = await _make_menu(user_id, menu_type_factory)
 
     resp = await authed_client.call(
         "PATCH",
         f"{URL}/{other.uid}",
-        json={"name": existing.name},
+        json={"name": existing.name, "type": other.type},
         raise_for_status=False,
     )
     assert resp.status_code == 409
@@ -182,41 +190,56 @@ async def test_update_rename_into_collision_is_409(authed_client, user_id):
 
 
 @pytest.mark.asyncio
-async def test_requires_auth(client, user_id):
+async def test_update_type_into_collision_is_409(authed_client, user_id, menu_type_factory):
+    """409 when changing a menu's type to a type another menu already has."""
+    existing = await _make_menu(user_id, menu_type_factory)
+    other = await _make_menu(user_id, menu_type_factory)
+
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{other.uid}",
+        json={"name": other.name, "type": existing.type},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_requires_auth(client, user_id, menu_type_factory):
     """401 when the request carries no bearer token."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     resp = await client.call(
         "PATCH",
         f"{URL}/{menu.uid}",
-        json={"name": menu.name},
+        json={"name": menu.name, "type": menu.type},
         raise_for_status=False,
     )
     assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_update_invalidates_the_detail_cache(authed_client, user_id):
+async def test_update_invalidates_the_detail_cache(authed_client, user_id, menu_type_factory):
     """200 OK; PATCH clears the cached detail so the next GET-by-uid reflects the new name, not the stale cache."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     detail_before = await authed_client.call("GET", f"{URL}/{menu.uid}")
     assert detail_before.json()["data"]["name"] == menu.name
 
     renamed = f"{menu.name}-v2"
-    await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": renamed})
+    await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": renamed, "type": menu.type})
 
     detail_after = await authed_client.call("GET", f"{URL}/{menu.uid}")
     assert detail_after.json()["data"]["name"] == renamed
 
 
 @pytest.mark.asyncio
-async def test_update_invalidates_the_list_cache(authed_client, user_id):
+async def test_update_invalidates_the_list_cache(authed_client, user_id, menu_type_factory):
     """200 OK; PATCH clears the cached list so a subsequent GET reflects the rename, not the stale cache."""
-    menu = _make_menu(user_id)
+    menu = await _make_menu(user_id, menu_type_factory)
     await authed_client.call("GET", URL)  # warm the unfiltered list cache
     assert await redis_client().exists("menu_management:list:all")
 
     renamed = f"{menu.name}-v2"
-    await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": renamed})
+    await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": renamed, "type": menu.type})
 
     resp = await authed_client.call("GET", URL)
     found = response_names(resp.json())

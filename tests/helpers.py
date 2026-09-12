@@ -1,3 +1,4 @@
+import json
 from typing import Any, Optional, Type, TypeVar
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,6 +127,28 @@ def openrouter_item_from_row(row: DfEngineModelOptions) -> dict[str, Any]:
         "knowledge_cutoff": row.knowledge_cutoff.isoformat() if row.knowledge_cutoff else None,
         "expiration_date": row.expiration_date.isoformat() if row.expiration_date else None,
     }
+
+
+MENU_TYPE_SETTING_CODE = "menu_management"
+MENU_TYPE_SETTING_KEY = "menu_management_options"
+
+
+async def register_menu_type_option(db_session: AsyncSession, value: str) -> None:
+    """Adds `value` to the `menu_management_options` settings list if it isn't
+    there already — mirrors a real admin adding a new menu type option, since
+    `df_engine_menus.type` is only ever validated against this live list (it
+    can grow or shrink in production, so tests can't assume a fixed set)."""
+    setting = (
+        await db_session.execute(select(DfEngineSettings).where(DfEngineSettings.key == MENU_TYPE_SETTING_KEY))  # type: ignore
+    ).scalar_one_or_none()
+    if setting is None:
+        setting = DfEngineSettings(code=MENU_TYPE_SETTING_CODE, key=MENU_TYPE_SETTING_KEY, value=json.dumps([value]))
+        db_session.add(setting)
+    else:
+        options = json.loads(setting.value) if setting.value else []
+        if value not in options:
+            setting.value = json.dumps([*options, value])
+    await db_session.commit()
 
 
 def find_by_name(items: list[dict[str, Any]], name: str) -> dict[str, Any]:

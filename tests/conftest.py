@@ -59,6 +59,7 @@ async def _clear_all_redis_caches():
         "feature_management:detail:*",
         "menu_management:list:*",
         "menu_management:detail:*",
+        "menu_management:options",
         "prompt_template:list:*",
         "prompt_template:detail:*",
         "model_option:*",
@@ -79,6 +80,21 @@ async def db_session():
         except Exception:
             await session.rollback()
             raise
+
+
+@pytest_asyncio.fixture
+async def menu_type_factory(db_session):
+    """Returns an async factory that mints a fresh, unique menu `type` and
+    registers it as a valid `menu_management_options` value, so it passes the
+    real create/update endpoint's option-list validation."""
+    from tests.helpers import register_menu_type_option
+
+    async def _make(value: Optional[str] = None) -> str:
+        value = value or f"type_{uuid4().hex[:8]}"
+        await register_menu_type_option(db_session, value)
+        return value
+
+    return _make
 
 
 @pytest_asyncio.fixture(scope="session")
