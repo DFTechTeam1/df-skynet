@@ -3,7 +3,7 @@ from datetime import timedelta
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineApiKeys, DfEngineApiKeySnapshots, DfEngineOpenrouterLogs, Employees
+from services.mysql.model import DfEngineApiKeys, DfEngineApiKeySnapshots, DfEngineExternalApiCalls, Employees
 from services.mysql.factory import DfEngineApiKeysFactory
 from utils import local_time
 from tests.helpers import response_names
@@ -130,7 +130,7 @@ async def test_delete_excludes_key_from_copy_endpoint(authed_client, db_session,
 
 @pytest.mark.asyncio
 async def test_delete_logs_the_openrouter_call(authed_client, db_session, user_id, active_employee_uid):
-    """A DfEngineOpenrouterLogs row is written for the DELETE /keys/{hash} attempt."""
+    """A DfEngineExternalApiCalls row is written for the DELETE /keys/{hash} attempt."""
     employee = await _employee(db_session, active_employee_uid)
     row = _key(employee.id, user_id)
 
@@ -140,7 +140,7 @@ async def test_delete_logs_the_openrouter_call(authed_client, db_session, user_i
     logs = (
         (
             await db_session.execute(
-                select(DfEngineOpenrouterLogs).order_by(DfEngineOpenrouterLogs.created_at.desc()).limit(10)
+                select(DfEngineExternalApiCalls).order_by(DfEngineExternalApiCalls.created_at.desc()).limit(10)
             )
         )
         .scalars()

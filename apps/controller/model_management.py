@@ -19,7 +19,7 @@ from utils.serializer import serialize
 from services.mysql import query
 from services.api_caller import APICaller
 from services.model_management import ModelManagement
-from services.mysql.model import Employees, DfEngineOpenrouterLogs, DfEngineSettings, DfEngineSettingLogs, Users
+from services.mysql.model import DfEngineExternalApiCalls, DfEngineSettingLogs, DfEngineSettings, Employees, Users
 from utils.formatter import format_date
 
 
@@ -427,7 +427,7 @@ class ModelManagementController(CoreDependencies):
                                     f"for unavailable models {sorted(disabled_main_names)}"
                                 )
                     except Exception as exc:
-                        error_message = str(exc)
+                        error_message = exc.message if isinstance(exc, BaseError) else str(exc)
                     finally:
                         nickname = await query(
                             db=self.db,
@@ -437,8 +437,9 @@ class ModelManagementController(CoreDependencies):
                             fetch_one=True,
                         )
                         self.db.add(
-                            DfEngineOpenrouterLogs(
+                            DfEngineExternalApiCalls(
                                 name=nickname,
+                                type="openrouter",
                                 method="GET",
                                 endpoint=endpoint,
                                 request_headers=request_headers,

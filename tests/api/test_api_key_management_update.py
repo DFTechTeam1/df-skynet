@@ -3,7 +3,7 @@ from datetime import timedelta
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineOpenrouterLogs, Employees
+from services.mysql.model import DfEngineExternalApiCalls, Employees
 from services.mysql.factory import DfEngineApiKeysFactory
 from utils import local_time
 from tests.helpers import expected_user, find_by_name
@@ -28,7 +28,7 @@ async def _patch_logs(db_session, name: str) -> list:
     logs = (
         (
             await db_session.execute(
-                select(DfEngineOpenrouterLogs).order_by(DfEngineOpenrouterLogs.created_at.desc()).limit(20)
+                select(DfEngineExternalApiCalls).order_by(DfEngineExternalApiCalls.created_at.desc()).limit(20)
             )
         )
         .scalars()

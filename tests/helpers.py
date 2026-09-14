@@ -7,8 +7,8 @@ from services.redis import CacheKeys
 
 SETTING_CACHE_PATTERN = "setting:*"
 from services.mysql.model import (
+    DfEngineExternalApiCalls,
     DfEngineModelOptions,
-    DfEngineOpenrouterLogs,
     DfEnginePreferences,
     DfEngineProjectSettings,
     DfEngineSettingLogs,
@@ -70,15 +70,15 @@ async def clear_setting_state(db_session: AsyncSession) -> None:
     await delete_pattern(redis_client(), SETTING_CACHE_PATTERN)
 
 
-async def clear_openrouter_logs(db_session: AsyncSession) -> None:
-    """Deletes every `df_engine_openrouter_logs` row so a log test starts from an
-    empty table regardless of what an earlier run (or a real OpenRouter call)
+async def clear_external_api_call_logs(db_session: AsyncSession) -> None:
+    """Deletes every `df_engine_external_api_calls` row so a log test starts from an
+    empty table regardless of what an earlier run (or a real OpenRouter/udin call)
     left behind, and clears the cached logs pages so a later fetch doesn't
     still serve rows this just removed.
     """
-    await db_session.execute(delete(DfEngineOpenrouterLogs))
+    await db_session.execute(delete(DfEngineExternalApiCalls))
     await db_session.commit()
-    await delete_pattern(redis_client(), cache_key.api_key_management_logs_pattern())
+    await delete_pattern(redis_client(), cache_key.api_logs_pattern())
 
 
 async def available_model_rows(db_session: AsyncSession, model_type: str) -> list[DfEngineModelOptions]:

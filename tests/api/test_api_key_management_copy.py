@@ -3,7 +3,7 @@ from datetime import timedelta
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineOpenrouterLogs, Employees
+from services.mysql.model import DfEngineExternalApiCalls, Employees
 from services.mysql.factory import DfEngineApiKeysFactory
 from services.redis import client as redis_client, CacheKeys
 from utils import local_time
@@ -49,10 +49,10 @@ async def test_copy_does_not_write_an_openrouter_log(authed_client, db_session, 
     """Copy is a local-only lookup — it never contacts OpenRouter, so no log row is written."""
     employee = await _employee(db_session, active_employee_uid)
     row = DfEngineApiKeysFactory.create(name=f"Key {uuid4().hex[:8]}", employee_id=employee.id, created_by=int(user_id))
-    before = (await db_session.execute(select(DfEngineOpenrouterLogs.id))).scalars().all()
+    before = (await db_session.execute(select(DfEngineExternalApiCalls.id))).scalars().all()
     await authed_client.call("GET", f"{URL}/{row.uid}")
     await db_session.rollback()
-    after = (await db_session.execute(select(DfEngineOpenrouterLogs.id))).scalars().all()
+    after = (await db_session.execute(select(DfEngineExternalApiCalls.id))).scalars().all()
     assert len(after) == len(before)
 
 

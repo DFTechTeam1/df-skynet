@@ -16,7 +16,7 @@ from services.mysql.model.df_engine_menu_feature_mappings import DfEngineMenuFea
 from services.mysql.model.df_engine_menus import DfEngineMenus
 from services.mysql.model.df_engine_model_options import DfEngineModelOptions
 from services.mysql.model.df_engine_motion_details import DfEngineMotionDetails
-from services.mysql.model.df_engine_openrouter_logs import DfEngineOpenrouterLogs
+from services.mysql.model.df_engine_external_api_calls import DfEngineExternalApiCalls
 from services.mysql.model.df_engine_preferences import DfEnginePreferences
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
 from services.mysql.model.df_engine_prompt_templates import DfEnginePromptTemplates
@@ -55,7 +55,7 @@ __all__ = [
     "DfEngineMenus",
     "DfEngineModelOptions",
     "DfEngineMotionDetails",
-    "DfEngineOpenrouterLogs",
+    "DfEngineExternalApiCalls",
     "DfEnginePreferences",
     "DfEngineProjectSettings",
     "DfEnginePromptTemplates",

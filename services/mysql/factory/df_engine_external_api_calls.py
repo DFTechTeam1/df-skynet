@@ -5,13 +5,13 @@ from factory.alchemy import SQLAlchemyModelFactory
 from services.mysql import make_sync_session
 from factory.declarations import LazyFunction
 from factory.faker import Faker
-from services.mysql.model.df_engine_openrouter_logs import DfEngineOpenrouterLogs
+from services.mysql.model.df_engine_external_api_calls import DfEngineExternalApiCalls
 from utils import local_time
 
 
-class DfEngineOpenrouterLogsFactory(SQLAlchemyModelFactory):
+class DfEngineExternalApiCallsFactory(SQLAlchemyModelFactory):
     class Meta:  # type: ignore
-        model = DfEngineOpenrouterLogs
+        model = DfEngineExternalApiCalls
         sqlalchemy_session = make_sync_session(DB_SYNC_URL)
         sqlalchemy_session_persistence = "commit"
 
@@ -19,8 +19,7 @@ class DfEngineOpenrouterLogsFactory(SQLAlchemyModelFactory):
     created_at = LazyFunction(local_time)
     uid = LazyFunction(lambda: str(uuid4()))
     name = None
-    generation_id = None
-    attempt = None
+    type = "openrouter"
     method = "GET"
     endpoint = Faker("uri_path")
     request_headers = None

@@ -11,6 +11,7 @@ from utils import local_time
 class UploadFileTypes(StrEnum):
     video = auto()
     image = auto()
+    folder = auto()
 
 
 class DfEngineUploadFiles(SQLModel, table=True):

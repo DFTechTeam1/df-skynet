@@ -2,19 +2,18 @@ import time
 import traceback
 from uuid import UUID
 from typing import Optional
-from fastapi import status, Path, Query
+from fastapi import status, Path
 from fastapi_controller import controller
-from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
-from schemas.response import PaginationResponse, Response
+from schemas.response import Response
 from services.mysql import query
 from schemas.payload.api_key_management import CreateApiKeyPayload, UpdateApiKeyPayload
 from services.mysql.model import (
     DfEngineApiKeyRotationIssues,
     DfEngineApiKeys,
     DfEngineApiKeySnapshots,
-    DfEngineOpenrouterLogs,
+    DfEngineExternalApiCalls,
     Employees,
     PositionBackups,
 )
@@ -146,8 +145,9 @@ class APIKeyManagementController(CoreDependencies):
                     conflict = True
 
             self.db.add(
-                DfEngineOpenrouterLogs(
+                DfEngineExternalApiCalls(
                     name=employee.nickname,
+                    type="openrouter",
                     method="POST",
                     endpoint=str(openrouter_response.request.url),
                     request_headers={**header, "Authorization": "Bearer ***"},
@@ -287,8 +287,9 @@ class APIKeyManagementController(CoreDependencies):
                 create_ok = not (create_response.is_error or bool(create_body.get("error")))
 
                 self.db.add(
-                    DfEngineOpenrouterLogs(
+                    DfEngineExternalApiCalls(
                         name=record.employee_name,
+                        type="openrouter",
                         method="POST",
                         endpoint=str(create_response.request.url),
                         request_headers=redacted_header,
@@ -327,8 +328,9 @@ class APIKeyManagementController(CoreDependencies):
                 revoked_cleanly = not (revoke_response.is_error or bool(revoke_body.get("error")))
 
                 self.db.add(
-                    DfEngineOpenrouterLogs(
+                    DfEngineExternalApiCalls(
                         name=record.employee_name,
+                        type="openrouter",
                         method="DELETE",
                         endpoint=str(revoke_response.request.url),
                         request_headers=redacted_header,
@@ -472,81 +474,6 @@ class APIKeyManagementController(CoreDependencies):
             raise ServiceError()
         return response
 
-    @controller.get(
-        "/key-management/logs",
-        summary="View the log of calls this service made to OpenRouter.",
-        description=(
-            "Returns the OpenRouter call history, newest first: every time this service "
-            "contacted OpenRouter to create, update, delete, or rotate an API key, this "
-            "records who triggered it, the HTTP method and endpoint, the request body "
-            "that was sent, OpenRouter's status code, response headers and response "
-            "body, how long the call took, and any error. The outgoing request headers "
-            "are deliberately left out because they carry the OpenRouter management "
-            "credential. Paginated — pass `page` and `itemsPerPage` to page through the "
-            "history."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["API Key Management"],
-        response_model=Response,
-    )
-    async def api_key_management_to_fetch_openrouter_logs(
-        self,
-        page: int = Query(default=1, ge=1, description="1-indexed page number to fetch."),
-        itemsPerPage: int = Query(default=50, ge=1, le=200, description="Number of records to return per page."),
-    ) -> Response:
-        response = Response()
-        cache_key = CacheKeys()
-        api_key_service = ApiKeyManagement()
-        try:
-            logs_cache_key = cache_key.api_key_management_logs(page, itemsPerPage)
-            cached = await get_json(self.redis, logs_cache_key)
-            if cached is not None:
-                logging.info(
-                    f"user={self.user['user_id']} returned OpenRouter call log page {page} "
-                    f"({len(cached['logs'])} row(s)) from cache"
-                )
-                response.data = PaginationResponse(paginated=cached["logs"], totalData=cached["total_data"])
-                return response
-
-            total_data = (
-                await query(
-                    db=self.db,
-                    table=DfEngineOpenrouterLogs,
-                    columns=(func.count(DfEngineOpenrouterLogs.id),),  # type: ignore
-                    fetch_one=True,
-                )
-                or 0
-            )
-
-            records = await query(
-                db=self.db,
-                table=DfEngineOpenrouterLogs,
-                order_by=(DfEngineOpenrouterLogs.created_at.desc(), DfEngineOpenrouterLogs.id.desc()),  # type: ignore
-                limit=itemsPerPage,
-                offset=(page - 1) * itemsPerPage,
-            )
-
-            logs = [api_key_service.format_log(record) for record in serialize(records)]
-
-            await set_json(self.redis, logs_cache_key, {"logs": logs, "total_data": total_data})
-            logging.info(
-                f"user={self.user['user_id']} returned OpenRouter call log page {page} "
-                f"({len(logs)} of {total_data} row(s)) from database"
-            )
-            response.data = PaginationResponse(paginated=logs, totalData=total_data)
-        except BaseError as e:
-            logging.warning(
-                f"user={self.user['user_id']} could not return OpenRouter call log (page {page}): "
-                f"{e.message} ({e.status_code})"
-            )
-            raise
-        except Exception:
-            logging.error(
-                f"user={self.user['user_id']} unexpected error returning OpenRouter call log\n{traceback.format_exc()}"
-            )
-            raise ServiceError()
-        return response
-
     @controller.delete(
         "/key-management/{uid}",
         summary="Delete a non-main API key.",
@@ -599,8 +526,9 @@ class APIKeyManagementController(CoreDependencies):
             revoked_cleanly = not (openrouter_response.is_error or bool(response_body.get("error")))
 
             self.db.add(
-                DfEngineOpenrouterLogs(
+                DfEngineExternalApiCalls(
                     name=record.employee_name,
+                    type="openrouter",
                     method="DELETE",
                     endpoint=str(openrouter_response.request.url),
                     request_headers={**header, "Authorization": "Bearer ***"},
@@ -841,8 +769,9 @@ class APIKeyManagementController(CoreDependencies):
                 sync_failed = openrouter_response.is_error or bool(response_body.get("error"))
 
                 self.db.add(
-                    DfEngineOpenrouterLogs(
+                    DfEngineExternalApiCalls(
                         name=record.employee_name,
+                        type="openrouter",
                         method="PATCH",
                         endpoint=str(openrouter_response.request.url),
                         request_headers={**header, "Authorization": "Bearer ***"},

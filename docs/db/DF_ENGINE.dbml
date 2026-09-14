@@ -101,6 +101,7 @@ Enum model_usage_types {
 Enum upload_file_types {
     video
     image
+    folder
 }
 
 Enum upload_statuses {
@@ -148,7 +149,7 @@ Table projects {
     id bigint [pk, increment]
 }
 
-Table tasks {
+Table project_tasks {
     id bigint [pk, increment]
     uid varchar(36) [not null, unique]
     project_id integer [not null]
@@ -170,8 +171,8 @@ Table df_engine_project_settings {
     max_scene_per_storyboard integer [not null]
     max_shot_per_scene integer [not null]
     token_limit_threshold float [default: null, note: "Per-project override (0-1). NULL = inherit the project class's token_limit_threshold from the admin_setting project_class_limitations."]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    created_by bigint [default: null]
+    updated_by bigint [default: null]
 }
 
 Table df_engine_settings {
@@ -189,7 +190,7 @@ Table df_engine_preferences {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
-    user_id bigint [unique, default: null]
+    user_id bigint [not null, unique]
     theme varchar(20) [not null, default: "dark", note: "Formerly enum theme_types (dark, light) — now validated at the application level instead of the DB, so new values don't require a migration."]
     accent varchar(20) [not null, default: "teal", note: "Formerly enum accent_types (signal, violet, teal) — now validated at the application level instead of the DB, so new values don't require a migration."]
     language varchar(20) [not null, default: "english", note: "Formerly enum language_types (indonesia, english) — now validated at the application level instead of the DB, so new values don't require a migration."]
@@ -208,7 +209,7 @@ Table df_engine_setting_logs {
     incoming_data json [not null]
     ip_address varchar(45) [default: null]
     user_agent varchar(255) [default: null]
-    created_by integer [default: null]
+    created_by bigint [default: null]
 }
 
 
@@ -227,12 +228,12 @@ Table df_engine_api_keys {
     hash varchar(255) [default: null]
     name varchar(255) [not null]
     description text [default: null]
-    employee_id integer [default: null]
+    employee_id bigint [default: null]
     employee_name varchar(255) [default: null]
     is_main boolean [not null, default: False, note: "This table supports multi employee_id and multi api_keys, create constraint is_main only can be choose 1 per api"]
     updated_at timestamp [default: null]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    created_by bigint [not null]
+    updated_by bigint [default: null]
 }
 
 Table df_engine_api_key_snapshots {
@@ -246,20 +247,19 @@ Table df_engine_api_key_snapshots {
     hash varchar(255) [default: null]
     name varchar(255) [not null]
     description text [default: null]
-    employee_id integer [default: null, note: "Denormalized copy, no FK — archival record must survive employee deletion"]
+    employee_id bigint [default: null, note: "Denormalized copy, no FK — archival record must survive employee deletion"]
     employee_name varchar(255) [default: null]
     updated_at timestamp [default: null]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    created_by bigint [not null]
+    updated_by bigint [default: null]
 }
 
-Table df_engine_openrouter_logs {
+Table df_engine_external_api_calls {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
     name varchar(255) [default: null]
-    generation_id bigint [default: null, note: "FK to df_engine_generations.id — null for non-generation calls (e.g. key management /keys endpoints)"]
-    attempt integer [default: null, note: "Ties this call to the attempt number in df_engine_queues for the same generation — null for non-generation calls"]
+    type varchar(255) [not null, default: 'openrouter', note: "Which external integration this call was made to, e.g. 'openrouter', 'udin'"]
     method varchar(10) [not null, note: "e.g. GET, POST, PUT, PATCH, DELETE"]
     endpoint varchar(255) [not null, note: "e.g. /keys, /keys/{hash}, /chat/completions"]
     request_headers json [default: null, note: "SENSITIVE — stored raw, including the live OpenRouter management key or per-generation API key used to authorize this call. Restrict read access."]
@@ -271,9 +271,8 @@ Table df_engine_openrouter_logs {
     duration_ms integer [default: null]
 
     indexes {
-        (generation_id, attempt) [name: 'idx_openrouter_logs_generation_attempt']
-        response_status_code [name: 'idx_openrouter_logs_response_status']
-        (created_at, id) [name: 'idx_df_engine_openrouter_logs_created_at_id']
+        response_status_code [name: 'idx_external_api_calls_response_status']
+        (created_at, id) [name: 'idx_df_engine_external_api_calls_created_at_id']
     }
 }
 
@@ -305,10 +304,11 @@ Table df_engine_menus {
     updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
     name varchar(255) [not null, unique]
+    // type varchar(255) [not null, note: "[storyboards, generations, assistants, elements]"]
     description text [default: null]
     is_active boolean [not null, default: true]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    created_by bigint [not null]
+    updated_by bigint [default: null]
 }
 
 Table df_engine_features {
@@ -320,24 +320,24 @@ Table df_engine_features {
     type varchar(255) [not null]
     description text [default: null]
     is_active boolean [not null, default: true]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    created_by bigint [not null]
+    updated_by bigint [default: null]
 }
 
 Table df_engine_feature_prompt_mappings {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
-    feature_id integer [not null]
-    template_id integer [not null]
+    feature_id bigint [not null]
+    template_id bigint [not null]
 }
 
 Table df_engine_menu_feature_mappings {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     uid varchar(36) [not null, unique]
-    feature_id integer [not null]
-    menu_id integer [not null]
+    feature_id bigint [not null]
+    menu_id bigint [not null]
 }
 
 Table df_engine_prompt_templates {
@@ -349,8 +349,8 @@ Table df_engine_prompt_templates {
     name varchar(255) [not null, unique]
     prompt text [not null]
     description text [default: null]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    created_by bigint [not null]
+    updated_by bigint [default: null]
 }
 
 
@@ -413,8 +413,8 @@ Table df_engine_upload_files {
     size bigint [not null]
     project_id bigint [not null]
     task_id bigint [default: null]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    created_by bigint [default: null]
+    updated_by bigint [default: null]
 }
 
 
@@ -439,7 +439,7 @@ Table df_engine_generations {
     status_code integer [default: null]
     token_usage integer [default: null]
     cost decimal(10, 2) [default: null]
-    created_by integer [default: null]
+    created_by bigint [default: null]
 
     indexes {
         kind [name: 'idx_generations_kind']
@@ -577,7 +577,7 @@ Table df_engine_generation_reconciliation_issues {
     issue_type varchar(50) [not null, note: "db_commit_failed | other future reconciliation cases"]
     detail text [default: null, note: "The underlying exception text"]
     resolved_at timestamp [default: null, note: "Null until a reconciliation job or human fixes the drift"]
-    resolved_by integer [default: null]
+    resolved_by bigint [default: null]
 
     indexes {
         generation_id [name: 'idx_reconciliation_issues_generation_id']
@@ -697,10 +697,10 @@ Table df_engine_generation_results {
     name varchar(255) [not null]
     path text [not null]
     size bigint [not null]
-    is_main bool [default: true]
-    is_favourite bool [default: false, note: "Only creator can favourite its own generated files."]
-    created_by integer [default: null]
-    updated_by integer [default: null]
+    is_main bool [not null, default: true]
+    is_favourite bool [not null, default: false, note: "Only creator can favourite its own generated files."]
+    created_by bigint [default: null]
+    updated_by bigint [default: null]
 
     indexes {
         generation_id [name: 'idx_generation_results_generation_id']
@@ -736,13 +736,13 @@ Ref: users.id < df_engine_generations.created_by
 Ref: users.id < df_engine_generation_reconciliation_issues.resolved_by
 Ref: users.id < df_engine_model_options.deleted_by
 
-// projects / tasks
-Ref: projects.id < tasks.project_id
+// projects / project_tasks
+Ref: projects.id < project_tasks.project_id
 Ref: projects.id < df_engine_project_settings.project_id
 Ref: projects.id < df_engine_upload_files.project_id
-Ref: tasks.id < df_engine_upload_files.task_id
+Ref: project_tasks.id < df_engine_upload_files.task_id
 Ref: projects.id < df_engine_generations.project_id
-Ref: tasks.id < df_engine_generations.task_id
+Ref: project_tasks.id < df_engine_generations.task_id
 
 // menus / features
 Ref: df_engine_features.id < df_engine_feature_prompt_mappings.feature_id
@@ -780,7 +780,6 @@ Ref: df_engine_generations.id - df_engine_keyframe_details.generation_id
 Ref: df_engine_generations.id - df_engine_motion_details.generation_id
 Ref: df_engine_generations.id - df_engine_chat_details.generation_id
 Ref: df_engine_generations.id - df_engine_enhancer_details.generation_id
-Ref: df_engine_generations.id < df_engine_openrouter_logs.generation_id
 
 // unified generations -> upload tracking (1:1, only for uploadable kinds)
 Ref: df_engine_generations.id - df_engine_generation_uploads.generation_id
