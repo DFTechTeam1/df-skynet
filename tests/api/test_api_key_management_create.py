@@ -2,7 +2,7 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineOpenrouterLogs, Employees
+from services.mysql.model import DfEngineExternalApiCalls, Employees
 from services.mysql.factory import DfEngineApiKeysFactory
 from tests.helpers import expected_user, find_by_name
 
@@ -15,12 +15,12 @@ async def _employee(db_session, employee_uid):
     return (await db_session.execute(select(Employees).where(Employees.uid == employee_uid))).scalar_one()
 
 
-async def _latest_log_for(db_session, name: str) -> DfEngineOpenrouterLogs:
+async def _latest_log_for(db_session, name: str) -> DfEngineExternalApiCalls:
     await db_session.rollback()  # see the API's own session's committed writes (REPEATABLE READ)
     logs = (
         (
             await db_session.execute(
-                select(DfEngineOpenrouterLogs).order_by(DfEngineOpenrouterLogs.created_at.desc()).limit(20)
+                select(DfEngineExternalApiCalls).order_by(DfEngineExternalApiCalls.created_at.desc()).limit(20)
             )
         )
         .scalars()
@@ -116,7 +116,7 @@ async def test_create_sets_pic_from_employee_uid(authed_client, db_session, acti
 
 @pytest.mark.asyncio
 async def test_create_logs_the_openrouter_call(authed_client, db_session, active_employee_uid):
-    """A DfEngineOpenrouterLogs row is written for the POST /keys attempt."""
+    """A DfEngineExternalApiCalls row is written for the POST /keys attempt."""
     name = f"Create Logged {uuid4().hex[:8]}"
     resp = await authed_client.call(
         "POST",

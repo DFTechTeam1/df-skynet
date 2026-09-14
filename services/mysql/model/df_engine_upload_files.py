@@ -11,6 +11,7 @@ from utils import local_time
 class UploadFileTypes(StrEnum):
     video = auto()
     image = auto()
+    folder = auto()
 
 
 class DfEngineUploadFiles(SQLModel, table=True):
@@ -28,6 +29,9 @@ class DfEngineUploadFiles(SQLModel, table=True):
     md5: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     size: int = Field(sa_column=Column(BigInteger, nullable=False))
     project_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("projects.id"), nullable=False))
+    task_id: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id"), nullable=True)
+    )
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
     )
@@ -37,6 +41,9 @@ class DfEngineUploadFiles(SQLModel, table=True):
 
     project: Optional["Projects"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineUploadFiles.project_id]"}
+    )
+    task: Optional["ProjectTasks"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineUploadFiles.task_id]"}
     )
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineUploadFiles.created_by]"}

@@ -102,11 +102,11 @@ flowchart TD
 
         subgraph OpenrouterGenerationCaller["Stage 1: Call Openrouter (every exception normalized)"]
             SetProcessing --> OpenouterGeneration["Call Openrouter API<br/>(duration_ms timer; capped by soft_time_limit)"]
-            OpenouterGeneration-->|Success|UpdateGenerationRecordSuccess["UPDATE df_engine_generations: response, status_code, token_usage, cost<br/>INSERT df_engine_generation_uploads (generation_id, upload_status='pending')<br/>INSERT df_engine_openrouter_logs: full req/resp, duration_ms"]
+            OpenouterGeneration-->|Success|UpdateGenerationRecordSuccess["UPDATE df_engine_generations: response, status_code, token_usage, cost<br/>INSERT df_engine_generation_uploads (generation_id, upload_status='pending')<br/>INSERT df_engine_external_api_calls: full req/resp, duration_ms"]
             OpenouterGeneration-->|"any exception (5xx / timeout / network / 429 / other 4xx / soft-time-limit)"|ClassifyOpenrouter{"R1 classifier:<br/>5xx, timeout, network, 429 -> retryable<br/>other 4xx -> final"}
-            ClassifyOpenrouter -->|"retryable, retries &lt; 5"| DoRetryOpenrouter["INSERT df_engine_openrouter_logs: error, duration_ms<br/>raise self.retry(exc=GenerationStageError(source='openrouter', retryable=True), backoff+jitter)"]
-            ClassifyOpenrouter -->|"retryable, retries exhausted"| DoFailOpenrouterExhausted["INSERT df_engine_openrouter_logs: error, duration_ms<br/>raise GenerationStageError(source='openrouter', final=True)"]
-            ClassifyOpenrouter -->|"final (non-429 4xx)"| RaiseFailFromOpenrouter["INSERT df_engine_openrouter_logs: error, duration_ms<br/>raise GenerationStageError(source='openrouter', final=True)"]
+            ClassifyOpenrouter -->|"retryable, retries &lt; 5"| DoRetryOpenrouter["INSERT df_engine_external_api_calls: error, duration_ms<br/>raise self.retry(exc=GenerationStageError(source='openrouter', retryable=True), backoff+jitter)"]
+            ClassifyOpenrouter -->|"retryable, retries exhausted"| DoFailOpenrouterExhausted["INSERT df_engine_external_api_calls: error, duration_ms<br/>raise GenerationStageError(source='openrouter', final=True)"]
+            ClassifyOpenrouter -->|"final (non-429 4xx)"| RaiseFailFromOpenrouter["INSERT df_engine_external_api_calls: error, duration_ms<br/>raise GenerationStageError(source='openrouter', final=True)"]
             DoRetryOpenrouter-.->|caught by|H_on_retry
             DoFailOpenrouterExhausted-.->|caught by|H_on_failure
             RaiseFailFromOpenrouter-.->|caught by|H_on_failure

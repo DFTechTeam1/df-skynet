@@ -202,11 +202,20 @@ class CacheKeys:
     def api_key_management_detail(self, uid: UUID) -> str:
         return f"api_key_management:detail:{uid}"
 
-    def api_key_management_logs(self, page: int, items_per_page: int) -> str:
-        return f"api_key_management:logs:page={page}:size={items_per_page}"
-
-    def api_key_management_logs_pattern(self) -> str:
-        return "api_key_management:logs:*"
-
     def api_key_management_pattern(self) -> str:
         return "api_key_management:*"
+
+    def api_logs(self, source: str, page: int, items_per_page: int) -> str:
+        return f"api_logs:source={source}:page={page}:size={items_per_page}"
+
+    def api_logs_pattern(self) -> str:
+        return "api_logs:*"
+
+    def user_files(self, user_id: int, task_id: int) -> str:
+        return f"user_files:task={task_id}:user_id={user_id}"
+
+    def user_folder_detail(self, user_id: int, task_id: int, folder_path: str) -> str:
+        return f"user_files:task={task_id}:user_id={user_id}:folder={folder_path}"
+
+    def user_file_detail(self, user_id: int, task_id: int, file_uid: str) -> str:
+        return f"user_files:task={task_id}:user_id={user_id}:file={file_uid}"

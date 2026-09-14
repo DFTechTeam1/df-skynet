@@ -123,7 +123,7 @@ Calls the Openrouter API with a timer and a hard cap at `soft_time_limit`.
 **On success:** persists `response`, `status_code`, `token_usage`, `cost` to
 `df_engine_generations`; creates a `df_engine_generation_uploads` row
 (`upload_status=pending`); logs the full request/response to
-`df_engine_openrouter_logs`. Falls through directly into Stage 2 — the task has
+`df_engine_external_api_calls`. Falls through directly into Stage 2 — the task has
 not returned yet, so no handler fires here.
 
 **On any exception** — HTTP error, timeout, connection error, JSON decode error,

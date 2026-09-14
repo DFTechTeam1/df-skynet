@@ -46,7 +46,7 @@ class ApiKeyManagement:
         return value
 
     def format_log(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Shape one serialized DfEngineOpenrouterLogs row for the API response.
+        """Shape one serialized DfEngineExternalApiCalls (type="openrouter") row for the API response.
 
         `request_headers` carries the OpenRouter management credential and is
         dropped outright. Newer rows are redacted on write, but older rows may

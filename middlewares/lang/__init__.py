@@ -2,6 +2,7 @@ from contextvars import ContextVar
 from middlewares.lang.en.auth import AuthMessage as _EnAuth
 from middlewares.lang.en.common import CommonMessage as _EnCommon
 from middlewares.lang.en.equipment import EquipmentMessage as _EnEquipment
+from middlewares.lang.en.files import FilesMessage as _EnFiles
 from middlewares.lang.en.feature_management import (
     FeatureManagementMessage as _EnFeatureManagement,
 )
@@ -17,6 +18,7 @@ from middlewares.lang.en.setting import SettingMessage as _EnSetting
 from middlewares.lang.id.auth import AuthMessage as _IdAuth
 from middlewares.lang.id.common import CommonMessage as _IdCommon
 from middlewares.lang.id.equipment import EquipmentMessage as _IdEquipment
+from middlewares.lang.id.files import FilesMessage as _IdFiles
 from middlewares.lang.id.feature_management import (
     FeatureManagementMessage as _IdFeatureManagement,
 )
@@ -39,6 +41,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_EnAuth().message,
         **_EnCommon().message,
         **_EnEquipment().message,
+        **_EnFiles().message,
         **_EnFeatureManagement().message,
         **_EnKeyManagement().message,
         **_EnMenuManagement().message,
@@ -50,6 +53,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_IdAuth().message,
         **_IdCommon().message,
         **_IdEquipment().message,
+        **_IdFiles().message,
         **_IdFeatureManagement().message,
         **_IdKeyManagement().message,
         **_IdMenuManagement().message,

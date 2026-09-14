@@ -22,6 +22,17 @@ def format_employee_users(employee: Optional[dict[str, Any]]) -> Optional[dict[s
     }
 
 
+def format_size(size: int) -> str:
+    value = float(size)
+    if value < 1024:
+        return f"{value:.0f} B"
+    for unit in ("KB", "MB", "GB"):
+        value /= 1024
+        if value < 1024 or unit == "GB":
+            return f"{value:.2f} {unit}"
+    return f"{value:.2f} GB"
+
+
 def format_datetime(value: Optional[datetime | str]) -> Optional[str]:
     """Format a datetime (or an ISO-8601 string, e.g. from `utils.serializer.serialize`)
     as 'DD Month YYYY, HH:MM' (e.g. '17 August 2026, 00:07').

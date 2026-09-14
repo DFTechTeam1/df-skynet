@@ -5,11 +5,12 @@ import pytest_asyncio
 from httpx import ASGITransport
 from jose import jwt
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 from uuid import uuid4
 from apps.secret import DB_ASYNC_URL, ERP_EMAIL, ERP_PASSWORD, LOGIN_URL
 from services.api_caller import APICaller
 from services.mysql import make_session
-from services.mysql.model import Employees, PositionBackups, ProjectClasses, Projects
+from services.mysql.model import Employees, PositionBackups, ProjectClasses, ProjectTasks, Projects, Users
 
 EMPLOYEE_STATUS_RESIGNED = 6
 ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager"]
@@ -65,6 +66,7 @@ async def _clear_all_redis_caches():
         "api_key_management:*",
         "setting:*",
         "user_preference:*",
+        "user_files:*",
     ):
         await delete_pattern(redis, pattern)
     yield
@@ -259,6 +261,113 @@ async def project_without_class(db_session):
         row.project_class_id = original
         db_session.add(row)
         await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def other_user_id(db_session, user_id) -> int:
+    """id of a real users row distinct from the authenticated user — for
+    ownership-permission tests, since `df_engine_upload_files.created_by`
+    has a foreign key onto `users.id` and won't accept an arbitrary int."""
+    row = (await db_session.execute(select(Users).where(Users.id != int(user_id)).limit(1))).scalars().first()
+    assert row is not None, "staging DB has no second users row to fixture against"
+    return row.id
+
+
+@pytest_asyncio.fixture
+async def project_task(db_session) -> ProjectTasks:
+    """An arbitrary existing project_tasks row, with its project loaded — Files
+    endpoints proxy to udin using the real project's `uid`, so this must be a
+    real row rather than a factory-built one."""
+    row = (
+        (
+            await db_session.execute(
+                select(ProjectTasks).options(selectinload(ProjectTasks.project)).limit(1)  # type: ignore
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no project_tasks row to fixture against"
+    return row
+
+
+class _FakeUdinRequest:
+    """Stands in for `httpx.Request` — just carries `.url`, mirroring how
+    `call_udin`/`upload_files` read `upstream.request.url` for the full endpoint."""
+
+    def __init__(self, url: str):
+        self.url = url
+
+
+class _FakeUdinResponse:
+    """Stands in for the subset of `httpx.Response` `FilesService.call_udin`/
+    `upload_files` reads off a udin call: status_code, headers, request.url, and .json()/.content."""
+
+    def __init__(self, status_code: int, payload: Optional[dict[str, Any]] = None, url: str = ""):
+        self.status_code = status_code
+        self._payload = payload
+        self.content = b"{}" if payload is not None else b""
+        self.headers: dict[str, str] = {}
+        self.request = _FakeUdinRequest(url)
+
+    def json(self) -> dict[str, Any]:
+        return self._payload or {}
+
+
+class _FakeUdinCaller:
+    """Drop-in replacement for `services.api_caller.APICaller` scoped to the
+    Files controller/service. Both `apps.controller.files` (upload streaming)
+    and `services.files` (every other mutation) import their own `APICaller`
+    name, so `mock_udin` patches both. Matches a configured response by the
+    first keyword found as a substring of the request path (e.g.
+    "delete-folder") since the real path also embeds a per-test project uid;
+    an unconfigured path defaults to a 200 with empty `data` (a no-op success).
+    Every call is recorded in `.calls` as `(method, path, json)`."""
+
+    responses: dict[str, tuple[int, Optional[dict[str, Any]]]] = {}
+    calls: list[tuple[str, str, Optional[dict[str, Any]]]] = []
+
+    def __init__(self, *args: Any, base_url: str = "", **kwargs: Any) -> None:
+        self.base_url = base_url
+
+    async def __aenter__(self) -> "_FakeUdinCaller":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def call(
+        self,
+        method: str,
+        path: str,
+        json: Optional[dict[str, Any]] = None,
+        raise_for_status: bool = False,
+        **kwargs: Any,
+    ) -> _FakeUdinResponse:
+        type(self).calls.append((method, path, json))
+        url = f"{self.base_url}{path}"
+        for keyword, (status_code, payload) in type(self).responses.items():
+            if keyword in path:
+                return _FakeUdinResponse(status_code, payload, url=url)
+        return _FakeUdinResponse(200, {"data": []}, url=url)
+
+
+@pytest.fixture
+def mock_udin(monkeypatch):
+    """Bypasses every real DiVA-V2 (udin) storage call so Files tests never
+    touch a real udin instance. `.set(keyword, status_code, payload)`
+    configures the response for one endpoint (matched by a path substring);
+    `.calls` is the list of every `(method, path, json)` sent upstream."""
+    _FakeUdinCaller.responses = {}
+    _FakeUdinCaller.calls = []
+    monkeypatch.setattr("services.files.APICaller", _FakeUdinCaller)
+    monkeypatch.setattr("apps.controller.files.APICaller", _FakeUdinCaller)
+    return SimpleNamespace(
+        set=lambda keyword, status_code, payload=None: _FakeUdinCaller.responses.__setitem__(
+            keyword, (status_code, payload)
+        ),
+        calls=_FakeUdinCaller.calls,
+    )
 
 
 class _FakeOpenRouterResponse:
