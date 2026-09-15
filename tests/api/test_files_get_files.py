@@ -1,7 +1,13 @@
 import pytest
+import pytest_asyncio
 from uuid import uuid4
 from middlewares.lang import resolve_message
+from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 
 
 def _url(task_uid, suffix=""):
@@ -18,6 +24,29 @@ def _make_file(project_task, user_id, name="a.png", kind="images", family="uploa
         task_id=project_task.id,
         created_by=int(user_id),
     )
+
+
+@pytest_asyncio.fixture
+async def generation_fks(user_id) -> dict:
+    """Self-contained model_option/menu/feature ids for df_engine_generations' NOT NULL FKs —
+    created via factories rather than assumed to pre-exist, so this works on a fresh, empty DB too."""
+    model_option = DfEngineModelOptionsFactory.create()
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
+
+
+def _make_result(project_task, user_id, generation_fks, name="a.png", kind="images"):
+    """A live (non-archived, non-favourited) `DfEngineGenerationResults` row."""
+    generation = DfEngineGenerationsFactory.create(
+        project_id=project_task.project_id,
+        task_id=project_task.id,
+        created_by=int(user_id),
+        sourceable_id=1,
+        **generation_fks,
+    )
+    path = f"storage/DF-Engine/{project_task.project.uid}/generated/{kind}/{name}"
+    return DfEngineGenerationResultsFactory.create(path=path, generation_id=generation.id, created_by=int(user_id))
 
 
 def _find_file_node(nodes, uid):
@@ -54,3 +83,17 @@ async def test_requires_auth(client, project_task):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", _url(project_task.uid), raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_live_generation_action_flags(authed_client, project_task, user_id, generation_fks):
+    """200 OK; a live generation result allows archieve/favorite and blocks unarchieve/unfavorited/moving."""
+    result = _make_result(project_task, user_id, generation_fks, name="live_flags.png")
+
+    resp = await authed_client.call("GET", _url(project_task.uid))
+    file = _find_file_node(resp.json()["data"], result.uid)
+    assert file["actions"]["can_archieve"] is True
+    assert file["actions"]["can_unarchieve"] is False
+    assert file["actions"]["can_favorited"] is True
+    assert file["actions"]["can_unfavorited"] is False
+    assert file["actions"]["can_choose_to_move"] is True

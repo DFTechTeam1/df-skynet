@@ -67,6 +67,7 @@ async def _clear_all_redis_caches():
         "setting:*",
         "user_preference:*",
         "user_files:*",
+        "references_picker:*",
     ):
         await delete_pattern(redis, pattern)
     yield

@@ -171,6 +171,9 @@ class CacheKeys:
     def model_pagination_pattern(self) -> str:
         return "model_option:*"
 
+    def model_option_details(self, uid: UUID) -> str:
+        return f"model_option:details:uid={uid}"
+
     def setting_global(self) -> str:
         return "setting:global"
 
@@ -212,10 +215,38 @@ class CacheKeys:
         return "api_logs:*"
 
     def user_files(self, user_id: int, task_id: int) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}"
+        return f"user_files:task={task_id}:user_id={user_id}:scope=live"
 
     def user_folder_detail(self, user_id: int, task_id: int, folder_path: str) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}:folder={folder_path}"
+        return f"user_files:task={task_id}:user_id={user_id}:scope=live:folder={folder_path}"
 
-    def user_file_detail(self, user_id: int, task_id: int, file_uid: str) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}:file={file_uid}"
+    def user_file_detail(self, user_id: int, task_id: int, file_uid: str, kind: str = "file") -> str:
+        return f"user_files:task={task_id}:user_id={user_id}:kind={kind}:file={file_uid}"
+
+    def user_archived_files(self, user_id: int, task_id: int) -> str:
+        return f"user_files:task={task_id}:user_id={user_id}:list=archieved"
+
+    def user_favourited_files(self, user_id: int, task_id: int) -> str:
+        return f"user_files:task={task_id}:user_id={user_id}:list=favourited"
+
+    def references_picker(
+        self,
+        user_id: int,
+        task_id: int,
+        image_uploads: bool,
+        video_uploads: bool,
+        image_generations: bool,
+        video_generations: bool,
+        favourites: bool,
+    ) -> str:
+        return (
+            f"references_picker:user_id={user_id}:task_id={task_id}"
+            f":image_uploads={int(image_uploads)}"
+            f":video_uploads={int(video_uploads)}"
+            f":image_generations={int(image_generations)}"
+            f":video_generations={int(video_generations)}"
+            f":favourites={int(favourites)}"
+        )
+
+    def references_picker_pattern(self, user_id: int) -> str:
+        return f"references_picker:user_id={user_id}*"

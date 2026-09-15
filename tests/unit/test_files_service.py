@@ -47,9 +47,12 @@ class TestRawPathFileUrlRoundTrip:
         assert service.raw_path("some/other/path%20here") == "some/other/path here"
 
 
+_NO_KEY = object()
+
+
 class TestBuildFileTree:
-    def _file(self, path, uid="f1", created_by=1):
-        return {
+    def _file(self, path, uid="f1", created_by=1, id=_NO_KEY, parent_id=_NO_KEY, is_main=True):
+        file = {
             "uid": uid,
             "name": path.rsplit("/", 1)[-1],
             "path": path,
@@ -59,6 +62,12 @@ class TestBuildFileTree:
             "created_by_user": None,
             "updated_by_user": None,
         }
+        if id is not _NO_KEY:
+            file["id"] = id
+        if parent_id is not _NO_KEY:
+            file["parent_id"] = parent_id
+            file["is_main"] = is_main
+        return file
 
     def _type_root_node(self, tree):
         """Descend proj -> upload -> images to the type-root node every test file lands in."""
@@ -125,6 +134,15 @@ class TestBuildFileTree:
         assert tree[0]["childs"][0]["childs"][0]["files"][0]["type"] == "image"
         assert tree[0]["childs"][0]["childs"][1]["files"][0]["type"] == "video"
 
+    def test_archived_only_generated_list_still_nests_correctly(self):
+        """build_file_tree works the same on an archived-only generation-results list
+        (the caller decides which rows to pass in; the tree builder itself is scope-agnostic)."""
+        files = [self._file("proj/generated/images/a.png", created_by=1)]
+        tree = service.build_file_tree(files, user_id=1)
+        root_node = self._type_root_node(tree)
+        assert root_node["folder"] == "proj/generated/images"
+        assert root_node["files"][0]["uid"] == "f1"
+
     def test_folder_action_requires_every_nested_file_to_be_owned(self):
         """A folder holding another user's file loses folder-level actions, even for the current user's own files in it."""
         files = [
@@ -135,3 +153,46 @@ class TestBuildFileTree:
         root_node = self._type_root_node(tree)
         assert root_node["actions"]["can_rename"] is False
         assert root_node["actions"]["can_delete"] is False
+
+    def test_root_generation_result_nests_its_child_under_variants(self):
+        """A generation result's own child (parent_id pointing at it) nests under the root's
+        `variants`, not the folder's flat `files` list - and the child carries no `variants` key
+        of its own, since lineage is capped at exactly 1 level."""
+        root = self._file("proj/generated/images/root.png", uid="root", id=1, parent_id=None)
+        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=1)
+        tree = service.build_file_tree([root, child], user_id=1)
+        files = self._type_root_node(tree)["files"]
+        assert [f["uid"] for f in files] == ["root"]
+        assert [v["uid"] for v in files[0]["variants"]] == ["child"]
+        assert "variants" not in files[0]["variants"][0]
+
+    def test_is_main_child_swaps_into_the_top_level_slot(self):
+        """Whichever family member currently holds is_main is shown at the top (not necessarily
+        the root row) - the rest, all is_main False, sit in its `variants`."""
+        root = self._file("proj/generated/images/root.png", uid="root", id=1, parent_id=None, is_main=False)
+        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=1, is_main=True)
+        tree = service.build_file_tree([root, child], user_id=1)
+        files = self._type_root_node(tree)["files"]
+        assert [f["uid"] for f in files] == ["child"]
+        assert files[0]["is_main"] is True
+        assert [v["uid"] for v in files[0]["variants"]] == ["root"]
+        assert files[0]["variants"][0]["is_main"] is False
+
+    def test_child_with_unresolved_parent_falls_back_to_root_level(self):
+        """A child row whose parent isn't among the fetched rows (e.g. archived out) falls back
+        to the folder's flat files list instead of being dropped."""
+        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=99)
+        tree = service.build_file_tree([child], user_id=1)
+        assert [f["uid"] for f in self._type_root_node(tree)["files"]] == ["child"]
+
+    def test_grandchild_falls_back_to_root_level_instead_of_nesting_two_levels(self):
+        """A row whose parent_id points at another child (not a root) can't resolve through the
+        root-only lookup, so it falls back to root-level placement rather than nesting 2 deep."""
+        root = self._file("proj/generated/images/root.png", uid="root", id=1, parent_id=None)
+        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=1)
+        grandchild = self._file("proj/generated/images/grandchild.png", uid="grandchild", id=3, parent_id=2)
+        tree = service.build_file_tree([root, child, grandchild], user_id=1)
+        files = self._type_root_node(tree)["files"]
+        assert {f["uid"] for f in files} == {"root", "grandchild"}
+        root_entry = next(f for f in files if f["uid"] == "root")
+        assert [v["uid"] for v in root_entry["variants"]] == ["child"]
