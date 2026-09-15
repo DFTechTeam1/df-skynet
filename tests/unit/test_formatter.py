@@ -1,6 +1,7 @@
 import pytest
 from datetime import datetime
-from utils.formatter import format_user_employees, format_datetime
+from decimal import Decimal
+from utils.formatter import format_user_employees, format_datetime, format_idr
 
 
 class TestFormatCreator:
@@ -42,3 +43,17 @@ class TestFormatDatetime:
         """Malformed date string raises ValueError."""
         with pytest.raises(ValueError):
             format_datetime("not-a-date")
+
+
+class TestFormatIdr:
+    def test_none_returns_none(self):
+        """None cost returns None."""
+        assert format_idr(None, Decimal("16000")) is None
+
+    def test_converts_and_dot_groups(self):
+        """USD cost * rate is rounded to whole rupiah and dot-grouped."""
+        assert format_idr(Decimal("1.5"), Decimal("16000")) == "Rp 24.000"
+
+    def test_accepts_float_inputs(self):
+        """Plain floats work the same as Decimal inputs."""
+        assert format_idr(0.001, 16000.0) == "Rp 16"

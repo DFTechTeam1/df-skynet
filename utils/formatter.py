@@ -1,4 +1,5 @@
 from datetime import datetime, date
+from decimal import Decimal
 from typing import Optional, Any
 
 
@@ -31,6 +32,14 @@ def format_size(size: int) -> str:
         if value < 1024 or unit == "GB":
             return f"{value:.2f} {unit}"
     return f"{value:.2f} GB"
+
+
+def format_idr(usd_cost: Optional[Decimal | float], rate: Decimal | float) -> Optional[str]:
+    """Convert a USD cost to a dot-grouped IDR display string (e.g. 'Rp 24.000')."""
+    if usd_cost is None:
+        return None
+    rupiah = round(Decimal(str(usd_cost)) * Decimal(str(rate)))
+    return f"Rp {rupiah:,}".replace(",", ".")
 
 
 def format_datetime(value: Optional[datetime | str]) -> Optional[str]:

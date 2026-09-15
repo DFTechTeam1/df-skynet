@@ -1,5 +1,6 @@
+from typing import Any
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class NewFolderPayload(BaseModel):
@@ -33,3 +34,23 @@ class MoveFilesPayload(BaseModel):
 class MoveFoldersPayload(BaseModel):
     folder_paths: list[str] = Field(..., min_length=1, description="Folder paths to move.")
     destination: str = Field(..., min_length=1, description="Destination folder path.")
+
+
+class SetArchivedPayload(BaseModel):
+    file_uids: list[UUID] = Field(..., min_length=1, description="File `uid`s to archive/unarchive.")
+    is_archieved: bool = Field(True, description="True to archive, False to unarchive.")
+
+    @field_validator("file_uids", mode="before")
+    @classmethod
+    def dedupe_file_uids(cls, value: list[Any]) -> list[str]:
+        return list(dict.fromkeys(str(UUID(str(uid))) for uid in value))
+
+
+class SetFavoritedPayload(BaseModel):
+    file_uids: list[UUID] = Field(..., min_length=1, description="File `uid`s to favorite/unfavorite.")
+    is_favorited: bool = Field(True, description="True to favorite, False to unfavorite.")
+
+    @field_validator("file_uids", mode="before")
+    @classmethod
+    def dedupe_file_uids(cls, value: list[Any]) -> list[str]:
+        return list(dict.fromkeys(str(UUID(str(uid))) for uid in value))

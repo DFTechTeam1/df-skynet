@@ -32,4 +32,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    # Folder rows can't be represented in the narrower enum - drop them before shrinking it.
+    op.execute(f"DELETE FROM {TABLE} WHERE type = 'folder'")
     op.alter_column(TABLE, "type", existing_type=NEW_ENUM, type_=OLD_ENUM, existing_nullable=False)

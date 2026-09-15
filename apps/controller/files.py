@@ -1,6 +1,6 @@
 import time
 import traceback
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 from fastapi import Path, Query, Request, status
 from fastapi_controller import controller
@@ -8,6 +8,7 @@ from apps.controller.core import CoreDependencies
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from error import BaseError, ServiceError
 from log import logging
+from middlewares.lang import current_lang, resolve_message
 from schemas.payload.files import (
     DeleteFilesPayload,
     DeleteFolderPayload,
@@ -16,10 +17,12 @@ from schemas.payload.files import (
     NewFolderPayload,
     RenameFilePayload,
     RenameFolderPayload,
+    SetArchivedPayload,
+    SetFavoritedPayload,
 )
 from schemas.response import Response
 from services.api_caller import APICaller
-from services.files import FilesService
+from services.files import FileCtx, FilesService
 from services.mysql.model import DfEngineExternalApiCalls
 from services.mysql.model.df_engine_upload_files import DfEngineUploadFiles, UploadFileTypes
 
@@ -112,9 +115,10 @@ class FilesController(CoreDependencies):
                 await self.db.flush()
 
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.invalidate_and_refresh(self.db, self.redis, project_task, user_id)
-            response.message = "Files successfully uploaded."
+            response.data = await files_service.invalidate_and_refresh(ctx)
+            response.message = resolve_message("files_uploaded", current_lang.get())
             logging.info(f"[upload-files] task_uid={task_uid} succeeded, status={upstream.status_code}")
         except BaseError as e:
             logging.warning(f"[upload-files] task_uid={task_uid} rejected ({e.status_code}): {e.message}")
@@ -142,9 +146,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.get_tree(self.db, self.redis, project_task, user_id)
-            response.message = "Files successfully fetched."
+            response.data = await files_service.get_tree(ctx)
+            response.message = resolve_message("files_fetched", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -173,11 +178,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.get_folder_detail(
-                self.db, self.redis, project_task, user_id, folder_path
-            )
-            response.message = "Folder detail successfully fetched."
+            response.data = await files_service.get_folder_detail(ctx, folder_path)
+            response.message = resolve_message("folder_detail_fetched", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -188,7 +192,11 @@ class FilesController(CoreDependencies):
     @controller.get(
         "/files/{task_uid}/file/{file_uid}",
         summary="Get a single file's detail.",
-        description="Returns one file entry (by its `uid`) from the file tree.",
+        description=(
+            "Returns one file entry by its `uid`. `type=upload` (default) looks it up in the live "
+            "upload/generated tree; `type=generated` looks up a generation result directly, "
+            "regardless of whether it's archived or favourited - the uid alone identifies it."
+        ),
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -197,21 +205,190 @@ class FilesController(CoreDependencies):
         self,
         task_uid: UUID = Path(..., description="Task UID."),
         file_uid: UUID = Path(..., description="File UID, matching a `uid` value from the file tree."),
+        type: Literal["upload", "generated"] = Query("upload", description="`upload` or `generated`."),
     ) -> Response:
         response = Response()
         files_service = FilesService()
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.get_file_detail(
-                self.db, self.redis, project_task, user_id, str(file_uid)
-            )
-            response.message = "File detail successfully fetched."
+            response.data = await files_service.get_file_detail(ctx, str(file_uid), kind=type)
+            response.message = resolve_message("file_detail_fetched", current_lang.get())
         except BaseError:
             raise
         except Exception:
             logging.error(f"[get-file-detail] task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/files/{task_uid}/archieved",
+        summary="Get archived generation results.",
+        description=(
+            "Returns archived generation results as a flat (one-level) list of files, in the same "
+            "shape as `GET /files/{task_uid}` (no `variants`, since these are always leaf results). "
+            "Uploads are never archivable, so only generated files appear here. `type` optionally "
+            "restricts the list to `image` or `video`; omitted/null returns both."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def get_archived_files(
+        self,
+        task_uid: UUID = Path(..., description="Task UID."),
+        type: Literal["image", "video"] | None = Query(None, description="Filter by file type. Omit for all."),
+    ) -> Response:
+        response = Response()
+        files_service = FilesService()
+        try:
+            project_task = await files_service.get_project_task(self.db, task_uid)
+            user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
+
+            response.data = await files_service.get_archived_files(ctx, file_type=type)
+            response.message = resolve_message("archived_files_fetched", current_lang.get())
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(f"[get-archived-files] task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/files/{task_uid}/favourited",
+        summary="Get favourited generation results.",
+        description=(
+            "Returns this user's favourited generation results as a flat (one-level) list of files, "
+            "in the same shape as `GET /files/{task_uid}` (no `variants`, since these are always leaf "
+            "results). `type` optionally restricts the list to `image` or `video`; omitted/null "
+            "returns both."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def get_favourited_files(
+        self,
+        task_uid: UUID = Path(..., description="Task UID."),
+        type: Literal["image", "video"] | None = Query(None, description="Filter by file type. Omit for all."),
+    ) -> Response:
+        response = Response()
+        files_service = FilesService()
+        try:
+            project_task = await files_service.get_project_task(self.db, task_uid)
+            user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
+
+            response.data = await files_service.get_favourited_files(ctx, file_type=type)
+            response.message = resolve_message("favourited_files_fetched", current_lang.get())
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(f"[get-favourited-files] task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/{task_uid}/archieve",
+        summary="Archive or unarchive multiple generation results.",
+        description=(
+            "Sets `archieved_at` on every generation result listed in `file_uids`, all-or-nothing. "
+            "`is_archieved=true` (default) archives live, non-favourited results; "
+            "`is_archieved=false` unarchives them."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def archive_file(
+        self, schema: SetArchivedPayload, task_uid: UUID = Path(..., description="Task UID.")
+    ) -> Response:
+        response = Response()
+        files_service = FilesService()
+        try:
+            project_task = await files_service.get_project_task(self.db, task_uid)
+            user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
+
+            response.data = await files_service.set_archived_generation(
+                ctx, [str(uid) for uid in schema.file_uids], schema.is_archieved
+            )
+            key = "files_archived" if schema.is_archieved else "files_unarchived"
+            response.message = resolve_message(key, current_lang.get())
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(f"[archive-file] task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/{task_uid}/favorite",
+        summary="Favorite or unfavorite multiple generation results.",
+        description=(
+            "Sets `is_favourite` on every generation result listed in `file_uids`, all-or-nothing. "
+            "`is_favorited=true` (default) favorites live, non-archived results; "
+            "`is_favorited=false` unfavorites them."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def favorite_file(
+        self, schema: SetFavoritedPayload, task_uid: UUID = Path(..., description="Task UID.")
+    ) -> Response:
+        response = Response()
+        files_service = FilesService()
+        try:
+            project_task = await files_service.get_project_task(self.db, task_uid)
+            user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
+
+            response.data = await files_service.set_favorited_generation(
+                ctx, [str(uid) for uid in schema.file_uids], schema.is_favorited
+            )
+            key = "files_favorited" if schema.is_favorited else "files_unfavorited"
+            response.message = resolve_message(key, current_lang.get())
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(f"[favorite-file] task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/{task_uid}/set-main/{file_uid}",
+        summary="Set a generation result as main among its parent's results.",
+        description=(
+            "Flips `is_main` to true on `file_uid`, atomically flipping its previous sibling "
+            "main (if any) to false in the same call. Re-setting the already-current main is a "
+            "no-op 200. Errors if `file_uid` is unknown or is a root result with no parent."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def set_main_generation(
+        self,
+        task_uid: UUID = Path(..., description="Task UID."),
+        file_uid: UUID = Path(..., description="Generation result UID to set as main."),
+    ) -> Response:
+        response = Response()
+        files_service = FilesService()
+        try:
+            project_task = await files_service.get_project_task(self.db, task_uid)
+            user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
+
+            response.data = await files_service.set_main_generation_result(ctx, str(file_uid))
+            response.message = resolve_message("main_generation_set", current_lang.get())
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(f"[set-main-generation] task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
@@ -235,11 +412,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.create_folder(
-                self.db, self.redis, project_task, user_id, schema.current_path, schema.name
-            )
-            response.message = "Folder successfully created."
+            response.data = await files_service.create_folder(ctx, schema.current_path, schema.name)
+            response.message = resolve_message("folder_created", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -263,11 +439,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.delete_folder(
-                self.db, self.redis, project_task, user_id, schema.folder_path
-            )
-            response.message = "Folder successfully deleted."
+            response.data = await files_service.delete_folder(ctx, schema.folder_path)
+            response.message = resolve_message("folder_deleted", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -291,11 +466,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.delete_files(
-                self.db, self.redis, project_task, user_id, schema.file_uids
-            )
-            response.message = "Files successfully deleted."
+            response.data = await files_service.delete_files(ctx, schema.file_uids)
+            response.message = resolve_message("files_deleted", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -319,11 +493,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.rename_file(
-                self.db, self.redis, project_task, user_id, schema.file_uid, schema.name
-            )
-            response.message = "File successfully renamed."
+            response.data = await files_service.rename_file(ctx, schema.file_uid, schema.name)
+            response.message = resolve_message("file_renamed", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -346,11 +519,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.rename_folder(
-                self.db, self.redis, project_task, user_id, schema.folder_path, schema.name
-            )
-            response.message = "Folder successfully renamed."
+            response.data = await files_service.rename_folder(ctx, schema.folder_path, schema.name)
+            response.message = resolve_message("folder_renamed", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -374,11 +546,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.move_files(
-                self.db, self.redis, project_task, user_id, schema.file_uids, schema.destination
-            )
-            response.message = "Files successfully moved."
+            response.data = await files_service.move_files(ctx, schema.file_uids, schema.destination)
+            response.message = resolve_message("files_moved", current_lang.get())
         except BaseError:
             raise
         except Exception:
@@ -402,16 +573,10 @@ class FilesController(CoreDependencies):
         try:
             project_task = await files_service.get_project_task(self.db, task_uid)
             user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
 
-            response.data = await files_service.move_folders(
-                self.db,
-                self.redis,
-                project_task,
-                user_id,
-                schema.folder_paths,
-                schema.destination,
-            )
-            response.message = "Folders successfully moved."
+            response.data = await files_service.move_folders(ctx, schema.folder_paths, schema.destination)
+            response.message = resolve_message("folders_moved", current_lang.get())
         except BaseError:
             raise
         except Exception:
