@@ -113,6 +113,14 @@ class AdminGlobalSettingPayload(BaseModel):
         default_factory=AdminView,
         description="Library visibility rules for admins.",
     )
+    folder_depth_limit: int = Field(
+        default=4,
+        description=(
+            "Deepest a subfolder chain may nest under a type root (e.g. upload/images) "
+            "before create/move folder requests are rejected."
+        ),
+        ge=1,
+    )
     project_class_limitations: list[ProjectClassLimitations] = Field(
         default_factory=list,
         description=(

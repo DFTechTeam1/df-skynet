@@ -9,7 +9,7 @@ class FilesMessage:
             "file_not_found": "We couldn't find that file.",
             "folder_action_not_permitted": "You don't have permission to modify this folder.",
             "file_action_not_permitted": "You don't have permission to modify this file.",
-            "folder_depth_exceeded": "Folders can only be nested 4 levels deep.",
+            "folder_depth_exceeded": "Folders can't be nested any deeper here.",
             "invalid_folder_scope": "Folders can only be created inside upload or generated storage.",
             "folder_create_failed": "Folder could not be created.",
             "folder_delete_failed": "Folder could not be deleted.",

@@ -226,6 +226,28 @@ async def test_update_rejects_out_of_range_token_limit_threshold(authed_client, 
 
 
 @pytest.mark.asyncio
+async def test_update_folder_depth_limit_round_trips(authed_client, db_session):
+    """200 OK; folder_depth_limit is saved and returned as given."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("POST", URL, json={"folder_depth_limit": 6})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["folder_depth_limit"] == 6
+
+    fetch = await authed_client.call("GET", URL)
+    assert fetch.json()["data"]["folder_depth_limit"] == 6
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_out_of_range_folder_depth_limit(authed_client, db_session):
+    """422 when folder_depth_limit is below 1."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("POST", URL, json={"folder_depth_limit": 0}, raise_for_status=False)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_update_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("POST", URL, json={}, raise_for_status=False)

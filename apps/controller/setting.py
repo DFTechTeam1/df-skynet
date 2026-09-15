@@ -249,6 +249,7 @@ class SettingController(CoreDependencies):
 
             incoming = {
                 "admin_view": schema.admin_view.model_dump(mode="json"),
+                "folder_depth_limit": schema.folder_depth_limit,
                 "enhancer_model": resolved_model["enhancer_model"],
                 "assistant_model": resolved_model["assistant_model"],
                 "project_class_limitations": [
