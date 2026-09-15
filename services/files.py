@@ -1,3 +1,4 @@
+import json
 import time
 import traceback
 from typing import Any, Coroutine, Optional
@@ -11,7 +12,7 @@ from error import BaseError, DataNotFoundError, DataValidationError
 from log import logging
 from services.api_caller import APICaller
 from services.mysql import query
-from services.mysql.model import DfEngineExternalApiCalls, Users, Employees, ProjectTasks
+from services.mysql.model import DfEngineExternalApiCalls, DfEngineSettings, Users, Employees, ProjectTasks
 from services.mysql.model.df_engine_upload_files import DfEngineUploadFiles, UploadFileTypes
 from services.mysql.model.df_engine_generations import DfEngineGenerations
 from services.mysql.model.df_engine_generation_results import DfEngineGenerationResults
@@ -20,8 +21,7 @@ from utils.serializer import serialize
 from utils.formatter import format_user_employees, format_size
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 
-# ponytail: static depth cap, overridden later by a per-project/per-task value from the DB.
-MAX_FOLDER_DEPTH = 4
+DEFAULT_FOLDER_DEPTH_LIMIT = 4
 
 
 class FilesService:
@@ -79,6 +79,17 @@ class FilesService:
             for relation in ("created_by_user", "updated_by_user")
         )
 
+    async def folder_depth_limit(self, db: AsyncSession) -> int:
+        """Deepest a subfolder chain may nest under a type root, per the admin-configurable
+        `folder_depth_limit` setting. Falls back to DEFAULT_FOLDER_DEPTH_LIMIT if unset."""
+        row = await query(
+            db=db,
+            table=DfEngineSettings,
+            filters=(DfEngineSettings.code == "admin_setting", DfEngineSettings.key == "folder_depth_limit"),
+            fetch_one=True,
+        )
+        return json.loads(row.value) if row and row.value else DEFAULT_FOLDER_DEPTH_LIMIT
+
     def file_url(self, path: str) -> str:
         """Build the udin-streamed URL for a stored path, percent-encoding spaces etc. (keeps `/` unescaped)."""
         return f"{UDIN_BASE_URL}/{quote(path, safe='/')}"
@@ -100,6 +111,19 @@ class FilesService:
                 if path == root or path.startswith(f"{root}/"):
                     return root
         return None
+
+    def relative_depth(self, path: str) -> int | None:
+        """Depth of `path` below its type root (0 = the type root itself), or None if `path` isn't in scope."""
+        type_root = self.type_root_of(path)
+        if type_root is None:
+            return None
+        relative = path[len(type_root) :].strip("/")
+        return 0 if not relative else len(relative.split("/"))
+
+    def subtree_depth(self, folder_node: dict[str, Any]) -> int:
+        """0 if `folder_node` has no nested subfolders, else 1 + its deepest child subtree."""
+        childs = folder_node["childs"]
+        return 0 if not childs else 1 + max(self.subtree_depth(c) for c in childs)
 
     async def sync_paths(self, db: AsyncSession, pairs: list[dict[str, Any]], task_id: int, user_id: int) -> None:
         """Update DfEngineUploadFiles.path/name for every {from, to} pair udin reports moved/renamed.
@@ -303,12 +327,11 @@ class FilesService:
         if not parent["actions"]["can_create_subfolder"]:
             raise DataValidationError(message="folder_action_not_permitted")
 
-        type_root = self.type_root_of(parent["folder"])
-        if type_root is None:
+        depth = self.relative_depth(parent["folder"])
+        if depth is None:
             raise DataValidationError(message="invalid_folder_scope")
-        relative = parent["folder"][len(type_root) :].strip("/")
-        depth = 0 if not relative else len(relative.split("/"))
-        if depth + 1 > MAX_FOLDER_DEPTH:
+        limit = await self.folder_depth_limit(db)
+        if depth + 1 > limit:
             raise DataValidationError(message="folder_depth_exceeded")
 
         await self.call_udin(
@@ -522,6 +545,11 @@ class FilesService:
         if not dest["actions"]["can_set_as_target_move_folder"]:
             raise DataValidationError(message="folder_action_not_permitted")
 
+        dest_depth = self.relative_depth(destination)
+        if dest_depth is None:
+            raise DataValidationError(message="invalid_folder_scope")
+        limit = await self.folder_depth_limit(db)
+
         sources: list[str] = []
         for folder_path in folder_paths:
             folder = self.find_folder(tree, folder_path)
@@ -529,6 +557,8 @@ class FilesService:
                 raise DataNotFoundError(message="folder_not_found")
             if not folder["actions"]["can_rename"]:
                 raise DataValidationError(message="folder_action_not_permitted")
+            if dest_depth + self.subtree_depth(folder) + 1 > limit:
+                raise DataValidationError(message="folder_depth_exceeded")
             sources.append(folder["folder"])
 
         body = await self.call_udin(

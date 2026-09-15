@@ -35,9 +35,7 @@ def project_class_config(project_classes: list[ProjectClasses]) -> list[dict]:
 async def seed() -> None:
     async with make_session(DB_ASYNC_URL)() as db:
         existing = await query(db=db, table=DfEngineSettings, filters=(DfEngineSettings.code == SETTING_CODE,))
-        if existing:
-            logging.info(f"seeder={SETTING_CODE} skipped, {len(existing)} row(s) already present")
-            return
+        existing_keys = {row.key for row in existing}
 
         project_classes = await query(db=db, table=ProjectClasses)
         if not project_classes:
@@ -46,14 +44,20 @@ async def seed() -> None:
 
     settings = {
         "admin_view": {"see_all_asset": True},
+        "folder_depth_limit": 2,
         "project_class_limitations": project_class_config(project_classes),
         "enhancer_model": None,
         "assistant_model": None,
     }
-    for key, value in settings.items():
+    missing = {k: v for k, v in settings.items() if k not in existing_keys}
+    if not missing:
+        logging.info(f"seeder={SETTING_CODE} skipped, {len(existing_keys)} row(s) already present")
+        return
+
+    for key, value in missing.items():
         DfEngineSettingsFactory.create(key=key, value=json.dumps(value), code=SETTING_CODE)
 
-    logging.info(f"seeder={SETTING_CODE} inserted {len(settings)} row(s) for {len(project_classes)} project class")
+    logging.info(f"seeder={SETTING_CODE} inserted {len(missing)} new row(s) for {len(project_classes)} project class")
 
 
 async def main() -> None:

@@ -19,7 +19,7 @@ from schemas.payload.files import (
 )
 from schemas.response import Response
 from services.api_caller import APICaller
-from services.files import MAX_FOLDER_DEPTH, FilesService
+from services.files import FilesService
 from services.mysql.model import DfEngineExternalApiCalls
 from services.mysql.model.df_engine_upload_files import DfEngineUploadFiles, UploadFileTypes
 
@@ -219,8 +219,9 @@ class FilesController(CoreDependencies):
         "/files/{task_uid}/folder",
         summary="Create a subfolder.",
         description=(
-            "Creates `name` under `current_path`. Rejects folders deeper than "
-            f"{MAX_FOLDER_DEPTH} levels below a type root (`upload`/`generated` -> `images`/`videos`)."
+            "Creates `name` under `current_path`. Rejects folders nested deeper than the "
+            "admin-configured `folder_depth_limit` (see `/setting`) below a type root "
+            "(`upload`/`generated` -> `images`/`videos`)."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Files"],

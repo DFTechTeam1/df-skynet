@@ -37,6 +37,16 @@ async def test_fetch_returns_saved_values(authed_client, db_session, project_cla
 
 
 @pytest.mark.asyncio
+async def test_fetch_returns_saved_folder_depth_limit(authed_client, db_session):
+    """200 OK; GET reflects the folder_depth_limit last saved via POST."""
+    await clear_setting_state(db_session)
+    await authed_client.call("POST", URL, json={"folder_depth_limit": 6})
+
+    body = (await authed_client.call("GET", URL)).json()["data"]
+    assert body["folder_depth_limit"] == 6
+
+
+@pytest.mark.asyncio
 async def test_fetch_lists_every_project_class(authed_client, db_session, project_class_id):
     """200 OK; the saved document always carries one entry per project class, each
     with its name and colour, even when only one class was sent."""

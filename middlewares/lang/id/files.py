@@ -9,7 +9,7 @@ class FilesMessage:
             "file_not_found": "File tidak ditemukan.",
             "folder_action_not_permitted": "Anda tidak memiliki izin untuk mengubah folder ini.",
             "file_action_not_permitted": "Anda tidak memiliki izin untuk mengubah file ini.",
-            "folder_depth_exceeded": "Folder hanya dapat bersarang hingga 4 tingkat.",
+            "folder_depth_exceeded": "Folder tidak dapat dibuat lebih dalam lagi di sini.",
             "invalid_folder_scope": "Folder hanya dapat dibuat di dalam storage upload atau generated.",
             "folder_create_failed": "Folder gagal dibuat.",
             "folder_delete_failed": "Folder gagal dihapus.",
