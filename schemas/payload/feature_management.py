@@ -29,7 +29,7 @@ class FeaturePayload(BaseModel):
         examples=["Enhance prompt"],
     )
     type: FeatureTypes = Field(
-        ...,
+        FeatureTypes.generate_image,
         description="Which generation pipeline this feature drives.",
         examples=[FeatureTypes.generate_image],
     )
