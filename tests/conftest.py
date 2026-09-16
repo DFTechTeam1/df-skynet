@@ -316,6 +316,35 @@ class _FakeUdinResponse:
         return self._payload or {}
 
 
+class _FakeUdinStreamResponse:
+    """Stands in for the subset of `httpx.Response` `FilesService.download_file` reads off a
+    streamed udin GET: status_code, raise_for_status(), and aiter_bytes()."""
+
+    def __init__(self, status_code: int, content: bytes):
+        self.status_code = status_code
+        self._content = content
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"udin stream failed with status {self.status_code}")
+
+    async def aiter_bytes(self):
+        yield self._content
+
+
+class _FakeUdinStreamCtx:
+    """Async-context-manager wrapper so `_FakeUdinCaller.stream()` matches `httpx.AsyncClient.stream()`."""
+
+    def __init__(self, response: _FakeUdinStreamResponse):
+        self._response = response
+
+    async def __aenter__(self) -> _FakeUdinStreamResponse:
+        return self._response
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+
 class _FakeUdinCaller:
     """Drop-in replacement for `services.api_caller.APICaller` scoped to the
     Files controller/service. Both `apps.controller.files` (upload streaming)
@@ -327,6 +356,7 @@ class _FakeUdinCaller:
     Every call is recorded in `.calls` as `(method, path, json)`."""
 
     responses: dict[str, tuple[int, Optional[dict[str, Any]]]] = {}
+    stream_responses: dict[str, tuple[int, bytes]] = {}
     calls: list[tuple[str, str, Optional[dict[str, Any]]]] = []
 
     def __init__(self, *args: Any, base_url: str = "", **kwargs: Any) -> None:
@@ -336,6 +366,9 @@ class _FakeUdinCaller:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def close(self) -> None:
         return None
 
     async def call(
@@ -353,20 +386,33 @@ class _FakeUdinCaller:
                 return _FakeUdinResponse(status_code, payload, url=url)
         return _FakeUdinResponse(200, {"data": []}, url=url)
 
+    def stream(self, method: str, path: str, **kwargs: Any) -> _FakeUdinStreamCtx:
+        type(self).calls.append((method, path, None))
+        for keyword, (status_code, content) in type(self).stream_responses.items():
+            if keyword in path:
+                return _FakeUdinStreamCtx(_FakeUdinStreamResponse(status_code, content))
+        return _FakeUdinStreamCtx(_FakeUdinStreamResponse(200, b""))
+
 
 @pytest.fixture
 def mock_udin(monkeypatch):
     """Bypasses every real DiVA-V2 (udin) storage call so Files tests never
     touch a real udin instance. `.set(keyword, status_code, payload)`
     configures the response for one endpoint (matched by a path substring);
-    `.calls` is the list of every `(method, path, json)` sent upstream."""
+    `.set_stream(keyword, status_code, content)` does the same for a streamed
+    GET (e.g. downloads), keyed separately since its payload is raw bytes, not
+    JSON. `.calls` is the list of every `(method, path, json)` sent upstream."""
     _FakeUdinCaller.responses = {}
+    _FakeUdinCaller.stream_responses = {}
     _FakeUdinCaller.calls = []
     monkeypatch.setattr("services.files.APICaller", _FakeUdinCaller)
     monkeypatch.setattr("apps.controller.files.APICaller", _FakeUdinCaller)
     return SimpleNamespace(
         set=lambda keyword, status_code, payload=None: _FakeUdinCaller.responses.__setitem__(
             keyword, (status_code, payload)
+        ),
+        set_stream=lambda keyword, status_code, content=b"": _FakeUdinCaller.stream_responses.__setitem__(
+            keyword, (status_code, content)
         ),
         calls=_FakeUdinCaller.calls,
     )

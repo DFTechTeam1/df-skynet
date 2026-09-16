@@ -37,6 +37,9 @@ class APICaller:
 
         return response
 
+    def stream(self, method: str, url: str, **kwargs: Any) -> Any:
+        return self.client.stream(method, url, **kwargs)
+
     async def close(self) -> None:
         await self.client.aclose()
 

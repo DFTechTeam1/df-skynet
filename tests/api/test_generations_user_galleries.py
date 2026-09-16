@@ -68,6 +68,7 @@ async def test_standalone_main_result_has_total_data_zero(authed_client, project
     assert entry["is_main"] is True
     assert entry["variants"] == []
     assert entry["total_data"] == 0
+    assert entry["action"]["can_download"] is True
 
 
 @pytest.mark.asyncio

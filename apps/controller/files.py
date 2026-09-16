@@ -1,8 +1,10 @@
 import time
 import traceback
 from typing import Any, Literal
+from urllib.parse import quote
 from uuid import UUID
 from fastapi import Path, Query, Request, status
+from fastapi.responses import StreamingResponse
 from fastapi_controller import controller
 from apps.controller.core import CoreDependencies
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
@@ -333,6 +335,41 @@ class FilesController(CoreDependencies):
             logging.error(f"[archive-file] task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
+
+    @controller.get(
+        "/files/{task_uid}/download/{source}/{file_uid}",
+        summary="Download a file.",
+        description=(
+            "Streams the raw bytes of one owned file back as an attachment download. `source` "
+            "picks which table `file_uid` is looked up in - `upload` or `generated` - with no "
+            "fallback to the other one, so the wrong `source` for a given uid 404s."
+        ),
+        tags=["Files"],
+    )
+    async def files_with_uid_to_download_source_file(
+        self,
+        task_uid: UUID = Path(..., description="Task UID."),
+        source: Literal["generated", "upload"] = Path(..., description="Table to look `file_uid` up in."),
+        file_uid: UUID = Path(..., description="File UID to download."),
+    ) -> StreamingResponse:
+        files_service = FilesService()
+        try:
+            project_task = await files_service.get_project_task(self.db, task_uid)
+            user_id = int(self.user["user_id"])
+            ctx = FileCtx(db=self.db, redis=self.redis, project_task=project_task, user_id=user_id)
+
+            download = await files_service.download_file(ctx, str(file_uid), source)
+            logging.info(f"[download-file] user={user_id} task_uid={task_uid} file_uid={file_uid} source={source}")
+            return StreamingResponse(
+                download.body,
+                media_type=download.content_type,
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(download.filename)}"},
+            )
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(f"[download-file] task_uid={task_uid} file_uid={file_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
 
     @controller.patch(
         "/files/{task_uid}/favorite",

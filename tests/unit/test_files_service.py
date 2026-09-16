@@ -94,6 +94,7 @@ class TestBuildFileTree:
         actions = self._type_root_node(tree)["files"][0]["action"]
         assert actions["can_rename"] is True
         assert actions["can_delete"] is True
+        assert actions["can_download"] is True
 
     def test_non_owner_cannot_modify_file(self):
         """A file created by someone else denies rename/delete for the current user."""
@@ -102,6 +103,7 @@ class TestBuildFileTree:
         actions = self._type_root_node(tree)["files"][0]["action"]
         assert actions["can_rename"] is False
         assert actions["can_delete"] is False
+        assert actions["can_download"] is False
 
     def test_generated_file_can_never_be_deleted(self):
         """A generated file is never deletable, even by its own creator."""
