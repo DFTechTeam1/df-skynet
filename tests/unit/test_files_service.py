@@ -1,5 +1,6 @@
 from services.files import FilesService
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
+from utils.formatter import format_udin_url
 
 service = FilesService()
 
@@ -38,9 +39,9 @@ class TestTypeRootOf:
 
 class TestRawPathFileUrlRoundTrip:
     def test_file_url_then_raw_path_recovers_original(self):
-        """file_url() -> raw_path() round-trips back to the original storage path."""
+        """format_udin_url() -> raw_path() round-trips back to the original storage path."""
         path = "storage/DF-Engine/proj/upload/images/my file.png"
-        assert service.raw_path(service.file_url(path)) == path
+        assert service.raw_path(format_udin_url(path)) == path
 
     def test_raw_path_passes_through_a_non_prefixed_url_unchanged(self):
         """A URL not carrying the udin base prefix is decoded but otherwise passed through."""
@@ -90,7 +91,7 @@ class TestBuildFileTree:
         """The uploading user's own file allows rename/delete."""
         files = [self._file("proj/upload/images/a.png", created_by=1)]
         tree = service.build_file_tree(files, user_id=1)
-        actions = self._type_root_node(tree)["files"][0]["actions"]
+        actions = self._type_root_node(tree)["files"][0]["action"]
         assert actions["can_rename"] is True
         assert actions["can_delete"] is True
 
@@ -98,7 +99,7 @@ class TestBuildFileTree:
         """A file created by someone else denies rename/delete for the current user."""
         files = [self._file("proj/upload/images/a.png", created_by=2)]
         tree = service.build_file_tree(files, user_id=1)
-        actions = self._type_root_node(tree)["files"][0]["actions"]
+        actions = self._type_root_node(tree)["files"][0]["action"]
         assert actions["can_rename"] is False
         assert actions["can_delete"] is False
 
@@ -106,7 +107,7 @@ class TestBuildFileTree:
         """A generated file is never deletable, even by its own creator."""
         files = [self._file("proj/generated/images/a.png", created_by=1)]
         tree = service.build_file_tree(files, user_id=1)
-        assert self._type_root_node(tree)["files"][0]["actions"]["can_delete"] is False
+        assert self._type_root_node(tree)["files"][0]["action"]["can_delete"] is False
 
     def test_bare_folder_row_appears_with_no_files(self):
         """A type=folder row (created empty, no file inside it) still produces a folder node,
@@ -151,15 +152,15 @@ class TestBuildFileTree:
         ]
         tree = service.build_file_tree(files, user_id=1)
         root_node = self._type_root_node(tree)
-        assert root_node["actions"]["can_rename"] is False
-        assert root_node["actions"]["can_delete"] is False
+        assert root_node["action"]["can_rename"] is False
+        assert root_node["action"]["can_delete"] is False
 
     def test_root_generation_result_nests_its_child_under_variants(self):
         """A generation result's own child (parent_id pointing at it) nests under the root's
         `variants`, not the folder's flat `files` list - and the child carries no `variants` key
         of its own, since lineage is capped at exactly 1 level."""
-        root = self._file("proj/generated/images/root.png", uid="root", id=1, parent_id=None)
-        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=1)
+        root = self._file("proj/generated/images/root.png", uid="root", id=1, parent_id=None, is_main=True)
+        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=1, is_main=False)
         tree = service.build_file_tree([root, child], user_id=1)
         files = self._type_root_node(tree)["files"]
         assert [f["uid"] for f in files] == ["root"]
@@ -188,9 +189,11 @@ class TestBuildFileTree:
     def test_grandchild_falls_back_to_root_level_instead_of_nesting_two_levels(self):
         """A row whose parent_id points at another child (not a root) can't resolve through the
         root-only lookup, so it falls back to root-level placement rather than nesting 2 deep."""
-        root = self._file("proj/generated/images/root.png", uid="root", id=1, parent_id=None)
-        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=1)
-        grandchild = self._file("proj/generated/images/grandchild.png", uid="grandchild", id=3, parent_id=2)
+        root = self._file("proj/generated/images/root.png", uid="root", id=1, parent_id=None, is_main=True)
+        child = self._file("proj/generated/images/child.png", uid="child", id=2, parent_id=1, is_main=False)
+        grandchild = self._file(
+            "proj/generated/images/grandchild.png", uid="grandchild", id=3, parent_id=2, is_main=True
+        )
         tree = service.build_file_tree([root, child, grandchild], user_id=1)
         files = self._type_root_node(tree)["files"]
         assert {f["uid"] for f in files} == {"root", "grandchild"}

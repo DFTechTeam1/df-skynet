@@ -3,19 +3,15 @@
 
 `df_engine_generations.sourceable_id` / `sourceable_type` is a manual
 polymorphic ("morph") reference: the row points at EITHER a
-`df_engine_api_keys` row OR a `df_engine_api_key_snapshots` row, and the
-model resolves it through the `sourceable` cached_property
-(`services/mysql/model/df_engine_generations.py`). `model_id`, `menu_id`,
-`feature_id`, `project_id`, `task_id` are ordinary (non-polymorphic) FKs.
-
-How the two DB sessions are used:
-  - CREATE goes through the factories, which run on a plain *sync* Session
-    (`make_sync_session`). `.sourceable` reads via `object_session(self)`, so
-    right after a factory create it resolves immediately and `serialize()`
-    can touch it directly.
-  - READ / UPDATE / DELETE use an *async* Session. `.sourceable` still needs
-    the row's bound sync greenlet, so `serialize()` (which walks
-    cached_property) has to run inside `AsyncSession.run_sync(...)`.
+`df_engine_api_keys` row OR a `df_engine_api_key_snapshots` row. It's modeled
+as two `viewonly` relationships (`api_key`, `api_key_snapshot`) whose own
+primaryjoin bakes in the `sourceable_type` discriminator, so only the
+matching one ever loads - `services/mysql/model/df_engine_generations.py`.
+Being real relationships, they're eager-loaded via plain `selectinload()` and
+picked up by `serialize()`'s normal relationship walk like any other FK, with
+no manual session lookups and no greenlet gymnastics required under
+`AsyncSession`. `model_id`, `menu_id`, `feature_id`, `project_id`, `task_id`
+are ordinary (non-polymorphic) FKs, shown for contrast.
 
 Run: python example/sample_poly.py
 """
@@ -27,6 +23,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from sqlalchemy.orm import selectinload
 from apps.secret import DB_ASYNC_URL, DB_SYNC_URL
 from services.mysql import engine, make_session, make_sync_session, query
 from services.mysql.factory.df_engine_api_key_snapshots import DfEngineApiKeySnapshotsFactory
@@ -46,6 +43,8 @@ from services.mysql.model import (
 )
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from utils.serializer import serialize
+
+SOURCEABLE_LOADERS = (selectinload(DfEngineGenerations.api_key), selectinload(DfEngineGenerations.api_key_snapshot))
 
 
 def print_json(label: str, data) -> None:
@@ -87,8 +86,8 @@ def create() -> list[int]:
         created_by=user.id,
     )
 
-    # sourceable_type is the class NAME — `type(obj).__name__` — matching what
-    # `DfEngineGenerations.is_api_key` / `is_api_key_snapshot` compare against.
+    # sourceable_type is the class NAME — `type(obj).__name__` — matching the discriminator
+    # each of `DfEngineGenerations.api_key` / `api_key_snapshot`'s primaryjoin compares against.
     live = DfEngineGenerationsFactory.create(
         kind=GenerationKinds.image,
         prompt="a neon-lit alley at night, rain-slicked cobblestones",
@@ -103,10 +102,7 @@ def create() -> list[int]:
         sourceable_type=type(api_key_snapshot).__name__,
         **common,
     )
-
-    # Sync session -> `.sourceable` resolves right now, `serialize()` picks it
-    # up because it walks cached_property attributes on the MRO.
-    print_json("CREATE", serialize([live, archived]))
+    session.close()
     return [live.id, archived.id]
 
 
@@ -117,12 +113,13 @@ async def fetch(db, generation_ids: list[int], label: str) -> list[DfEngineGener
     rows = await query(
         db=db,
         table=DfEngineGenerations,
+        options=SOURCEABLE_LOADERS,
         filters=(DfEngineGenerations.id.in_(generation_ids),),  # type: ignore
         order_by=(DfEngineGenerations.id.asc(),),  # type: ignore
     )
-    # `.sourceable` resolves via each row's bound sync Session, so serialize()
-    # must run inside run_sync's greenlet.
-    print_json(label, await db.run_sync(lambda _: serialize(rows)))
+    # api_key/api_key_snapshot are real, eager-loaded relationships now - plain serialize(),
+    # no run_sync needed.
+    print_json(label, serialize(rows))
     return rows
 
 
@@ -133,6 +130,7 @@ async def update(db, generation_id: int) -> None:
     row = await query(
         db=db,
         table=DfEngineGenerations,
+        options=SOURCEABLE_LOADERS,
         filters=(DfEngineGenerations.id == generation_id,),  # type: ignore
         fetch_one=True,
     )
@@ -144,7 +142,7 @@ async def update(db, generation_id: int) -> None:
     db.add(row)
     await db.commit()
     await db.refresh(row)
-    print_json("UPDATE", await db.run_sync(lambda _: serialize(row)))
+    print_json("UPDATE", serialize(row))
 
 
 # --------------------------------------------------------------------------- #

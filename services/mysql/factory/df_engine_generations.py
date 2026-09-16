@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from apps.secret import DB_SYNC_URL
 from factory.alchemy import SQLAlchemyModelFactory
 from services.mysql import make_sync_session
@@ -14,6 +16,7 @@ class DfEngineGenerationsFactory(SQLAlchemyModelFactory):
         sqlalchemy_session_persistence = "commit"
 
     id = None
+    uid = LazyFunction(lambda: str(uuid4()))
     created_at = LazyFunction(local_time)
     kind = GenerationKinds.image
     model_id = None

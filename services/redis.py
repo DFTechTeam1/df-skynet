@@ -250,3 +250,9 @@ class CacheKeys:
 
     def references_picker_pattern(self, user_id: int) -> str:
         return f"references_picker:user_id={user_id}*"
+
+    def user_galleries(self, user_id: int, task_id: int) -> str:
+        return f"user_galleries:user_id={user_id}:task_id={task_id}"
+
+    def user_galleries_pattern(self, user_id: int) -> str:
+        return f"user_galleries:user_id={user_id}:task_id=*"

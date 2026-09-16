@@ -30,16 +30,10 @@ class MenuManagementController(CoreDependencies):
         "/menu-management",
         summary="List or search menus.",
         description=(
-            "Returns menus (`df_engine_menus` rows), newest first — both active and "
-            "inactive, since this screen manages and toggles inactive menus too. Pass "
-            "`name` to search — only menus whose name starts with that text "
-            "(case-insensitive prefix match) are returned, in the exact same shape as the "
-            "unfiltered list. Each menu includes a nested `features` array built from "
-            "`df_engine_menu_feature_mappings` — every linked feature, active or inactive, "
-            "each carrying its own `is_active` flag. One menu can list many features, and "
-            "the same feature can be linked to many different menus. Each menu also "
-            "includes its resolved `creator` / `updater` and an `action` block reflecting "
-            "which menu-management actions the current user is permitted to perform."
+            "Returns every menu, newest first, including inactive ones so they can be "
+            "reactivated here. Pass `name` to search by menu name. Each menu shows its "
+            "linked features, who created and last updated it, and what the current user "
+            "is allowed to do with it."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -89,10 +83,8 @@ class MenuManagementController(CoreDependencies):
         "/menu-management/{uid}",
         summary="Detail of a menu.",
         description=(
-            "Returns a single menu (`df_engine_menus` row) identified by `uid`, in the "
-            "exact same shape as one item from the list endpoint — including its nested "
-            "`features` array, resolved `creator` / `updater`, and `action` block. 404s if "
-            "no menu matches `uid`."
+            "Returns one menu's full details — the same information shown for it in the "
+            "list, including its linked features. Fails if no menu matches the given ID."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -158,15 +150,9 @@ class MenuManagementController(CoreDependencies):
         "/menu-management",
         summary="Create a menu.",
         description=(
-            "Registers a new menu (`df_engine_menus` row) and, in the same call, links it "
-            "to the features given in `feature_uids` — every uid must reference an existing "
-            "feature, or the whole request fails with a 422 listing the offending indices. "
-            "`feature_uids` has no minimum length: omit it (or pass an empty list) to "
-            "create a menu with no linked feature yet, or pass one or many to wire them up "
-            "immediately. `name` must be unique across all existing menus. The record's "
-            "`created_by` is taken from the authenticated user resolved from the bearer "
-            "token, not from the request body. Returns the full, up-to-date list of menus, "
-            "so the frontend can refresh its list without a separate re-fetch."
+            "Creates a new menu and, optionally, links it to one or more features right "
+            "away — every linked feature must already exist. Menu names must be unique. "
+            "Returns the full, up-to-date menu list."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -261,18 +247,10 @@ class MenuManagementController(CoreDependencies):
         "/menu-management/{uid}",
         summary="Update a menu.",
         description=(
-            "Replaces the menu identified by `uid` — the request body carries the full "
-            "record (`name`, `description`, `is_active`, `feature_uids`), not a partial "
-            "diff. `feature_uids` is the complete desired set of linked features: any "
-            "currently linked feature missing from the list is unlinked, any new uid is "
-            "linked, and unchanged ones keep their existing mapping row (not deleted and "
-            "recreated). It has no minimum length — pass an empty list to unlink every "
-            "feature. Every uid must reference an existing feature or the request fails "
-            "with a 422. `name` must remain unique across all existing menus. The record's "
-            "`updated_by` is taken from the authenticated user resolved from the bearer "
-            "token, not from the request body. Deactivating a menu (`is_active` = `false`) "
-            "keeps it in the list, flagged inactive, and does not touch its feature links. "
-            "Returns the full, up-to-date list of menus."
+            "Replaces a menu's full details, including its complete list of linked "
+            "features — any feature left out of the list gets unlinked, and any new one "
+            "gets linked. Deactivating a menu keeps it in the list, just flagged as "
+            "inactive. Returns the full, up-to-date menu list."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],
@@ -402,10 +380,9 @@ class MenuManagementController(CoreDependencies):
         "/menu-management/{uid}",
         summary="Delete a menu.",
         description=(
-            "Permanently deletes the menu identified by `uid`, along with every "
-            "`df_engine_menu_feature_mappings` row linking it to a feature — there's no "
-            "separate unlink step. 404s if no menu matches `uid`. Returns the full, "
-            "up-to-date list of remaining menus."
+            "Permanently deletes a menu and unlinks it from every feature. Fails if no "
+            "menu matches the given ID. Returns the full, up-to-date list of remaining "
+            "menus."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Menu Management"],

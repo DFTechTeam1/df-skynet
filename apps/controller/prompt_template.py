@@ -23,13 +23,11 @@ prompt_template_service = PromptTemplateService()
 class PromptTemplateController(CoreDependencies):
     @controller.get(
         "/prompt-management/{uid}",
-        summary="Details of a prompt templates.",
+        summary="Detail of a prompt template.",
         description=(
-            "Returns a single prompt template identified by `uid` (active or inactive), in the exact "
-            "same shape as an entry from the list endpoint. Includes its resolved "
-            "`creator` / `updater` (`image` from the user, `nickname` from their linked "
-            "employee record) and an `action` block reflecting which prompt-template "
-            "actions the current user is permitted to perform."
+            "Returns one prompt template's full details, active or inactive — the same "
+            "information shown for it in the list, including who created and last updated "
+            "it and what the current user is allowed to do with it."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Prompt Template Management"],
@@ -96,12 +94,10 @@ class PromptTemplateController(CoreDependencies):
         "/prompt-management",
         summary="List or search prompt templates.",
         description=(
-            "Returns prompt templates (active and inactive), newest first. Pass `name` to search — only "
-            "templates whose name contains that text (case-insensitive) are returned, in "
-            "the exact same shape as the unfiltered list. Each record includes its "
-            "resolved `creator` / `updater` (`image` from the user, `nickname` from "
-            "their linked employee record) and an `action` block reflecting which "
-            "prompt-template actions the current user is permitted to perform."
+            "Returns every prompt template, newest first, including inactive ones so "
+            "they can be reactivated here. Pass `name` to search by template name. Each "
+            "template shows who created and last updated it, and what the current user "
+            "is allowed to do with it."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Prompt Template Management"],
@@ -154,14 +150,10 @@ class PromptTemplateController(CoreDependencies):
         "/prompt-management",
         summary="Create a prompt template.",
         description=(
-            "Registers a reusable prompt template holding the raw prompt text that will "
-            "later be injected as the base prompt whenever the template is wired to a "
-            "feature (see `df_engine_feature_prompt_mappings`). `name` must be unique across all "
-            "existing templates; `prompt` content may repeat across templates (e.g. cloning "
-            "a template under a new name). The record's `created_by` is taken from the "
-            "authenticated user resolved from the bearer token, not from the request body. "
-            "Returns the full, up-to-date list of prompt templates (including the one just "
-            "created), so the frontend can refresh its list without a separate re-fetch."
+            "Creates a reusable prompt template holding text that can later be wired to a "
+            "feature and used as its base prompt. Template names must be unique, though "
+            "the actual prompt text can be reused across templates (e.g. cloning one under "
+            "a new name). Returns the full, up-to-date template list."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Prompt Template Management"],
@@ -230,14 +222,10 @@ class PromptTemplateController(CoreDependencies):
         "/prompt-management/{uid}",
         summary="Update a prompt template.",
         description=(
-            "Replaces the prompt template identified by `uid` — the request body carries "
-            "the full record (`name`, `description`, `is_active`, `prompt`), not a partial "
-            "diff. `name` must remain unique across all existing templates. The record's "
-            "`updated_by` is taken from the authenticated user resolved from the bearer "
-            "token, not from the request body. Returns the full, up-to-date list of "
-            "prompt templates. Deactivating a template (`is_active` = `false`) keeps it "
-            "in the list, flagged inactive, and leaves its `df_engine_feature_prompt_mappings` "
-            "rows intact."
+            "Replaces a prompt template's full details. Template names must remain "
+            "unique. Deactivating a template keeps it in the list, just flagged as "
+            "inactive, without breaking its link to any feature it's wired to. Returns "
+            "the full, up-to-date template list."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Prompt Template Management"],
@@ -326,10 +314,9 @@ class PromptTemplateController(CoreDependencies):
         "/prompt-management/{uid}",
         summary="Delete a prompt template.",
         description=(
-            "Permanently deletes the prompt template identified by `uid`. Fails with a "
-            "conflict if the template is still referenced by a `df_engine_feature_prompt_mappings` "
-            "row (i.e. currently wired to a feature) — unmap it there first. Returns "
-            "the full, up-to-date list of remaining prompt templates."
+            "Permanently deletes a prompt template. Blocked if it's still wired to a "
+            "feature — unlink it there first. Returns the full, up-to-date list of "
+            "remaining templates."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Prompt Template Management"],

@@ -21,9 +21,11 @@ async def generation_fks(user_id) -> dict:
     return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
 
 
-def _make_result(project_task, user_id, generation_fks, name="a.png", kind="images", is_favourite=False):
+def _make_result(project_task, user_id, generation_fks, name="a.png", kind="images", is_favourite=False, is_main=False):
     """A `DfEngineGenerationResults` row (with its parent `DfEngineGenerations`) shaped
-    so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper."""
+    so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper.
+    Defaults to `is_main=False` since only a non-main result can be archived - a family always
+    needs exactly one `is_main=True` member, so a non-main row is given a hidden main parent."""
     generation = DfEngineGenerationsFactory.create(
         project_id=project_task.project_id,
         task_id=project_task.id,
@@ -31,9 +33,26 @@ def _make_result(project_task, user_id, generation_fks, name="a.png", kind="imag
         sourceable_id=1,
         **generation_fks,
     )
+    parent_id = None
+    if not is_main:
+        parent_generation = DfEngineGenerationsFactory.create(
+            project_id=project_task.project_id,
+            task_id=project_task.id,
+            created_by=int(user_id),
+            sourceable_id=1,
+            **generation_fks,
+        )
+        parent_id = DfEngineGenerationResultsFactory.create(
+            generation_id=parent_generation.id, created_by=int(user_id), is_main=True
+        ).id
     path = f"storage/DF-Engine/{project_task.project.uid}/generated/{kind}/{name}"
     return DfEngineGenerationResultsFactory.create(
-        path=path, generation_id=generation.id, created_by=int(user_id), is_favourite=is_favourite
+        path=path,
+        generation_id=generation.id,
+        created_by=int(user_id),
+        is_favourite=is_favourite,
+        is_main=is_main,
+        parent_id=parent_id,
     )
 
 
@@ -64,10 +83,10 @@ async def test_favourited_action_flags(authed_client, project_task, user_id, gen
 
     resp = await authed_client.call("GET", _url(project_task.uid))
     file = _find_flat(resp.json()["data"], result.uid)
-    assert file["actions"]["can_favorited"] is False
-    assert file["actions"]["can_unfavorited"] is True
-    assert file["actions"]["can_archieve"] is True
-    assert file["actions"]["can_choose_to_move"] is True
+    assert file["action"]["can_favorited"] is False
+    assert file["action"]["can_unfavorited"] is True
+    assert file["action"]["can_archieve"] is True
+    assert file["action"]["can_choose_to_move"] is True
 
 
 @pytest.mark.asyncio
@@ -90,10 +109,12 @@ async def test_favourited_entry_matches_file_entry_shape_with_no_variants(
         "creator",
         "updater",
         "is_main",
+        "source",
         "kind",
+        "model",
         "prompt",
         "cost",
-        "actions",
+        "action",
     }
     assert "variants" not in file
 

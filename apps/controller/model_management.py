@@ -31,15 +31,10 @@ class ModelManagementController(CoreDependencies):
         "/models",
         summary="List models synced from OpenRouter.",
         description=(
-            "Returns `df_engine_model_options` rows still available on OpenRouter "
-            "(`is_available = true`) and not soft-deleted, paginated and ordered by "
-            "type then name. Models the sync endpoint has flagged unavailable are "
-            "excluded. Pass `type` to restrict results to one usage type, `search` to "
-            "filter by name (case-insensitive, prefix match), and/or `is_enabled` to "
-            "view only enabled or only disabled models. Pass `is_deleted=true` to list "
-            "the soft-deleted models instead (the recovery view) — `is_available = true` "
-            "is still required either way. Each row's `action` block reports `can_delete` / "
-            "`can_recover` alongside the enable/main flags."
+            "Returns the AI models still available from the provider, paginated. Pass "
+            "`type` to restrict to one kind of model, `search` to filter by name, and/or "
+            "`is_enabled` to view only enabled or only disabled ones. Pass `is_deleted=true` "
+            "to see removed models instead, for restoring one."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],
@@ -127,16 +122,11 @@ class ModelManagementController(CoreDependencies):
         "/models/{uid}",
         summary="Enable or disable a model.",
         description=(
-            "Toggles whether a model is enabled (selectable in the product). Requires "
-            "the model to still be available on OpenRouter (`is_available = true`) — "
-            "a model OpenRouter no longer returns can't be enabled or disabled through "
-            "this endpoint either way. Only an enabled model can be set as main — "
-            "disabling a model that currently holds `is_main` also clears that flag, "
-            "since a disabled model can never stay main. Disabling a model that's "
-            "currently saved as the settings page's enhancer or assistant model also "
-            "clears that reference back to blank (falls back to the engine's "
-            "default) — the settings page can only keep an enabled model selected. "
-            "Returns the updated model."
+            "Turns a model on or off for selection. Only works on a model the provider "
+            "still offers. Disabling the current main model also clears its main status, "
+            "since a disabled model can't stay the default choice. If that model was also "
+            "saved as the enhancer or assistant model in settings, those get reset to "
+            "blank too. Returns the updated model."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],
@@ -189,11 +179,9 @@ class ModelManagementController(CoreDependencies):
         "/models/{uid}",
         summary="Soft-delete a model.",
         description=(
-            "Marks a model as deleted (`deleted_at` set to now, `deleted_by` set to the "
-            "authenticated user) so it drops out of the default list. Only allowed when "
-            "the model is still available on OpenRouter, is not enabled, and is not the "
-            "main model — 422 otherwise. Nothing is removed from the database; recover it "
-            "with `PATCH /models/{uid}/recover`. Returns the updated model."
+            "Removes a model from the default list without permanently erasing it — it "
+            "can be restored later. Only works on a model that's currently disabled and "
+            "not set as the main model. Returns the updated model."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],
@@ -240,10 +228,9 @@ class ModelManagementController(CoreDependencies):
         "/models/{uid}/recover",
         summary="Recover a soft-deleted model.",
         description=(
-            "Undoes a soft-delete: clears `deleted_at` and `deleted_by` so the model "
-            "returns to the normal list. 422 if the model is not currently deleted. "
-            "Its `is_available` is whatever the last sync left it at — run a sync to "
-            "refresh it. Returns the updated model."
+            "Restores a previously removed model back to the normal list. Only works on "
+            "a model that's currently removed. Its availability reflects the last time "
+            "models were synced — run a sync to refresh it. Returns the updated model."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],
@@ -282,15 +269,11 @@ class ModelManagementController(CoreDependencies):
         "/models",
         summary="Sync models from OpenRouter.",
         description=(
-            "Fetches OpenRouter's current model list for each usage type (`text`, "
-            "`image`, `video`) and reconciles it 1:1 against `df_engine_model_options`: "
-            "models not seen before are inserted, models already on file are refreshed "
-            "and marked available, and models on file that OpenRouter no longer returns "
-            "are flagged `is_available = false` rather than deleted, so `is_main` / "
-            "`is_enabled` history is preserved. Soft-deleted models are skipped entirely "
-            "— their `is_available` is left frozen until they are recovered. Every "
-            "OpenRouter call — success or "
-            "failure — is recorded in the audit log."
+            "Pulls the latest text, image, and video model list from the provider and "
+            "updates our records to match: new models are added, existing ones are "
+            "refreshed, and ones no longer offered are marked unavailable rather than "
+            "deleted, so their enabled/main settings aren't lost. Removed models are "
+            "left untouched until restored. Every attempt, success or failure, is logged."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Model Management"],

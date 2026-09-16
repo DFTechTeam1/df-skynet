@@ -29,10 +29,19 @@ async def generation_fks(user_id) -> dict:
 
 
 def _make_result(
-    project_task, user_id, generation_fks, archieved_at=None, name="a.png", kind="images", is_favourite=False
+    project_task,
+    user_id,
+    generation_fks,
+    archieved_at=None,
+    name="a.png",
+    kind="images",
+    is_favourite=False,
+    is_main=False,
 ):
     """A `DfEngineGenerationResults` row (with its parent `DfEngineGenerations`) shaped
-    so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper."""
+    so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper.
+    Defaults to `is_main=False` since only a non-main result can be archived - a family always
+    needs exactly one `is_main=True` member, so a non-main row is given a hidden main parent."""
     generation = DfEngineGenerationsFactory.create(
         project_id=project_task.project_id,
         task_id=project_task.id,
@@ -40,6 +49,18 @@ def _make_result(
         sourceable_id=1,
         **generation_fks,
     )
+    parent_id = None
+    if not is_main:
+        parent_generation = DfEngineGenerationsFactory.create(
+            project_id=project_task.project_id,
+            task_id=project_task.id,
+            created_by=int(user_id),
+            sourceable_id=1,
+            **generation_fks,
+        )
+        parent_id = DfEngineGenerationResultsFactory.create(
+            generation_id=parent_generation.id, created_by=int(user_id), is_main=True
+        ).id
     path = f"storage/DF-Engine/{project_task.project.uid}/generated/{kind}/{name}"
     return DfEngineGenerationResultsFactory.create(
         path=path,
@@ -47,6 +68,8 @@ def _make_result(
         created_by=int(user_id),
         archieved_at=archieved_at,
         is_favourite=is_favourite,
+        is_main=is_main,
+        parent_id=parent_id,
     )
 
 
@@ -56,9 +79,10 @@ def _find_flat(files, uid):
 
 def _find_file_node(nodes, uid):
     for node in nodes:
-        found = next((f for f in node["files"] if f["uid"] == uid), None)
-        if found is not None:
-            return found
+        for f in node["files"]:
+            found = next((c for c in (f, *f.get("variants", [])) if c["uid"] == uid), None)
+            if found is not None:
+                return found
         found = _find_file_node(node["childs"], uid)
         if found is not None:
             return found

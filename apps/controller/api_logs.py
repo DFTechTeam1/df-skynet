@@ -21,10 +21,8 @@ class ApiLogsController(CoreDependencies):
         description=(
             "Returns the call history for one integration, newest first: every time "
             "this service contacted it, this records who triggered it (where "
-            "applicable), the HTTP method and endpoint, the request payload, response "
-            "status code, response headers and body, how long the call took, and any "
-            "error. Request headers are left out because they can carry a credential. "
-            "Paginated — pass `page` and `itemsPerPage` to page through the history."
+            "applicable), what was sent and received, how it responded, how long the "
+            "call took, and any error. Paginated."
         ),
         status_code=status.HTTP_200_OK,
         tags=["API Logs"],
