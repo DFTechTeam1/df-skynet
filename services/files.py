@@ -1,11 +1,12 @@
 import json
+import mimetypes
 import time
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Callable, Coroutine, Optional
-from urllib.parse import unquote
+from typing import Any, AsyncIterator, Callable, Coroutine, Literal, Optional
+from urllib.parse import quote, unquote
 from uuid import UUID
 from fastapi import status
 from redis.asyncio import Redis
@@ -71,6 +72,13 @@ class FieldMutation:
     value: Any
     is_valid_state: Callable[[DfEngineGenerationResults], bool]
     invalid_state_message: str
+
+
+@dataclass
+class DownloadStream:
+    body: AsyncIterator[bytes]
+    filename: str
+    content_type: str
 
 
 class FilesService:
@@ -430,6 +438,56 @@ class FilesService:
         entries.pop(file_uid, None)
         entry["variants"] = list(entries.values())
         return entry
+
+    async def download_file(
+        self, ctx: FileCtx, file_uid: str, source: Literal["upload", "generated"]
+    ) -> DownloadStream:
+        """Look up one owned file by uid in exactly the table `source` names (never falls back to
+        the other one, same convention as `get_file_detail`), then hand back an async byte stream
+        proxied straight from udin, ready to hang off a `StreamingResponse`."""
+        if source == "generated":
+            row = await query(
+                db=ctx.db,
+                table=DfEngineGenerationResults,
+                joins=((DfEngineGenerations, DfEngineGenerationResults.generation_id == DfEngineGenerations.id),),
+                filters=(
+                    DfEngineGenerationResults.uid == file_uid,
+                    DfEngineGenerations.task_id == ctx.project_task["id"],
+                    DfEngineGenerations.created_by == ctx.user_id,
+                ),
+                fetch_one=True,
+            )
+        else:
+            row = await query(
+                db=ctx.db,
+                table=DfEngineUploadFiles,
+                filters=(
+                    DfEngineUploadFiles.uid == file_uid,
+                    DfEngineUploadFiles.task_id == ctx.project_task["id"],
+                    DfEngineUploadFiles.created_by == ctx.user_id,
+                    DfEngineUploadFiles.type != UploadFileTypes.folder,
+                ),
+                fetch_one=True,
+            )
+        if row is None:
+            raise DataNotFoundError(message="file_not_found")
+
+        path, name = row.path, row.name
+
+        async def body() -> AsyncIterator[bytes]:
+            caller = APICaller(base_url=UDIN_BASE_URL, headers={"X-API-Key": UDIN_API_KEY})
+            try:
+                async with caller.stream("GET", f"/{quote(path, safe='/')}") as upstream:
+                    upstream.raise_for_status()
+                    async for chunk in upstream.aiter_bytes():
+                        yield chunk
+            finally:
+                await caller.close()
+
+        # No udin-call audit log here: log_udin_call's response_body is a JSON dict, which a
+        # streamed binary file doesn't fit.
+        content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        return DownloadStream(body=body(), filename=name, content_type=content_type)
 
     async def employee_nickname(self, db: AsyncSession, user_id: int) -> Optional[str]:
         user = await query(
@@ -931,6 +989,7 @@ class FilesService:
                 "can_favorited": can_act and not is_favourite,
                 "can_unfavorited": can_act and is_favourite,
                 "can_set_main": can_act and bool(file.get("parent_id")) and not is_main,
+                "can_download": is_owner,
             },
         }
 

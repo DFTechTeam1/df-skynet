@@ -333,6 +333,7 @@ class GenerationsController(CoreDependencies):
                     "can_unarchieve": record["archieved_at"] is not None and result is not None,
                     "can_favorited": record["is_favourite"] is False,
                     "can_unfavorited": record["is_favourite"] is True,
+                    "can_download": record["created_by"] == int(self.user["user_id"]),
                 }
 
                 record.pop("id", None)
