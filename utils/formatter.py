@@ -1,6 +1,14 @@
 from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, Any
+from urllib.parse import quote
+
+from apps.secret import UDIN_BASE_URL
+
+
+def format_udin_url(path: str) -> str:
+    """Build the udin-streamed URL for a stored path, percent-encoding spaces etc. (keeps `/` unescaped)."""
+    return f"{UDIN_BASE_URL}/{quote(path, safe='/')}"
 
 
 def format_user_employees(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:

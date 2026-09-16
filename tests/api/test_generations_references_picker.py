@@ -91,7 +91,8 @@ async def test_query_flag_false_returns_empty_section(authed_client, project_tas
 async def test_archived_or_non_main_results_excluded(authed_client, project_task, user_id, generation_fks):
     """200 OK; an archived result and a non-main (revision) result are excluded from the Image Generation section."""
     archived = _make_result(project_task, user_id, generation_fks, archieved_at="2024-01-01 00:00:00")
-    revision = _make_result(project_task, user_id, generation_fks, is_main=False)
+    revision_parent = _make_result(project_task, user_id, generation_fks, is_main=True)
+    revision = _make_result(project_task, user_id, generation_fks, is_main=False, parent_id=revision_parent.id)
 
     url, params = _url(project_task.uid)
     resp = await authed_client.call("GET", url, params=params)

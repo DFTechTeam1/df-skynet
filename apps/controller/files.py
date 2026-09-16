@@ -150,6 +150,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.get_tree(ctx)
             response.message = resolve_message("files_fetched", current_lang.get())
+            logging.info(f"[get-files] user={user_id} task_uid={task_uid} fetched")
         except BaseError:
             raise
         except Exception:
@@ -182,6 +183,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.get_folder_detail(ctx, folder_path)
             response.message = resolve_message("folder_detail_fetched", current_lang.get())
+            logging.info(f"[get-folder-detail] user={user_id} task_uid={task_uid} folder_path={folder_path}")
         except BaseError:
             raise
         except Exception:
@@ -216,6 +218,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.get_file_detail(ctx, str(file_uid), kind=type)
             response.message = resolve_message("file_detail_fetched", current_lang.get())
+            logging.info(f"[get-file-detail] user={user_id} task_uid={task_uid} file_uid={file_uid} type={type}")
         except BaseError:
             raise
         except Exception:
@@ -250,6 +253,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.get_archived_files(ctx, file_type=type)
             response.message = resolve_message("archived_files_fetched", current_lang.get())
+            logging.info(f"[get-archived-files] user={user_id} task_uid={task_uid} type={type}")
         except BaseError:
             raise
         except Exception:
@@ -284,6 +288,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.get_favourited_files(ctx, file_type=type)
             response.message = resolve_message("favourited_files_fetched", current_lang.get())
+            logging.info(f"[get-favourited-files] user={user_id} task_uid={task_uid} type={type}")
         except BaseError:
             raise
         except Exception:
@@ -295,9 +300,9 @@ class FilesController(CoreDependencies):
         "/files/{task_uid}/archieve",
         summary="Archive or unarchive multiple generation results.",
         description=(
-            "Sets `archieved_at` on every generation result listed in `file_uids`, all-or-nothing. "
-            "`is_archieved=true` (default) archives live, non-favourited results; "
-            "`is_archieved=false` unarchives them."
+            "Archives or restores every generation result listed in `file_uids`, all-or-nothing. "
+            "Archiving hides a live, non-favourited result from the main view without deleting it; "
+            "pass `is_archieved=false` to bring it back."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Files"],
@@ -318,6 +323,10 @@ class FilesController(CoreDependencies):
             )
             key = "files_archived" if schema.is_archieved else "files_unarchived"
             response.message = resolve_message(key, current_lang.get())
+            logging.info(
+                f"[archive-file] user={user_id} task_uid={task_uid} "
+                f"file_uids={schema.file_uids} is_archieved={schema.is_archieved}"
+            )
         except BaseError:
             raise
         except Exception:
@@ -329,9 +338,9 @@ class FilesController(CoreDependencies):
         "/files/{task_uid}/favorite",
         summary="Favorite or unfavorite multiple generation results.",
         description=(
-            "Sets `is_favourite` on every generation result listed in `file_uids`, all-or-nothing. "
-            "`is_favorited=true` (default) favorites live, non-archived results; "
-            "`is_favorited=false` unfavorites them."
+            "Marks or unmarks every generation result listed in `file_uids` as a favorite, "
+            "all-or-nothing. Only live, non-archived results can be favorited; pass "
+            "`is_favorited=false` to remove the favorite."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Files"],
@@ -352,6 +361,10 @@ class FilesController(CoreDependencies):
             )
             key = "files_favorited" if schema.is_favorited else "files_unfavorited"
             response.message = resolve_message(key, current_lang.get())
+            logging.info(
+                f"[favorite-file] user={user_id} task_uid={task_uid} "
+                f"file_uids={schema.file_uids} is_favorited={schema.is_favorited}"
+            )
         except BaseError:
             raise
         except Exception:
@@ -363,9 +376,10 @@ class FilesController(CoreDependencies):
         "/files/{task_uid}/set-main/{file_uid}",
         summary="Set a generation result as main among its parent's results.",
         description=(
-            "Flips `is_main` to true on `file_uid`, atomically flipping its previous sibling "
-            "main (if any) to false in the same call. Re-setting the already-current main is a "
-            "no-op 200. Errors if `file_uid` is unknown or is a root result with no parent."
+            "Marks `file_uid` as the main (featured) version among its family of generated "
+            "variants, automatically un-marking whichever one held that spot before. Re-setting "
+            "the already-current main simply confirms it. Errors if `file_uid` is unknown or has "
+            "no family to be main within."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Files"],
@@ -385,6 +399,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.set_main_generation_result(ctx, str(file_uid))
             response.message = resolve_message("main_generation_set", current_lang.get())
+            logging.info(f"[set-main-generation] user={user_id} task_uid={task_uid} file_uid={file_uid}")
         except BaseError:
             raise
         except Exception:
@@ -396,9 +411,8 @@ class FilesController(CoreDependencies):
         "/files/{task_uid}/folder",
         summary="Create a subfolder.",
         description=(
-            "Creates `name` under `current_path`. Rejects folders nested deeper than the "
-            "admin-configured `folder_depth_limit` (see `/setting`) below a type root "
-            "(`upload`/`generated` -> `images`/`videos`)."
+            "Creates a new folder named `name` inside `current_path`. Rejects the request if it "
+            "would nest folders deeper than the limit configured by an admin."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Files"],
@@ -416,6 +430,10 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.create_folder(ctx, schema.current_path, schema.name)
             response.message = resolve_message("folder_created", current_lang.get())
+            logging.info(
+                f"[create-folder] user={user_id} task_uid={task_uid} "
+                f"current_path={schema.current_path} name={schema.name}"
+            )
         except BaseError:
             raise
         except Exception:
@@ -443,6 +461,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.delete_folder(ctx, schema.folder_path)
             response.message = resolve_message("folder_deleted", current_lang.get())
+            logging.info(f"[delete-folder] user={user_id} task_uid={task_uid} folder_path={schema.folder_path}")
         except BaseError:
             raise
         except Exception:
@@ -470,6 +489,7 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.delete_files(ctx, schema.file_uids)
             response.message = resolve_message("files_deleted", current_lang.get())
+            logging.info(f"[delete-files] user={user_id} task_uid={task_uid} file_uids={schema.file_uids}")
         except BaseError:
             raise
         except Exception:
@@ -497,6 +517,9 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.rename_file(ctx, schema.file_uid, schema.name)
             response.message = resolve_message("file_renamed", current_lang.get())
+            logging.info(
+                f"[rename-file] user={user_id} task_uid={task_uid} file_uid={schema.file_uid} name={schema.name}"
+            )
         except BaseError:
             raise
         except Exception:
@@ -507,6 +530,7 @@ class FilesController(CoreDependencies):
     @controller.patch(
         "/files/{task_uid}/folder",
         summary="Rename a folder.",
+        description="Renames one folder by its path; everything inside it keeps its contents, just under the new name.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -523,6 +547,9 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.rename_folder(ctx, schema.folder_path, schema.name)
             response.message = resolve_message("folder_renamed", current_lang.get())
+            logging.info(
+                f"[rename-folder] user={user_id} task_uid={task_uid} folder_path={schema.folder_path} name={schema.name}"
+            )
         except BaseError:
             raise
         except Exception:
@@ -550,6 +577,10 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.move_files(ctx, schema.file_uids, schema.destination)
             response.message = resolve_message("files_moved", current_lang.get())
+            logging.info(
+                f"[move-files] user={user_id} task_uid={task_uid} "
+                f"file_uids={schema.file_uids} destination={schema.destination}"
+            )
         except BaseError:
             raise
         except Exception:
@@ -577,6 +608,10 @@ class FilesController(CoreDependencies):
 
             response.data = await files_service.move_folders(ctx, schema.folder_paths, schema.destination)
             response.message = resolve_message("folders_moved", current_lang.get())
+            logging.info(
+                f"[move-folders] user={user_id} task_uid={task_uid} "
+                f"folder_paths={schema.folder_paths} destination={schema.destination}"
+            )
         except BaseError:
             raise
         except Exception:

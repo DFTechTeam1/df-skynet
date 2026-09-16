@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Callable, Coroutine, Optional
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 from uuid import UUID
 from fastapi import status
 from redis.asyncio import Redis
@@ -16,13 +16,20 @@ from error import BaseError, DataNotFoundError, DataValidationError
 from log import logging
 from services.api_caller import APICaller
 from services.mysql import query
-from services.mysql.model import DfEngineExternalApiCalls, DfEngineSettings, Users, Employees, ProjectTasks
+from services.mysql.model import (
+    DfEngineExternalApiCalls,
+    DfEngineModelOptions,
+    DfEngineSettings,
+    Users,
+    Employees,
+    ProjectTasks,
+)
 from services.mysql.model.df_engine_upload_files import DfEngineUploadFiles, UploadFileTypes
 from services.mysql.model.df_engine_generations import DfEngineGenerations
 from services.mysql.model.df_engine_generation_results import DfEngineGenerationResults
 from services.redis import CacheKeys, delete_pattern, get_json, set_json
 from utils.serializer import serialize
-from utils.formatter import format_user_employees, format_size, format_idr
+from utils.formatter import format_udin_url, format_user_employees, format_size, format_idr
 from utils import local_time
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 
@@ -126,10 +133,10 @@ class FilesService:
         return await self.attach_generation_meta(ctx, rows)
 
     async def attach_generation_meta(self, ctx: FileCtx, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Merge kind/prompt/cost from DfEngineGenerations onto each file's "generation" key via a
-        plain columns= query rather than an eager-loaded relationship - DfEngineGenerations.sourceable
-        is a cached_property that does synchronous DB I/O, which crashes serialize()'s walk of the
-        ORM object graph under async (MissingGreenlet)."""
+        """Merge kind/prompt/cost/model from DfEngineGenerations (+ its model_option) onto each
+        file's "generation" key via a plain columns= query - only these fields are needed, so
+        there's no reason to fetch/serialize full ORM rows (which would also eager-load the
+        unrelated api_key/api_key_snapshot polymorphic relationships for nothing)."""
         generation_ids = {f["generation_id"] for f in files if f.get("generation_id")}
         if not generation_ids:
             return files
@@ -141,10 +148,12 @@ class FilesService:
                 DfEngineGenerations.kind,
                 DfEngineGenerations.prompt,
                 DfEngineGenerations.cost,
+                DfEngineModelOptions.name,
             ),
+            joins=((DfEngineModelOptions, DfEngineGenerations.model_id == DfEngineModelOptions.id),),
             filters=(DfEngineGenerations.id.in_(generation_ids),),  # type: ignore
         )
-        meta = {row.id: {"kind": row.kind, "prompt": row.prompt, "cost": row.cost} for row in rows}
+        meta = {row.id: {"kind": row.kind, "prompt": row.prompt, "cost": row.cost, "model": row.name} for row in rows}
         for file in files:
             file["generation"] = meta.get(file.get("generation_id"))
         return files
@@ -219,10 +228,6 @@ class FilesService:
             fetch_one=True,
         )
         return json.loads(row.value) if row and row.value else DEFAULT_FOLDER_DEPTH_LIMIT
-
-    def file_url(self, path: str) -> str:
-        """Build the udin-streamed URL for a stored path, percent-encoding spaces etc. (keeps `/` unescaped)."""
-        return f"{UDIN_BASE_URL}/{quote(path, safe='/')}"
 
     def base_of(self, path: str) -> str:
         """Strip everything from `/upload/` or `/generated/` onward, mirroring `build_file_tree`."""
@@ -362,23 +367,7 @@ class FilesService:
             return file
 
         if kind == "generated":
-            row = await query(
-                db=ctx.db,
-                table=DfEngineGenerationResults,
-                joins=((DfEngineGenerations, DfEngineGenerationResults.generation_id == DfEngineGenerations.id),),
-                options=self.creator_updater_loaders(DfEngineGenerationResults),
-                filters=(
-                    DfEngineGenerationResults.uid == file_uid,
-                    DfEngineGenerations.task_id == ctx.project_task["id"],
-                    DfEngineGenerations.created_by == ctx.user_id,
-                ),
-                fetch_one=True,
-            )
-            if row:
-                rows = await self.attach_generation_meta(ctx, [serialize(row)])
-                file = self.file_entry(rows[0], ctx.user_id)
-            else:
-                file = None
+            file = await self.generated_file_detail(ctx, file_uid)
         else:
             row = await query(
                 db=ctx.db,
@@ -398,6 +387,49 @@ class FilesService:
             raise DataNotFoundError(message="file_not_found")
         await set_json(ctx.redis, detail_key, file)
         return file
+
+    async def generated_file_detail(self, ctx: FileCtx, file_uid: str) -> Optional[dict[str, Any]]:
+        """One generation result. `variants` (the rest of its root+children family, 1 level) is
+        attached only when the fetched result is currently `is_main` - a non-main result returns
+        just its own data, mirroring build_file_tree's is_main-based grouping."""
+        row = await query(
+            db=ctx.db,
+            table=DfEngineGenerationResults,
+            joins=((DfEngineGenerations, DfEngineGenerationResults.generation_id == DfEngineGenerations.id),),
+            options=self.creator_updater_loaders(DfEngineGenerationResults),
+            filters=(
+                DfEngineGenerationResults.uid == file_uid,
+                DfEngineGenerations.task_id == ctx.project_task["id"],
+                DfEngineGenerations.created_by == ctx.user_id,
+            ),
+            fetch_one=True,
+        )
+        if row is None:
+            return None
+        target = (await self.attach_generation_meta(ctx, [serialize(row)]))[0]
+        entry = self.file_entry(target, ctx.user_id)
+        if not target["is_main"]:
+            return entry
+
+        root_id = target["parent_id"] if target["parent_id"] is not None else target["id"]
+        family = serialize(
+            await query(
+                db=ctx.db,
+                table=DfEngineGenerationResults,
+                joins=((DfEngineGenerations, DfEngineGenerationResults.generation_id == DfEngineGenerations.id),),
+                options=self.creator_updater_loaders(DfEngineGenerationResults),
+                filters=(
+                    or_(DfEngineGenerationResults.id == root_id, DfEngineGenerationResults.parent_id == root_id),
+                    DfEngineGenerations.task_id == ctx.project_task["id"],
+                    DfEngineGenerations.created_by == ctx.user_id,
+                ),
+            )
+        )
+        family = await self.attach_generation_meta(ctx, family)
+        entries = {row["uid"]: self.file_entry(row, ctx.user_id) for row in family}
+        entries.pop(file_uid, None)
+        entry["variants"] = list(entries.values())
+        return entry
 
     async def employee_nickname(self, db: AsyncSession, user_id: int) -> Optional[str]:
         user = await query(
@@ -479,7 +511,7 @@ class FilesService:
         parent = self.find_folder(tree, current_path)
         if parent is None:
             raise DataNotFoundError(message="folder_not_found")
-        if not parent["actions"]["can_create_subfolder"]:
+        if not parent["action"]["can_create_subfolder"]:
             raise DataValidationError(message="folder_action_not_permitted")
 
         depth = self.relative_depth(parent["folder"])
@@ -518,7 +550,7 @@ class FilesService:
         folder = self.find_folder(tree, folder_path)
         if folder is None:
             raise DataNotFoundError(message="folder_not_found")
-        if not folder["actions"]["can_delete"]:
+        if not folder["action"]["can_delete"]:
             raise DataValidationError(message="folder_action_not_permitted")
         path = folder["folder"]
 
@@ -566,7 +598,7 @@ class FilesService:
             entry = self.find_file(tree, str(file_uid))
             if entry is None:
                 raise DataNotFoundError(message="file_not_found")
-            if not entry["actions"]["can_delete"]:
+            if not entry["action"]["can_delete"]:
                 raise DataValidationError(message="file_action_not_permitted")
             raw_paths.append(self.raw_path(entry["path"]))
 
@@ -591,7 +623,7 @@ class FilesService:
         entry = self.find_file(tree, str(file_uid))
         if entry is None:
             raise DataNotFoundError(message="file_not_found")
-        if not entry["actions"]["can_rename"]:
+        if not entry["action"]["can_rename"]:
             raise DataValidationError(message="file_action_not_permitted")
 
         body = await self.call_udin(
@@ -615,7 +647,7 @@ class FilesService:
         folder = self.find_folder(tree, folder_path)
         if folder is None:
             raise DataNotFoundError(message="folder_not_found")
-        if not folder["actions"]["can_rename"]:
+        if not folder["action"]["can_rename"]:
             raise DataValidationError(message="folder_action_not_permitted")
         path = folder["folder"]
 
@@ -646,7 +678,7 @@ class FilesService:
         dest = self.find_folder(tree, destination)
         if dest is None:
             raise DataNotFoundError(message="folder_not_found")
-        if not dest["actions"]["can_set_as_target_move_file"]:
+        if not dest["action"]["can_set_as_target_move_file"]:
             raise DataValidationError(message="folder_action_not_permitted")
 
         raw_paths: list[str] = []
@@ -654,7 +686,7 @@ class FilesService:
             entry = self.find_file(tree, str(file_uid))
             if entry is None:
                 raise DataNotFoundError(message="file_not_found")
-            if not entry["actions"]["can_choose_to_move"]:
+            if not entry["action"]["can_choose_to_move"]:
                 raise DataValidationError(message="file_action_not_permitted")
             raw_paths.append(self.raw_path(entry["path"]))
 
@@ -679,7 +711,7 @@ class FilesService:
         dest = self.find_folder(tree, destination)
         if dest is None:
             raise DataNotFoundError(message="folder_not_found")
-        if not dest["actions"]["can_set_as_target_move_folder"]:
+        if not dest["action"]["can_set_as_target_move_folder"]:
             raise DataValidationError(message="folder_action_not_permitted")
 
         dest_depth = self.relative_depth(destination)
@@ -692,7 +724,7 @@ class FilesService:
             folder = self.find_folder(tree, folder_path)
             if folder is None:
                 raise DataNotFoundError(message="folder_not_found")
-            if not folder["actions"]["can_rename"]:
+            if not folder["action"]["can_rename"]:
                 raise DataValidationError(message="folder_action_not_permitted")
             if dest_depth + self.subtree_depth(folder) + 1 > limit:
                 raise DataValidationError(message="folder_depth_exceeded")
@@ -721,7 +753,7 @@ class FilesService:
             )
         return await self.invalidate_and_refresh(ctx)
 
-    async def _set_generation_field(self, ctx: FileCtx, result_uids: list[str], mutation: FieldMutation) -> None:
+    async def set_generation_field(self, ctx: FileCtx, result_uids: list[str], mutation: FieldMutation) -> None:
         """Validate + mutate one column on every owned generation result in `result_uids`. Raises a
         single 422 with one error per bad index (`file_uids.{idx}`) rather than an all-or-nothing 404.
         Does not touch the cache or return anything - callers own the refresh, since only they know
@@ -758,16 +790,17 @@ class FilesService:
         mutation = FieldMutation(
             field="archieved_at",
             value=local_time() if is_archieved else None,
-            is_valid_state=(lambda row: row.archieved_at is None)
+            is_valid_state=(lambda row: row.archieved_at is None and not row.is_main)
             if is_archieved
             else (lambda row: row.archieved_at is not None),
             invalid_state_message="file_already_archived" if is_archieved else "file_not_archived",
         )
-        await self._set_generation_field(ctx, result_uids, mutation)
-        await delete_pattern(ctx.redis, CacheKeys().references_picker_pattern(ctx.user_id))
+        await self.set_generation_field(ctx, result_uids, mutation)
+        tree = await self.invalidate_and_refresh(ctx)
         # Re-cache /archieved inline so the next GET is a hit, even though it's not in this response.
         await self.refresh_archived_files(ctx)
-        return await self.invalidate_and_refresh(ctx)
+        await delete_pattern(ctx.redis, CacheKeys().user_galleries_pattern(ctx.user_id))
+        return tree
 
     async def set_favorited_generation(
         self, ctx: FileCtx, result_uids: list[str], is_favorited: bool
@@ -778,11 +811,12 @@ class FilesService:
             is_valid_state=(lambda row: not row.is_favourite) if is_favorited else (lambda row: row.is_favourite),
             invalid_state_message="file_already_favourited" if is_favorited else "file_not_favourited",
         )
-        await self._set_generation_field(ctx, result_uids, mutation)
-        await delete_pattern(ctx.redis, CacheKeys().references_picker_pattern(ctx.user_id))
+        await self.set_generation_field(ctx, result_uids, mutation)
+        tree = await self.invalidate_and_refresh(ctx)
         # Re-cache /favourited inline so the next GET is a hit.
         await self.refresh_favourited_files(ctx)
-        return await self.invalidate_and_refresh(ctx)
+        await delete_pattern(ctx.redis, CacheKeys().user_galleries_pattern(ctx.user_id))
+        return tree
 
     async def set_main_generation_result(self, ctx: FileCtx, file_uid: str) -> list[dict[str, Any]]:
         """Flip `is_main` to True on `file_uid`, atomically flipping every other main in its family
@@ -802,8 +836,6 @@ class FilesService:
         )
         if row is None:
             raise DataValidationError(message="file_uid_invalid", error={"file_uid": ["file_not_found"]})
-        if row.parent_id is None:
-            raise DataValidationError(message="file_uid_invalid", error={"file_uid": ["result_has_no_parent"]})
 
         if not row.is_main:
             current_mains = await query(
@@ -813,6 +845,7 @@ class FilesService:
                     or_(
                         DfEngineGenerationResults.id == row.parent_id,
                         DfEngineGenerationResults.parent_id == row.parent_id,
+                        DfEngineGenerationResults.parent_id == row.id,
                     ),
                     DfEngineGenerationResults.is_main.is_(True),  # type: ignore
                     DfEngineGenerationResults.id != row.id,
@@ -826,10 +859,11 @@ class FilesService:
             await ctx.db.flush()
 
         await delete_pattern(ctx.redis, CacheKeys().references_picker_pattern(ctx.user_id))
+        await delete_pattern(ctx.redis, CacheKeys().user_galleries_pattern(ctx.user_id))
         return await self.invalidate_and_refresh(ctx)
 
     def raw_path(self, url: str) -> str:
-        """Reverse `file_url`: strip the udin base URL and percent-decode back to the raw storage path."""
+        """Reverse `format_udin_url`: strip the udin base URL and percent-decode back to the raw storage path."""
         prefix = f"{UDIN_BASE_URL}/"
         return unquote(url[len(prefix) :] if url.startswith(prefix) else url)
 
@@ -876,21 +910,23 @@ class FilesService:
             "uid": file["uid"],
             "name": file["path"].rsplit("/", 1)[-1],
             "type": file_type,
-            "path": self.file_url(file["path"]),
+            "path": format_udin_url(file["path"]),
             "size": format_size(file["size"]),
             "md5": file.get("md5"),
             "creator": format_user_employees(file.get("created_by_user")),
             "updater": format_user_employees(file.get("updated_by_user")),
             "is_main": is_main,
+            "source": "generated" if is_generated else "upload",
             "kind": generation.get("kind"),
+            "model": generation.get("model"),
             "prompt": generation.get("prompt"),
             "cost": format_idr(generation.get("cost"), USD_TO_IDR_RATE),
-            "actions": {
+            "action": {
                 "can_fetch_detail": True,
                 "can_rename": actionable and is_owner,
                 "can_delete": actionable and is_owner and not is_generated,
                 "can_choose_to_move": actionable and is_owner and not (is_generated and is_archived),
-                "can_archieve": can_act and not is_archived,
+                "can_archieve": can_act and not is_archived and not is_main,
                 "can_unarchieve": can_act and is_archived,
                 "can_favorited": can_act and not is_favourite,
                 "can_unfavorited": can_act and is_favourite,
@@ -947,7 +983,7 @@ class FilesService:
                     node = {
                         "folder": built_path,
                         "type": "folder",
-                        "actions": {
+                        "action": {
                             "can_fetch_detail": True,
                             "can_rename": is_inside,
                             "can_create_subfolder": actionable,
@@ -992,9 +1028,9 @@ class FilesService:
         def apply_folder_ownership(nodes: list[dict[str, Any]]) -> None:
             for node in nodes:
                 all_owned = folder_owners.get(node["folder"]) == {user_id}
-                node["actions"] = {
+                node["action"] = {
                     key: (value if key == "can_fetch_detail" else value and all_owned)
-                    for key, value in node["actions"].items()
+                    for key, value in node["action"].items()
                 }
                 apply_folder_ownership(node["childs"])
 

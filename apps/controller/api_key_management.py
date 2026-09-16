@@ -478,9 +478,9 @@ class APIKeyManagementController(CoreDependencies):
         "/key-management/{uid}",
         summary="Delete a non-main API key.",
         description=(
-            "Permanently revokes the key on OpenRouter, saves a copy of its details in "
-            "the archive (df_engine_api_key_snapshots), then removes it from the active "
-            'list. A key currently marked as "main" can\'t be deleted this way — '
+            "Permanently revokes the key on OpenRouter, saves a copy of its details to "
+            "an archive, then removes it from the active list. A key currently marked "
+            'as "main" can\'t be deleted this way — '
             "update it to no longer be main first. Every attempt to reach OpenRouter is "
             "recorded, whether it succeeds or fails. Returns the full, up-to-date list "
             "of remaining API keys."

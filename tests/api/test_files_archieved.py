@@ -70,11 +70,11 @@ async def test_archived_action_flags(authed_client, project_task, user_id, gener
 
     resp = await authed_client.call("GET", _url(project_task.uid))
     file = _find_flat(resp.json()["data"], result.uid)
-    assert file["actions"]["can_archieve"] is False
-    assert file["actions"]["can_unarchieve"] is True
-    assert file["actions"]["can_favorited"] is True
-    assert file["actions"]["can_unfavorited"] is False
-    assert file["actions"]["can_choose_to_move"] is False
+    assert file["action"]["can_archieve"] is False
+    assert file["action"]["can_unarchieve"] is True
+    assert file["action"]["can_favorited"] is True
+    assert file["action"]["can_unfavorited"] is False
+    assert file["action"]["can_choose_to_move"] is False
 
 
 @pytest.mark.asyncio
@@ -97,10 +97,12 @@ async def test_archived_entry_matches_file_entry_shape_with_no_variants(
         "creator",
         "updater",
         "is_main",
+        "source",
         "kind",
+        "model",
         "prompt",
         "cost",
-        "actions",
+        "action",
     }
     assert "variants" not in file
 

@@ -1,13 +1,12 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, auto
-from functools import cached_property
-from typing import Any, Optional, Union
+from typing import Any, Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import DECIMAL, DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import CHAR, DECIMAL, DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text, and_
 from sqlalchemy.dialects.mysql import BIGINT
-from sqlalchemy.orm import object_session
+from sqlalchemy.orm import foreign
 from services.mysql.model.df_engine_api_key_snapshots import DfEngineApiKeySnapshots
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from utils import local_time
@@ -43,6 +42,7 @@ class DfEngineGenerations(SQLModel, table=True):
     )
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
+    uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     kind: GenerationKinds = Field(sa_column=Column(Enum(GenerationKinds), nullable=False))
     model_id: int = Field(
@@ -90,24 +90,39 @@ class DfEngineGenerations(SQLModel, table=True):
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.created_by]"}
     )
+    result: Optional["DfEngineGenerationResults"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.generation_id]", "viewonly": True}
+    )
+
+    # `sourceable_id`/`sourceable_type` is a manual polymorphic ("morph") reference - it points at
+    # EITHER a df_engine_api_keys row OR a df_engine_api_key_snapshots row, never both, discriminated
+    # by `sourceable_type`. These two relationships bake that discriminator into their own primaryjoin
+    # (`foreign()` marks sourceable_id as the join column since there's no real ForeignKey to either
+    # table), so only the matching one ever loads. Batches via selectinload like any normal
+    # relationship - no cached_property, no manual per-row session.get(), safe under AsyncSession.
+    api_key: Optional["DfEngineApiKeys"] = Relationship(
+        sa_relationship_kwargs={
+            "primaryjoin": lambda: and_(  # type: ignore
+                foreign(DfEngineGenerations.sourceable_id) == DfEngineApiKeys.id,  # type: ignore
+                DfEngineGenerations.sourceable_type == DfEngineApiKeys.__name__,  # type: ignore
+            ),
+            "viewonly": True,
+            "uselist": False,
+        }
+    )
+    api_key_snapshot: Optional["DfEngineApiKeySnapshots"] = Relationship(
+        sa_relationship_kwargs={
+            "primaryjoin": lambda: and_(  # type: ignore
+                foreign(DfEngineGenerations.sourceable_id) == DfEngineApiKeySnapshots.id,  # type: ignore
+                DfEngineGenerations.sourceable_type == DfEngineApiKeySnapshots.__name__,  # type: ignore
+            ),
+            "viewonly": True,
+            "uselist": False,
+        }
+    )
 
     @property
-    def is_api_key(self) -> bool:
-        return self.sourceable_type == DfEngineApiKeys.__name__
-
-    @property
-    def is_api_key_snapshot(self) -> bool:
-        return self.sourceable_type == DfEngineApiKeySnapshots.__name__
-
-    def validate_sourceable_type(self) -> None:
-        if not (self.is_api_key or self.is_api_key_snapshot):
-            raise ValueError(f"Unsupported sourceable_type: {self.sourceable_type!r}")
-
-    @cached_property
-    def sourceable(self) -> Optional[Union[DfEngineApiKeys, DfEngineApiKeySnapshots]]:
-        self.validate_sourceable_type()
-        session = object_session(self)
-        if session is None:
-            return None
-        target_class = DfEngineApiKeys if self.is_api_key else DfEngineApiKeySnapshots
-        return session.get(target_class, self.sourceable_id)
+    def sourceable(self) -> Optional[Any]:
+        """The resolved `api_key`/`api_key_snapshot`, whichever `sourceable_type` points at.
+        Requires that relationship to already be loaded (e.g. via `selectinload`)."""
+        return self.api_key if self.sourceable_type == DfEngineApiKeys.__name__ else self.api_key_snapshot

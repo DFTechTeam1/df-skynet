@@ -37,7 +37,16 @@ async def generation_fks(user_id) -> dict:
     return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
 
 
-def _make_result(project_task, user_id, generation_fks, archieved_at=None, name="a.png", kind="images"):
+def _make_result(
+    project_task,
+    user_id,
+    generation_fks,
+    archieved_at=None,
+    name="a.png",
+    kind="images",
+    parent_id=None,
+    is_main=True,
+):
     """A `DfEngineGenerationResults` row (with its parent `DfEngineGenerations`) shaped
     so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper."""
     generation = DfEngineGenerationsFactory.create(
@@ -49,7 +58,12 @@ def _make_result(project_task, user_id, generation_fks, archieved_at=None, name=
     )
     path = f"storage/DF-Engine/{project_task.project.uid}/generated/{kind}/{name}"
     return DfEngineGenerationResultsFactory.create(
-        path=path, generation_id=generation.id, created_by=int(user_id), archieved_at=archieved_at
+        path=path,
+        generation_id=generation.id,
+        created_by=int(user_id),
+        archieved_at=archieved_at,
+        parent_id=parent_id,
+        is_main=is_main,
     )
 
 
@@ -60,6 +74,7 @@ async def test_get_file_detail_success(authed_client, project_task, user_id):
     resp = await authed_client.call("GET", _url(project_task.uid, f"/file/{row.uid}"))
     assert resp.status_code == 200
     assert resp.json()["data"]["uid"] == row.uid
+    assert resp.json()["data"]["source"] == "upload"
 
 
 @pytest.mark.asyncio
@@ -86,6 +101,7 @@ async def test_get_generated_file_detail_works_regardless_of_archived_state(
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["uid"] == result.uid
+        assert resp.json()["data"]["source"] == "generated"
 
 
 @pytest.mark.asyncio
@@ -108,3 +124,53 @@ async def test_get_generated_file_detail_unknown_uid_is_404(authed_client, proje
     )
     assert resp.status_code == 404
     assert resp.json()["message"] == resolve_message("file_not_found", "en")
+
+
+@pytest.mark.asyncio
+async def test_get_generated_file_detail_is_main_result_includes_variants(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; fetching the family member that is currently `is_main` attaches `variants` -
+    every other family member (root + children), regardless of position."""
+    root = _make_result(project_task, user_id, generation_fks, name="root.png", is_main=False)
+    main = _make_result(project_task, user_id, generation_fks, parent_id=root.id, is_main=True, name="main.png")
+    other = _make_result(project_task, user_id, generation_fks, parent_id=root.id, is_main=False, name="other.png")
+
+    resp = await authed_client.call("GET", _url(project_task.uid, f"/file/{main.uid}"), params={"type": "generated"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["uid"] == main.uid
+    assert data["is_main"] is True
+    assert {v["uid"] for v in data["variants"]} == {root.uid, other.uid}
+
+
+@pytest.mark.asyncio
+async def test_get_generated_file_detail_non_main_result_has_no_variants_key(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; fetching a family member that is not `is_main` returns only its own data -
+    no `variants` key at all, regardless of whether it's the root or a child."""
+    root = _make_result(project_task, user_id, generation_fks, name="root.png", is_main=False)
+    _make_result(project_task, user_id, generation_fks, parent_id=root.id, is_main=True, name="main.png")
+
+    resp = await authed_client.call("GET", _url(project_task.uid, f"/file/{root.uid}"), params={"type": "generated"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["uid"] == root.uid
+    assert data["is_main"] is False
+    assert "variants" not in data
+
+
+@pytest.mark.asyncio
+async def test_get_generated_file_detail_standalone_result_has_empty_variants(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; a standalone result (no parent, no children, is_main defaults True) gets
+    `"variants": []` - it's its own whole family."""
+    standalone = _make_result(project_task, user_id, generation_fks, name="standalone.png")
+
+    resp = await authed_client.call(
+        "GET", _url(project_task.uid, f"/file/{standalone.uid}"), params={"type": "generated"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["variants"] == []

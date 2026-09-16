@@ -424,6 +424,7 @@ Table df_engine_upload_files {
 
 Table df_engine_generations {
     id bigint [pk, increment]
+    uid char(36) [not null, unique]
     created_at timestamp [default: `now()`]
     kind generation_kinds [not null, note: "Discriminator — determines which *_details table (if any) has the matching row"]
     model_id bigint [not null]

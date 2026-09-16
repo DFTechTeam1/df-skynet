@@ -100,15 +100,20 @@ async def test_set_main_on_current_main_is_a_no_op_200(authed_client, project_ta
 
 
 @pytest.mark.asyncio
-async def test_set_main_on_root_result_is_422_result_has_no_parent(
+async def test_set_main_on_root_result_demotes_its_current_main_child(
     authed_client, project_task, user_id, generation_fks
 ):
-    """422 file_uid_invalid; a root result (no parent_id) has nothing to contest, so it errors."""
-    root = _make_result(project_task, user_id, generation_fks)
+    """200 OK; a root result has no parent, but it can still be reinstated as main - that demotes
+    whichever of its children currently holds is_main, matched via `parent_id == row.id`."""
+    root = _make_result(project_task, user_id, generation_fks, is_main=False, name="root.png")
+    child = _make_result(project_task, user_id, generation_fks, parent_id=root.id, is_main=True, name="a.png")
 
-    resp = await authed_client.call("PATCH", _set_main_url(project_task.uid, root.uid), raise_for_status=False)
-    assert resp.status_code == 422
-    assert resp.json()["error"] == {"file_uid": [resolve_message("result_has_no_parent", "en")]}
+    resp = await authed_client.call("PATCH", _set_main_url(project_task.uid, root.uid))
+    assert resp.status_code == 200
+
+    data = resp.json()["data"]
+    assert _find_entry(data, root.uid)["is_main"] is True
+    assert _find_entry(data, child.uid)["is_main"] is False
 
 
 @pytest.mark.asyncio

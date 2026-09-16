@@ -30,17 +30,10 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management",
         summary="List or search features.",
         description=(
-            "Returns features (`df_engine_features` rows), newest first — both active and "
-            "inactive, since this screen manages and toggles inactive features too. Pass "
-            "`name` to search — only features whose name starts with that text "
-            "(case-insensitive prefix match) are returned, in the exact same shape as the "
-            "unfiltered list. Each feature includes a nested `templates` array built from "
-            "`df_engine_feature_prompt_mappings` — every linked prompt template, active or "
-            "inactive, each carrying its own `is_active` flag. One feature can list many "
-            "templates, and the same template can be linked to many different features. "
-            "Each feature also includes its resolved `creator` / `updater` and an `action` "
-            "block reflecting which feature-management actions the current user is "
-            "permitted to perform."
+            "Returns every feature, newest first, including inactive ones so they can be "
+            "reactivated here. Pass `name` to search by feature name. Each feature shows "
+            "its linked prompt templates, who created and last updated it, and what the "
+            "current user is allowed to do with it."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
@@ -90,10 +83,9 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management/{uid}",
         summary="Detail of a feature.",
         description=(
-            "Returns a single feature (`df_engine_features` row) identified by `uid`, in "
-            "the exact same shape as one item from the list endpoint — including its "
-            "nested `templates` array, resolved `creator` / `updater`, and `action` block. "
-            "404s if no feature matches `uid`."
+            "Returns one feature's full details — the same information shown for it in the "
+            "list, including its linked prompt templates. Fails if no feature matches the "
+            "given ID."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
@@ -159,17 +151,9 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management",
         summary="Create a feature.",
         description=(
-            "Registers a new feature (`df_engine_features` row) and, in the same call, "
-            "links it to the prompt templates given in `template_uids`. `type` is required "
-            "and one of `generate_image` / `generate_video`. Every template uid must "
-            "reference an existing prompt template, or the whole request fails with a 422 "
-            "listing the offending indices. `template_uids` has no minimum length: omit it "
-            "(or pass an empty list) to create a feature with no linked template yet, or "
-            "pass one or many to wire them up immediately. `name` must be unique across "
-            "all existing features. The record's `created_by` is taken from the "
-            "authenticated user resolved from the bearer token, not from the request body. "
-            "Returns the full, up-to-date list of features, so the frontend can refresh "
-            "its list without a separate re-fetch."
+            "Creates a new feature (image or video generation) and, optionally, links it to "
+            "one or more prompt templates right away — every linked template must already "
+            "exist. Feature names must be unique. Returns the full, up-to-date feature list."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
@@ -265,19 +249,10 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management/{uid}",
         summary="Update a feature.",
         description=(
-            "Replaces the feature identified by `uid` — the request body carries the full "
-            "record (`name`, `type`, `description`, `is_active`, `template_uids`), not a "
-            "partial diff. `type` is one of `generate_image` / `generate_video`. "
-            "`template_uids` is the complete desired set of linked prompt templates: "
-            "any currently linked template missing from the list is unlinked, any new uid "
-            "is linked, and unchanged ones keep their existing mapping row (not deleted "
-            "and recreated). It has no minimum length — pass an empty list to unlink every "
-            "template. Every uid must reference an existing prompt template or the request "
-            "fails with a 422. `name` must remain unique across all existing features. The "
-            "record's `updated_by` is taken from the authenticated user resolved from the "
-            "bearer token, not from the request body. Deactivating a feature (`is_active` = "
-            "`false`) keeps it in the list, flagged inactive, and does not touch its "
-            "template or menu links. Returns the full, up-to-date list of features."
+            "Replaces a feature's full details, including its complete list of linked "
+            "prompt templates — any template left out of the list gets unlinked, and any "
+            "new one gets linked. Deactivating a feature keeps it in the list, just flagged "
+            "as inactive. Returns the full, up-to-date feature list."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
@@ -410,13 +385,9 @@ class FeatureManagementController(CoreDependencies):
         "/feature-management/{uid}",
         summary="Delete a feature.",
         description=(
-            "Permanently deletes the feature identified by `uid`, along with every "
-            "`df_engine_feature_prompt_mappings` row linking it to a prompt template — "
-            "there's no separate unlink step for templates. Fails with a 409 conflict if "
-            "the feature is still linked to a menu by a `df_engine_menu_feature_mappings` "
-            "row (i.e. `action.can_delete` is `false`) — unmap it in menu management "
-            "first. 404s if no feature matches `uid`. Returns the full, up-to-date list of "
-            "remaining features."
+            "Permanently deletes a feature and unlinks it from every prompt template. "
+            "Blocked if the feature is still attached to a menu — remove it from that menu "
+            "first. Returns the full, up-to-date list of remaining features."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],

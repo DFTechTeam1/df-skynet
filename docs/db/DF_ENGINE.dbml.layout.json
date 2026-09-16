@@ -1,4 +1,145 @@
 {
   "version": 1,
-  "positions": {}
+  "positions": {
+    "table-employees": {
+      "x": 810.5,
+      "y": 3470
+    },
+    "table-users": {
+      "x": 1425.5,
+      "y": 3470
+    },
+    "table-projects": {
+      "x": 2111,
+      "y": 3470
+    },
+    "table-project_tasks": {
+      "x": 2422,
+      "y": 2816
+    },
+    "table-df_engine_project_settings": {
+      "x": 300,
+      "y": 2681
+    },
+    "table-df_engine_settings": {
+      "x": 1649,
+      "y": 136
+    },
+    "table-df_engine_preferences": {
+      "x": 634,
+      "y": 2711
+    },
+    "table-df_engine_setting_logs": {
+      "x": 991,
+      "y": 2711
+    },
+    "table-df_engine_api_keys": {
+      "x": 1257,
+      "y": 2621
+    },
+    "table-df_engine_api_key_snapshots": {
+      "x": 1899,
+      "y": 1
+    },
+    "table-df_engine_external_api_calls": {
+      "x": 2189,
+      "y": 0
+    },
+    "table-df_engine_api_key_rotation_issues": {
+      "x": 2495,
+      "y": 60
+    },
+    "table-df_engine_menus": {
+      "x": 1794,
+      "y": 2726
+    },
+    "table-df_engine_features": {
+      "x": 1544,
+      "y": 2711
+    },
+    "table-df_engine_feature_prompt_mappings": {
+      "x": 0,
+      "y": 1906
+    },
+    "table-df_engine_menu_feature_mappings": {
+      "x": 1358.75,
+      "y": 1906
+    },
+    "table-df_engine_prompt_templates": {
+      "x": 18,
+      "y": 2711
+    },
+    "table-df_engine_model_options": {
+      "x": 2044,
+      "y": 2410
+    },
+    "table-df_engine_upload_files": {
+      "x": 2635.3297287729583,
+      "y": 1778.3742835192486
+    },
+    "table-df_engine_generations": {
+      "x": 2178,
+      "y": 1710
+    },
+    "table-df_engine_image_generation_details": {
+      "x": 326.5,
+      "y": 1191
+    },
+    "table-df_engine_video_generation_details": {
+      "x": 672.5,
+      "y": 1251
+    },
+    "table-df_engine_storyboard_details": {
+      "x": 1018.5,
+      "y": 1251
+    },
+    "table-df_engine_keyframe_details": {
+      "x": 3515,
+      "y": 75
+    },
+    "table-df_engine_motion_details": {
+      "x": 2833,
+      "y": 105
+    },
+    "table-df_engine_chat_details": {
+      "x": 1316.5,
+      "y": 1250
+    },
+    "table-df_engine_enhancer_details": {
+      "x": 1567.5,
+      "y": 1251
+    },
+    "table-df_engine_generation_uploads": {
+      "x": 2192,
+      "y": 1175
+    },
+    "table-df_engine_generation_reconciliation_issues": {
+      "x": 2374,
+      "y": 610
+    },
+    "table-df_engine_queues": {
+      "x": 1869.5,
+      "y": 1175
+    },
+    "table-df_engine_storyboard_scenes": {
+      "x": 3345,
+      "y": 1235
+    },
+    "table-df_engine_scene_shots": {
+      "x": 3334,
+      "y": 610
+    },
+    "table-df_engine_upload_file_references": {
+      "x": 2529.877149442254,
+      "y": 1187.720557819342
+    },
+    "table-df_engine_generation_references": {
+      "x": 2984,
+      "y": 685
+    },
+    "table-df_engine_generation_results": {
+      "x": 3007.5,
+      "y": 1070
+    }
+  }
 }

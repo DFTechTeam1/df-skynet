@@ -37,15 +37,10 @@ class SettingController(CoreDependencies):
         "/setting/logs",
         summary="View the history of changes made to the DF Engine settings.",
         description=(
-            "Returns the settings audit trail, newest first: every time the settings "
-            "were saved with an actual change, this lists who saved it (`creator`), the "
-            "settings as they were right before that save (`previous_data`) next to what "
-            "they became (`incoming_data`), and `changed_fields` — the top-level "
-            "sections that actually differ between the two, so the UI can highlight what "
-            "moved. `previous_data` is null for the very first save, since there's "
-            "nothing to compare against, and a save that changed nothing is not recorded "
-            "here at all. Paginated — pass `page` and `itemsPerPage` to page through the "
-            "history, and `search` to filter by the saver's name."
+            "Returns the settings change history, newest first: who saved each change, "
+            "the settings before and after, and which sections actually moved. Only "
+            "real changes are recorded — saving without changing anything doesn't add "
+            "an entry. Paginated, and searchable by the saver's name."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Setting"],
@@ -182,12 +177,11 @@ class SettingController(CoreDependencies):
         "/setting",
         summary="Update global setting.",
         description=(
-            "Saves the workspace-wide DF Engine settings: Library visibility, the "
-            "per-project-class usage limits (including each class's token-limit warning "
-            "threshold), and which models power the prompt enhancer and the assistant. "
-            "Send the whole settings document — this replaces the "
-            "saved settings, it is not a partial update. Any change is recorded in the "
-            "history together with who made it."
+            "Saves the workspace-wide settings: Library visibility, usage limits per "
+            "project class, and which models power the prompt enhancer and the "
+            "assistant. Send the whole settings document each time — this replaces "
+            "what's saved, it isn't a partial update. Any real change is recorded in "
+            "the history together with who made it."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Setting"],
@@ -334,13 +328,12 @@ class SettingController(CoreDependencies):
         "/setting/{uid}",
         summary="Get project setting.",
         description=(
-            "Returns the effective generation limits for one project — `token_usage_limit` "
-            "(USD spend cap), `compose_input_max_chars`, `storyboard_prompt_chars`, "
-            "`max_scene_per_storyboard`, `max_shot_per_scene` and `token_limit_threshold` "
-            "(0-1 warn fraction). Every value is resolved the same way: the project's own "
-            "saved override if it has one, otherwise the entry for the project's class in "
-            "the global `project_class_limitations`. The global settings must have been "
-            "configured at least once, and the project must be assigned to a class."
+            "Returns the generation limits currently in effect for one project — its "
+            "spend cap and various content-length limits, plus the usage percentage "
+            "that should trigger a warning. Uses the project's own saved override if "
+            "it has one, otherwise falls back to the default for its project class. "
+            "Requires the global settings to have been configured at least once and "
+            "the project to be assigned to a class."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Setting"],
@@ -433,13 +426,11 @@ class SettingController(CoreDependencies):
         "/setting/{uid}",
         summary="Save project setting.",
         description=(
-            "Saves a per-project override of the generation limits. Send the whole set — "
-            "`token_usage_limit`, `compose_input_max_chars`, `storyboard_prompt_chars`, "
-            "`max_scene_per_storyboard`, `max_shot_per_scene`, `token_limit_threshold` — "
-            "they replace whatever this project had before. While the override exists the "
-            "project uses these values instead of its project class defaults. Omitted "
-            "fields fall back to their payload defaults (`token_usage_limit` 10, "
-            "`token_limit_threshold` 0.8, char/scene/shot limits 2000)."
+            "Saves a per-project override of the generation limits (spend cap, content "
+            "length limits, and the warning threshold), replacing whatever this project "
+            "had before. While the override exists, this project uses these values "
+            "instead of its project class defaults. Any field left out falls back to a "
+            "standard default."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Setting"],
