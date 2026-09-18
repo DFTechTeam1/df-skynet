@@ -25,15 +25,19 @@ from services.files import USD_TO_IDR_RATE
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.redis import get_json, set_json, CacheKeys
 from services.menu_management import MenuManagementService
-from services.files import FilesService
+from services.files import FileCtx, FilesService
+from services.generations import GenerationsService
 from utils.formatter import format_udin_url, format_size, format_datetime, format_user_employees, format_idr
 from log import logging
-from schemas.payload.generations import ImageGenerationsPayload
+from schemas.payload.generations import GenerationsPayload
 from sqlalchemy.orm import selectinload
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
 from utils import local_time
 from services.model_management import ModelManagement
 from utils.serializer import serialize
+from validations.project_tasks import get_project_task, assigned_task
+from validations.employees import active_employee
+from validations.openrouter.models import validate_model_params, validate_references
 
 
 class GenerationsController(CoreDependencies):
@@ -223,8 +227,8 @@ class GenerationsController(CoreDependencies):
         return response
 
     @controller.post(
-        "/image-generations/{task_uid}",
-        summary="Generate a new image.",
+        "/generations/{task_uid}",
+        summary="Generate an image or video.",
         description=(
             "Submits a prompt and asks the AI model to generate a brand-new image for this task. "
             "The result becomes the main image for its own new generation, ready to preview, "
@@ -234,12 +238,22 @@ class GenerationsController(CoreDependencies):
         tags=["Generations"],
         response_model=Response,
     )
-    async def generation_with_uid_to_generate_an_image(
-        self, schema: ImageGenerationsPayload, task_uid: UUID = Path(description="Task UID")
+    async def generation_with_uid_to_generate_an_image_or_video(
+        self, schema: GenerationsPayload, task_uid: UUID = Path(description="Task UID")
     ) -> Response:
         response = Response()
         try:
-            pass
+            # Will be enabled later
+            # await active_employee(self.user['user_id']) # will assigned variable = task
+            # await get_project_task(str(task_uid)) # will assigned variable = employee
+            # await assigned_task(task['id'], employee['id'])
+
+            # Dont forget to GET user id include into which team, to fetch the API keys.
+
+            references = [ref.model_dump() for ref in schema.references]
+            await validate_model_params(schema.type, str(schema.model_uid), references, schema.parameter)
+            await validate_references(references, self.user["user_id"])
+
         except BaseError:
             raise
         except Exception:
@@ -395,34 +409,6 @@ class GenerationsController(CoreDependencies):
             await set_json(self.redis, user_galleries_key, records)
             logging.info(f"user={self.user['user_id']} listed user galleries source=db task_uid={task_uid}")
             response.data = records
-        except BaseError:
-            raise
-        except Exception:
-            logging.error(traceback.format_exc())
-            raise ServiceError()
-        return response
-
-    @controller.post(
-        "/image-generations/{task_uid}/{file_uid}",
-        summary="Generate a new image based on an existing one.",
-        description=(
-            "Submits a prompt and asks the AI model to generate a new image using an existing "
-            "result (`file_uid`) as its reference. The new image is added as a variant of that "
-            "same family rather than starting a brand-new one."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["Generations"],
-        response_model=Response,
-    )
-    async def generation_with_uid_to_generate_an_nested_image(
-        self,
-        schema: ImageGenerationsPayload,
-        task_uid: UUID = Path(description="Task UID"),
-        file_uid: UUID = Path(description="File UID."),
-    ) -> Response:
-        response = Response()
-        try:
-            pass
         except BaseError:
             raise
         except Exception:

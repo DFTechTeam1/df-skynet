@@ -3,6 +3,9 @@ class FilesMessage:
         self.message: dict[str, str] = {
             "upload_failed": "Unggah file gagal.",
             "project_task_not_found": "Tugas tidak ditemukan.",
+            "project_task_not_ongoing": "Tugas ini harus berstatus ongoing untuk melanjutkan aksi ini.",
+            "project_task_not_onprocess": "Tugas ini harus berstatus on process untuk melanjutkan aksi ini.",
+            "employee_not_assigned_task": "Employee ini tidak ditugaskan pada task ini.",
             "task_already_finished": "Anda tidak dapat mengunggah file karena tugas ini sudah selesai.",
             "project_not_ongoing": "File hanya dapat diunggah selama proyek masih berjalan.",
             "folder_not_found": "Folder tidak ditemukan.",
