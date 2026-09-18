@@ -27,5 +27,6 @@ class DfEngineGenerationResultsFactory(SQLAlchemyModelFactory):
     size = Faker("random_int", min=1024, max=10_485_760)
     is_main = True
     is_favourite = False
+    version = 1
     created_by = None
     updated_by = None

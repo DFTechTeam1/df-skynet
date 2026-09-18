@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import BigInteger, Boolean, CHAR, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, Boolean, CHAR, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
@@ -32,6 +32,7 @@ class DfEngineGenerationResults(SQLModel, table=True):
     size: int = Field(sa_column=Column(BigInteger, nullable=False))
     is_main: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     is_favourite: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+    version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
     )
