@@ -700,6 +700,7 @@ Table df_engine_generation_results {
     size bigint [not null]
     is_main bool [not null, default: true]
     is_favourite bool [not null, default: false, note: "Only creator can favourite its own generated files."]
+    version int [not null, default: 1]
     created_by bigint [default: null]
     updated_by bigint [default: null]
 

@@ -7,7 +7,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
-from schemas.payload.feature_management import FeaturePayload
+from schemas.payload.feature_management import FeaturePayload, FeatureTypes
 from services.mysql import query
 from services.mysql.model import (
     DfEngineFeaturePromptMappings,
@@ -26,6 +26,27 @@ feature_management_service = FeatureManagementService()
 
 
 class FeatureManagementController(CoreDependencies):
+    @controller.get(
+        "/feature-management/types",
+        summary="List feature types.",
+        description="Returns all available feature type enum values used when creating or filtering features.",
+        status_code=status.HTTP_200_OK,
+        tags=["Feature Management"],
+        response_model=Response,
+    )
+    async def feature_management_to_fetch_feature_types(self) -> Response:
+        response = Response()
+        try:
+            feature_types = list(FeatureTypes)
+            logging.info(f"user={self.user['user_id']} listed feature types count={len(feature_types)}")
+            response.data = feature_types
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
     @controller.get(
         "/feature-management",
         summary="List or search features.",
