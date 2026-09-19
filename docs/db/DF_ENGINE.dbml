@@ -119,6 +119,7 @@ Enum generation_kinds {
   motion
   chat
   enhancer
+  image_edit
 }
 
 // Queue lifecycle event types. NOTE: 'revoked' intentionally omitted --
@@ -435,6 +436,7 @@ Table df_engine_generations {
     project_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
     task_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
     prompt text [not null]
+    full_prompt text [default: null, note: "prompt merged with feature prompt templates"]
     status generation_statuses [not null, default: "processing", note: "If processing count > admin setting parallel generation threshold, status should be queued. For kind='enhancer' this replaces the old is_processing boolean (processing = true, success/failed = false)."]
     response json [default: null]
     status_code integer [default: null]
@@ -449,6 +451,8 @@ Table df_engine_generations {
         created_by [name: 'idx_generations_created_by']
         (status, created_at) [name: 'idx_generations_status_created_at']
         (sourceable_id, sourceable_type) [name: 'idx_generations_sourceable']
+        created_at [name: 'idx_generations_created_at']
+        (task_id, created_by, created_at) [name: 'idx_generations_task_created_by_created_at']
     }
 
     note: "Allowed references depend on kind: images/videos/elements may reference uploaded, generated, or element images; kind=chat may reference any image/generated/element image owned by user."

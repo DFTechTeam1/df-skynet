@@ -21,6 +21,7 @@ class GenerationKinds(StrEnum):
     motion = auto()
     chat = auto()
     enhancer = auto()
+    image_edit = auto()
 
 
 class GenerationStatuses(StrEnum):
@@ -39,6 +40,8 @@ class DfEngineGenerations(SQLModel, table=True):
         Index("idx_generations_created_by", "created_by"),
         Index("idx_generations_status_created_at", "status", "created_at"),
         Index("idx_generations_sourceable", "sourceable_id", "sourceable_type"),
+        Index("idx_generations_created_at", "created_at"),
+        Index("idx_generations_task_created_by_created_at", "task_id", "created_by", "created_at"),
     )
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
@@ -61,6 +64,7 @@ class DfEngineGenerations(SQLModel, table=True):
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id"), nullable=True)
     )
     prompt: str = Field(sa_column=Column(Text, nullable=False))
+    full_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     status: GenerationStatuses = Field(
         default=GenerationStatuses.processing, sa_column=Column(Enum(GenerationStatuses), nullable=False)
     )
@@ -94,12 +98,6 @@ class DfEngineGenerations(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.generation_id]", "viewonly": True}
     )
 
-    # `sourceable_id`/`sourceable_type` is a manual polymorphic ("morph") reference - it points at
-    # EITHER a df_engine_api_keys row OR a df_engine_api_key_snapshots row, never both, discriminated
-    # by `sourceable_type`. These two relationships bake that discriminator into their own primaryjoin
-    # (`foreign()` marks sourceable_id as the join column since there's no real ForeignKey to either
-    # table), so only the matching one ever loads. Batches via selectinload like any normal
-    # relationship - no cached_property, no manual per-row session.get(), safe under AsyncSession.
     api_key: Optional["DfEngineApiKeys"] = Relationship(
         sa_relationship_kwargs={
             "primaryjoin": lambda: and_(  # type: ignore

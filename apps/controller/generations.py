@@ -15,18 +15,24 @@ from services.mysql.model import (
     DfEngineMenus,
     DfEngineModelOptions,
     DfEngineGenerations,
+    DfEngineGenerationReconciliationIssues,
+    DfEngineGenerationReferences,
     DfEngineGenerationResults,
+    DfEngineGenerationUploads,
+    DfEngineImageGenerationDetails,
+    DfEngineUploadFileReferences,
     DfEngineUploadFiles,
     Employees,
     ProjectTasks,
     Users,
 )
 from services.files import USD_TO_IDR_RATE
+from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
+from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.redis import get_json, set_json, CacheKeys
 from services.menu_management import MenuManagementService
 from services.files import FileCtx, FilesService
-from services.generations import GenerationsService
 from utils.formatter import format_udin_url, format_size, format_datetime, format_user_employees, format_idr
 from log import logging
 from schemas.payload.generations import GenerationsPayload
@@ -37,7 +43,21 @@ from services.model_management import ModelManagement
 from utils.serializer import serialize
 from validations.project_tasks import get_project_task, assigned_task
 from validations.employees import active_employee
-from validations.openrouter.models import validate_model_params, validate_references
+from validations.openrouter.models import (
+    validate_model_params,
+    validate_references,
+    validate_prompt_length,
+    validate_features,
+    merge_prompt,
+    get_api_key,
+    get_model,
+    validate_api_key_limitation,
+)
+from parser.openrouter import parse_generation_payload
+from services.api_caller import APICaller
+from services.redis import CacheKeys
+from apps.secret import OPENROUTER_BASE_URL, UDIN_API_KEY, UDIN_BASE_URL
+from services.generations import attach_references
 
 
 class GenerationsController(CoreDependencies):
@@ -242,17 +262,193 @@ class GenerationsController(CoreDependencies):
         self, schema: GenerationsPayload, task_uid: UUID = Path(description="Task UID")
     ) -> Response:
         response = Response()
+        cache_key = CacheKeys()
+        user_id = int(self.user["user_id"])
         try:
             # Will be enabled later
-            # await active_employee(self.user['user_id']) # will assigned variable = task
-            # await get_project_task(str(task_uid)) # will assigned variable = employee
+            """Employee validations"""
+            task = await get_project_task(str(task_uid))
+            # await active_employee(user_id)
             # await assigned_task(task['id'], employee['id'])
+            # Add get pic team here to be passed as args to filter API Key down bellow. Currently value is set to static with Rudhi's API keys
+            task_id = task["id"]
+            project_id = task["project"]["id"]
 
-            # Dont forget to GET user id include into which team, to fetch the API keys.
+            """Menu and Feature validations"""
+            prompt_templates, menu_id, feature_id = await validate_features(
+                str(schema.menu_uid), str(schema.feature_uid)
+            )
 
+            """Prompt length char validations"""
+            await validate_prompt_length(schema.prompt, task_id)
+
+            """Prompt merging with feature prompt templates"""
+            final_prompt = merge_prompt(schema.prompt, prompt_templates)
+
+            """Model validations"""
+            model = await get_model(schema.type, str(schema.model_uid))
             references = [ref.model_dump() for ref in schema.references]
             await validate_model_params(schema.type, str(schema.model_uid), references, schema.parameter)
-            await validate_references(references, self.user["user_id"])
+            valid_references = await validate_references(references, user_id, task_id)
+
+            """API Key validations"""
+            # User will be used openrouter API Key from its PIC.
+            pic_id = 3  # Rudhi as example
+            api_key = await get_api_key(pic_id)
+            api_key_id = api_key["id"]
+            await validate_api_key_limitation(project_id, api_key_id)
+
+            # Initialize insert generation record
+            generation = DfEngineGenerations(
+                kind=schema.type,  # type: ignore
+                model_id=model["id"],
+                menu_id=menu_id,
+                feature_id=feature_id,
+                sourceable_id=api_key_id,
+                sourceable_type=type(api_key).__name__,
+                project_id=project_id,
+                task_id=task_id,
+                prompt=schema.prompt,
+                full_prompt=final_prompt,
+                created_by=user_id,
+            )
+            self.db.add(generation)
+            await self.db.flush()
+
+            # Insert reference records
+            await attach_references(self.db, generation.id, valid_references)
+
+            match schema.type:
+                case "image":
+                    payload = parse_generation_payload(
+                        schema.type,
+                        model["model_id"],
+                        final_prompt,
+                        schema.parameter,
+                        [ref["url"] for ref in valid_references],
+                    )
+                    # self.db.add(DfEngineImageGenerationDetails(generation_id=generation.id, parameter=payload))
+                    response.data = valid_references
+                case "image_edit":
+                    # Will be build later
+                    # payload = parse_generation_payload(
+                    #     schema.type, model["model_id"], final_prompt, schema.parameter, [ref["url"] for ref in valid_references]
+                    # )
+                    # self.db.add(DfEngineImageGenerationDetails(
+                    #     generation_id=generation.id,
+                    #     parameter=payload,
+                    #     x_max=schema.x_max,
+                    #     x_min=schema.x_min,
+                    #     y_max=schema.y_max,
+                    #     y_min=schema.y_min
+                    # ))
+                    return response
+                case _:
+                    # Will be build later
+                    return response
+
+            await self.redis.delete(cache_key.user_galleries(self.user["user_id"], task["id"]))
+
+            generation_result = await query(
+                db=self.db,
+                table=DfEngineGenerations,
+                options=(
+                    selectinload(DfEngineGenerations.result),  # type: ignore
+                    selectinload(DfEngineGenerations.api_key),  # type: ignore
+                    selectinload(DfEngineGenerations.api_key_snapshot),  # type: ignore
+                    selectinload(DfEngineGenerations.model_option),  # type: ignore
+                ),
+                filters=(DfEngineGenerations.id == generation.id,),
+                fetch_one=True,
+            )
+            response.data = serialize(generation_result)
+
+            # """OpenRouter call"""
+            # api_caller = APICaller(headers={"Authorization": f"Bearer {api_key.key}"})
+            # logging.info(f"user={user_id} calling openrouter task_uid={task_uid} model={model['model_id']}")
+            # openrouter_response = await api_caller.openrouter(
+            #     "POST", f"{OPENROUTER_BASE_URL}/images", user_id=user_id, json=payload
+            # )
+            # await api_caller.close()
+
+            # if openrouter_response.is_error:
+            #     error_body = openrouter_response.json() if openrouter_response.content else {}
+            #     error_message = (error_body.get("error") or {}).get("message") or openrouter_response.text
+            #     logging.error(
+            #         f"user={user_id} openrouter generation failed "
+            #         f"task_uid={task_uid} status={openrouter_response.status_code} message={error_message}"
+            #     )
+            #     generation.status = GenerationStatuses.failed
+            #     generation.status_code = openrouter_response.status_code
+            #     generation.response = error_body
+            #     await self.db.flush()
+            #     raise ServiceError(status_code=openrouter_response.status_code, message=error_message)
+
+            # logging.info(f"user={user_id} openrouter generation succeeded task_uid={task_uid}")
+            # openrouter_body = openrouter_response.json()
+            # images = openrouter_body.get("data") or []
+            # usage = openrouter_body.get("usage") or {}
+
+            # generation.status = GenerationStatuses.success
+            # generation.status_code = 200
+            # generation.response = openrouter_body
+            # generation.token_usage = usage.get("total_tokens")
+            # generation.cost = usage.get("cost")
+            # await self.db.flush()
+
+            # """Push each generated image to Udin and persist its result"""
+            # upload = DfEngineGenerationUploads(generation_id=generation.id)
+            # self.db.add(upload)
+            # await self.db.flush()
+
+            # udin_api_caller = APICaller()
+            # any_failed = False
+            # for idx, image in enumerate(images):
+            #     udin_response = await udin_api_caller.udin(
+            #         "POST",
+            #         f"{UDIN_BASE_URL}/engine/storage/upload-generated-image/{task['project']['uid']}",
+            #         user_id=user_id,
+            #         raise_for_status=False,
+            #         headers={"X-API-Key": UDIN_API_KEY},
+            #         json={"b64_json": image.get("b64_json"), "media_type": image.get("media_type")},
+            #     )
+            #     if udin_response.is_error:
+            #         any_failed = True
+            #         logging.error(
+            #             f"user={user_id} udin upload failed task_uid={task_uid} "
+            #             f"generation_id={generation.id} status={udin_response.status_code}"
+            #         )
+            #         self.db.add(
+            #             DfEngineGenerationReconciliationIssues(
+            #                 generation_id=generation.id,
+            #                 upload_id=upload.id,
+            #                 issue_type="udin_upload_failed",
+            #                 detail=udin_response.text,
+            #             )
+            #         )
+            #         continue
+
+            #     udin_data = udin_response.json()["data"]
+            #     self.db.add(
+            #         DfEngineGenerationResults(
+            #             generation_id=generation.id,
+            #             name=udin_data["name"],
+            #             path=udin_data["path"],
+            #             size=udin_data["size"],
+            #             md5=udin_data.get("md5"),
+            #             is_main=idx == 0,
+            #             created_by=user_id,
+            #         )
+            #     )
+            # await udin_api_caller.close()
+
+            # upload.upload_status = UploadStatuses.failed if any_failed else UploadStatuses.success
+            # upload.needs_reconciliation = any_failed
+            # if not any_failed:
+            #     upload.uploaded_at = local_time()
+            # await self.db.flush()
+
+            # response.data = user_generations
 
         except BaseError:
             raise

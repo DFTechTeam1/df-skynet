@@ -13,4 +13,10 @@ class GenerationsMessage:
             "references_invalid": "One or more references you provided are invalid.",
             "reference_format_udin_url_required": "This DiVA reference is missing its file URL.",
             "reference_file_uid_required": "This reference is missing its file.",
+            "prompt_length_exceeded": "Your prompt is {length} characters, which exceeds this project's limit of {max_chars} characters.",
+            "feature_not_under_menu": "One or more selected features don't belong to this menu.",
+            "generation_area_incomplete": "To set a focus area, x_min, x_max, y_min, and y_max must all be filled in.",
+            "generation_area_image_edit_only": "Focus area (x_min, x_max, y_min, y_max) can only be set for image_edit generations.",
+            "openrouter_generation_failed": "OpenRouter couldn't generate this. Please try again later.",
+            "api_key_token_usage_limit_exceeded": "This API key has reached its usage limit and can no longer be used to generate.",
         }

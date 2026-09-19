@@ -13,4 +13,10 @@ class GenerationsMessage:
             "references_invalid": "Ada referensi yang kamu kirim tidak valid.",
             "reference_format_udin_url_required": "Referensi DiVA ini belum memiliki URL file.",
             "reference_file_uid_required": "Referensi ini belum memiliki file.",
+            "prompt_length_exceeded": "Prompt kamu {length} karakter, melebihi batas proyek ini yaitu {max_chars} karakter.",
+            "feature_not_under_menu": "Ada fitur yang dipilih tidak termasuk dalam menu ini.",
+            "generation_area_incomplete": "Untuk mengatur area fokus, x_min, x_max, y_min, dan y_max harus diisi semua.",
+            "generation_area_image_edit_only": "Area fokus (x_min, x_max, y_min, y_max) hanya bisa diisi untuk image_edit.",
+            "openrouter_generation_failed": "OpenRouter gagal membuat hasil ini. Silakan coba lagi nanti.",
+            "api_key_token_usage_limit_exceeded": "API key ini sudah mencapai batas penggunaannya dan tidak bisa dipakai untuk generate lagi.",
         }
