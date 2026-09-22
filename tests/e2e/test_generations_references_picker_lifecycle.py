@@ -37,11 +37,13 @@ async def test_archive_rejected_then_favorite_moves_result_across_picker_section
     result = DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), is_main=True)
 
     def _picker_section(body, type_name):
-        return next(s for s in body["data"] if s["type"] == type_name)
+        return next(s for s in body["data"]["paginated"] if s["type"] == type_name)
 
-    # 1. freshly created main result: live, shows up in Image Generation
-    picker = await authed_client.call("GET", f"{PICKER_URL}/{project_task.uid}")
-    assert result.uid in [f["uid"] for f in _picker_section(picker.json(), "Image Generation")["files"]]
+    picker_url = f"{PICKER_URL}/{project_task.project.uid}"
+
+    # 1. freshly created main result: live, shows up in Image Generations
+    picker = await authed_client.call("GET", picker_url)
+    assert result.uid in [f["uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
 
     # 2. archiving the current main is rejected via the real files API
     archive_resp = await authed_client.call(
@@ -54,8 +56,8 @@ async def test_archive_rejected_then_favorite_moves_result_across_picker_section
     assert archive_resp.json()["error"] == {"file_uids.0": [resolve_message("file_already_archived", "en")]}
 
     # 3. still live and unaffected by the rejected call
-    picker = await authed_client.call("GET", f"{PICKER_URL}/{project_task.uid}")
-    assert result.uid in [f["uid"] for f in _picker_section(picker.json(), "Image Generation")["files"]]
+    picker = await authed_client.call("GET", picker_url)
+    assert result.uid in [f["uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
 
     # 4. favorite it via the real files API - no is_main restriction on favouriting
     favorite_resp = await authed_client.call(
@@ -64,7 +66,7 @@ async def test_archive_rejected_then_favorite_moves_result_across_picker_section
     assert favorite_resp.status_code == 200
 
     # 5. live and favourited: appears in both its kind section and Favorites
-    picker = await authed_client.call("GET", f"{PICKER_URL}/{project_task.uid}")
+    picker = await authed_client.call("GET", picker_url)
     body = picker.json()
-    assert result.uid in [f["uid"] for f in _picker_section(body, "Image Generation")["files"]]
+    assert result.uid in [f["uid"] for f in _picker_section(body, "Image Generations")["files"]]
     assert result.uid in [f["uid"] for f in _picker_section(body, "Favorites")["files"]]

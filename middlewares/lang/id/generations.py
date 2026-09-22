@@ -11,7 +11,7 @@ class GenerationsMessage:
             "generation_parameter_must_be_boolean": "Nilai ini harus true atau false.",
             "generation_parameter_required": "Parameter ini wajib diisi untuk model yang dipilih.",
             "references_invalid": "Ada referensi yang kamu kirim tidak valid.",
-            "reference_format_udin_url_required": "Referensi DiVA ini belum memiliki URL file.",
+            "reference_diva_url_required": "Referensi DiVA ini belum memiliki URL file.",
             "reference_file_uid_required": "Referensi ini belum memiliki file.",
             "prompt_length_exceeded": "Prompt kamu {length} karakter, melebihi batas proyek ini yaitu {max_chars} karakter.",
             "feature_not_under_menu": "Ada fitur yang dipilih tidak termasuk dalam menu ini.",
@@ -19,4 +19,7 @@ class GenerationsMessage:
             "generation_area_image_edit_only": "Area fokus (x_min, x_max, y_min, y_max) hanya bisa diisi untuk image_edit.",
             "openrouter_generation_failed": "OpenRouter gagal membuat hasil ini. Silakan coba lagi nanti.",
             "api_key_token_usage_limit_exceeded": "API key ini sudah mencapai batas penggunaannya dan tidak bisa dipakai untuk generate lagi.",
+            "prompt_injection_detected": "Prompt ini terlihat seperti upaya memanipulasi sistem (skor: {score}). Tolong tulis ulang sebagai deskripsi biasa dari gambar atau video yang kamu inginkan.",
+            "prompt_not_generation_related": "Prompt ini sepertinya tidak berkaitan dengan {type_label} (skor: {score}). Tolong jelaskan {type_label} seperti apa yang kamu inginkan.",
+            "generation_file_not_found": "File hasil generate ini tidak ditemukan.",
         }

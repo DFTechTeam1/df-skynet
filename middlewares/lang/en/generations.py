@@ -11,7 +11,7 @@ class GenerationsMessage:
             "generation_parameter_must_be_boolean": "This value must be true or false.",
             "generation_parameter_required": "This parameter is required for the selected model.",
             "references_invalid": "One or more references you provided are invalid.",
-            "reference_format_udin_url_required": "This DiVA reference is missing its file URL.",
+            "reference_diva_url_required": "This DiVA reference is missing its file URL.",
             "reference_file_uid_required": "This reference is missing its file.",
             "prompt_length_exceeded": "Your prompt is {length} characters, which exceeds this project's limit of {max_chars} characters.",
             "feature_not_under_menu": "One or more selected features don't belong to this menu.",
@@ -19,4 +19,7 @@ class GenerationsMessage:
             "generation_area_image_edit_only": "Focus area (x_min, x_max, y_min, y_max) can only be set for image_edit generations.",
             "openrouter_generation_failed": "OpenRouter couldn't generate this. Please try again later.",
             "api_key_token_usage_limit_exceeded": "This API key has reached its usage limit and can no longer be used to generate.",
+            "prompt_injection_detected": "This prompt looks like an attempt to manipulate the system (score: {score}). Please rephrase it as a plain description of the image or video you want.",
+            "prompt_not_generation_related": "This prompt doesn't look related to {type_label} (score: {score}). Please describe what you'd like the {type_label} to look like.",
+            "generation_file_not_found": "This generated file could not be found.",
         }

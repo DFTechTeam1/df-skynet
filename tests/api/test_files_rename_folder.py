@@ -2,6 +2,8 @@ import pytest
 from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 
+pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
+
 
 def _url(task_uid, suffix=""):
     return f"/api/files/{task_uid}{suffix}"

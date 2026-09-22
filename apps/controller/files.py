@@ -32,14 +32,8 @@ from services.mysql.model.df_engine_upload_files import DfEngineUploadFiles, Upl
 class FilesController(CoreDependencies):
     @controller.post(
         "/files/{task_uid}/uploads",
-        summary="Uploads to Udin Storage.",
-        description=(
-            "Streams the multipart request body as-is to the storage engine's upload "
-            "endpoint for the task `task_uid`. File validation (extension, size, count) "
-            "is enforced by the storage engine itself. Returns every file uploaded so "
-            "far for this task, each carrying the actions available to the current user "
-            "(only the file's own uploader may rename/delete/move it)."
-        ),
+        summary="Upload files.",
+        description="Uploads one or more files to this task and returns the full, updated file list.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -132,12 +126,8 @@ class FilesController(CoreDependencies):
 
     @controller.get(
         "/files/{task_uid}",
-        summary="Get files.",
-        description=(
-            "Returns the same file tree as the upload endpoint, without uploading "
-            "anything. Served from cache when available so a client only needs to "
-            "hit the upload endpoint again after it actually uploads files."
-        ),
+        summary="View files.",
+        description="Shows all files and folders for this task.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -162,11 +152,8 @@ class FilesController(CoreDependencies):
 
     @controller.get(
         "/files/{task_uid}/detail",
-        summary="Get a single folder's detail.",
-        description=(
-            "Returns one folder node (its own files and immediate child folders) from the "
-            "file tree, by its exact `folder` path."
-        ),
+        summary="View a folder.",
+        description="Shows the files and subfolders inside one specific folder.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -195,12 +182,8 @@ class FilesController(CoreDependencies):
 
     @controller.get(
         "/files/{task_uid}/file/{file_uid}",
-        summary="Get a single file's detail.",
-        description=(
-            "Returns one file entry by its `uid`. `type=upload` (default) looks it up in the live "
-            "upload/generated tree; `type=generated` looks up a generation result directly, "
-            "regardless of whether it's archived or favourited - the uid alone identifies it."
-        ),
+        summary="View a file.",
+        description="Shows the details of one specific file, whether it was uploaded or generated.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -230,13 +213,8 @@ class FilesController(CoreDependencies):
 
     @controller.get(
         "/files/{task_uid}/archieved",
-        summary="Get archived generation results.",
-        description=(
-            "Returns archived generation results as a flat (one-level) list of files, in the same "
-            "shape as `GET /files/{task_uid}` (no `variants`, since these are always leaf results). "
-            "Uploads are never archivable, so only generated files appear here. `type` optionally "
-            "restricts the list to `image` or `video`; omitted/null returns both."
-        ),
+        summary="View archived files.",
+        description="Shows files that have been archived (hidden from the main view). Optionally filter by image or video.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -265,13 +243,8 @@ class FilesController(CoreDependencies):
 
     @controller.get(
         "/files/{task_uid}/favourited",
-        summary="Get favourited generation results.",
-        description=(
-            "Returns this user's favourited generation results as a flat (one-level) list of files, "
-            "in the same shape as `GET /files/{task_uid}` (no `variants`, since these are always leaf "
-            "results). `type` optionally restricts the list to `image` or `video`; omitted/null "
-            "returns both."
-        ),
+        summary="View favorited files.",
+        description="Shows files you've marked as favorites. Optionally filter by image or video.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -300,12 +273,8 @@ class FilesController(CoreDependencies):
 
     @controller.patch(
         "/files/{task_uid}/archieve",
-        summary="Archive or unarchive multiple generation results.",
-        description=(
-            "Archives or restores every generation result listed in `file_uids`, all-or-nothing. "
-            "Archiving hides a live, non-favourited result from the main view without deleting it; "
-            "pass `is_archieved=false` to bring it back."
-        ),
+        summary="Archive or unarchive files.",
+        description="Hides the selected files from the main view, or brings them back.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -339,11 +308,7 @@ class FilesController(CoreDependencies):
     @controller.get(
         "/files/{task_uid}/download/{source}/{file_uid}",
         summary="Download a file.",
-        description=(
-            "Streams the raw bytes of one owned file back as an attachment download. `source` "
-            "picks which table `file_uid` is looked up in - `upload` or `generated` - with no "
-            "fallback to the other one, so the wrong `source` for a given uid 404s."
-        ),
+        description="Downloads one of your files to your device.",
         tags=["Files"],
     )
     async def files_with_uid_to_download_source_file(
@@ -373,12 +338,8 @@ class FilesController(CoreDependencies):
 
     @controller.patch(
         "/files/{task_uid}/favorite",
-        summary="Favorite or unfavorite multiple generation results.",
-        description=(
-            "Marks or unmarks every generation result listed in `file_uids` as a favorite, "
-            "all-or-nothing. Only live, non-archived results can be favorited; pass "
-            "`is_favorited=false` to remove the favorite."
-        ),
+        summary="Favorite or unfavorite files.",
+        description="Marks the selected files as favorites, or removes them from favorites.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -411,13 +372,8 @@ class FilesController(CoreDependencies):
 
     @controller.patch(
         "/files/{task_uid}/set-main/{file_uid}",
-        summary="Set a generation result as main among its parent's results.",
-        description=(
-            "Marks `file_uid` as the main (featured) version among its family of generated "
-            "variants, automatically un-marking whichever one held that spot before. Re-setting "
-            "the already-current main simply confirms it. Errors if `file_uid` is unknown or has "
-            "no family to be main within."
-        ),
+        summary="Set a file as the main version.",
+        description="Makes this file the featured version among its related versions.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -446,11 +402,8 @@ class FilesController(CoreDependencies):
 
     @controller.post(
         "/files/{task_uid}/folder",
-        summary="Create a subfolder.",
-        description=(
-            "Creates a new folder named `name` inside `current_path`. Rejects the request if it "
-            "would nest folders deeper than the limit configured by an admin."
-        ),
+        summary="Create a folder.",
+        description="Adds a new folder inside the current folder.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -481,7 +434,7 @@ class FilesController(CoreDependencies):
     @controller.delete(
         "/files/{task_uid}/folder",
         summary="Delete a folder.",
-        description="Non-destructive: nested files are promoted to the parent folder, then the empty folder tree is removed.",
+        description="Removes a folder. Files inside it are kept and moved up a level, not deleted.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -508,8 +461,8 @@ class FilesController(CoreDependencies):
 
     @controller.delete(
         "/files/{task_uid}/files",
-        summary="Delete multiple files.",
-        description="Deletes every listed file by `uid`, all-or-nothing. Generated files can never be targeted.",
+        summary="Delete files.",
+        description="Permanently removes the selected files. Generated files can't be deleted this way.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -537,7 +490,7 @@ class FilesController(CoreDependencies):
     @controller.patch(
         "/files/{task_uid}/file",
         summary="Rename a file.",
-        description="Renames one file by `uid`; the original extension is always preserved.",
+        description="Changes a file's name. Its file type stays the same.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -567,7 +520,7 @@ class FilesController(CoreDependencies):
     @controller.patch(
         "/files/{task_uid}/folder",
         summary="Rename a folder.",
-        description="Renames one folder by its path; everything inside it keeps its contents, just under the new name.",
+        description="Changes a folder's name. Everything inside it stays the same.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -596,8 +549,8 @@ class FilesController(CoreDependencies):
 
     @controller.patch(
         "/files/{task_uid}/files/move",
-        summary="Move multiple files.",
-        description="Moves every listed file (by `uid`) into `destination`. Source and destination must share the same upload/generated family and images/videos type.",
+        summary="Move files.",
+        description="Moves the selected files into a different folder.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -627,8 +580,8 @@ class FilesController(CoreDependencies):
 
     @controller.patch(
         "/files/{task_uid}/folders/move",
-        summary="Move multiple folders.",
-        description="Moves every listed folder (by `uid`) into `destination`. Source and destination must share the same upload/generated family and images/videos type.",
+        summary="Move folders.",
+        description="Moves the selected folders into a different folder.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,

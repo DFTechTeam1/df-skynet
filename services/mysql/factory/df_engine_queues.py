@@ -1,4 +1,3 @@
-from uuid import uuid4
 from apps.secret import DB_SYNC_URL
 from factory.alchemy import SQLAlchemyModelFactory
 from services.mysql import make_sync_session
@@ -15,9 +14,8 @@ class DfEngineQueuesFactory(SQLAlchemyModelFactory):
 
     id = None
     created_at = LazyFunction(local_time)
-    task_uid = LazyFunction(lambda: str(uuid4()))
-    generation_id = None
+    generation_id = 1
     queue_name = Iterator(["generate_images", "generate_videos"])
-    event_type = QueueEventTypes.enqueued
+    event_type = QueueEventTypes.started
     attempt = 1
     detail = None

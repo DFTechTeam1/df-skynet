@@ -1,7 +1,10 @@
+import json
 import time
 from typing import Any, Literal, Optional
-from httpx import AsyncBaseTransport, AsyncClient, Response
-from services.mysql import get_db, query
+from httpx import AsyncBaseTransport, AsyncClient, Client, Response
+from sqlalchemy import select
+from apps.secret import DB_SYNC_URL
+from services.mysql import get_db, make_sync_session, query
 from services.mysql.model import DfEngineExternalApiCalls, Employees
 from log import logging
 
@@ -22,6 +25,13 @@ class APICaller:
             base_url=base_url,
             headers=headers,
         )
+        self.sync_client = Client(
+            verify=verify,
+            timeout=timeout,
+            transport=transport,
+            base_url=base_url,
+            headers=headers,
+        )
 
     async def call(
         self,
@@ -31,6 +41,24 @@ class APICaller:
         **kwargs: Any,
     ) -> Response:
         response = await self.client.request(
+            method=method,
+            url=url,
+            **kwargs,
+        )
+
+        if raise_for_status:
+            response.raise_for_status()
+
+        return response
+
+    def call_sync(
+        self,
+        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
+        url: str,
+        raise_for_status: bool = True,
+        **kwargs: Any,
+    ) -> Response:
+        response = self.sync_client.request(
             method=method,
             url=url,
             **kwargs,
@@ -75,7 +103,7 @@ class APICaller:
             request_headers["Authorization"] = "Bearer ***"
 
         if response.is_error:
-            error_message = response_body
+            error_message = json.dumps(response_body) if isinstance(response_body, (dict, list)) else response_body
             logging.error(
                 f"{type} call failed method={method} url={url} status={response.status_code} duration_ms={duration_ms}"
             )
@@ -102,6 +130,65 @@ class APICaller:
                     duration_ms=duration_ms,
                 )
             )
+
+        if raise_for_status:
+            response.raise_for_status()
+
+        return response
+
+    def _logged_call_sync(
+        self,
+        type: Literal["openrouter", "udin"],
+        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
+        url: str,
+        raise_for_status: bool,
+        user_id: int,
+        **kwargs: Any,
+    ) -> Response:
+        started_at = time.perf_counter()
+        response = self.call_sync(method, url, raise_for_status=False, **kwargs)
+        try:
+            response_body = response.json() if response.content else None
+        except ValueError:
+            response_body = None
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+
+        request_headers = {**self.sync_client.headers, **kwargs.get("headers", {})}
+        if "Authorization" in request_headers:
+            request_headers["Authorization"] = "Bearer ***"
+
+        if response.is_error:
+            error_message = json.dumps(response_body) if isinstance(response_body, (dict, list)) else response_body
+            logging.error(
+                f"{type} call failed method={method} url={url} status={response.status_code} duration_ms={duration_ms}"
+            )
+        else:
+            error_message = None
+            logging.info(
+                f"{type} call succeeded method={method} url={url} status={response.status_code} duration_ms={duration_ms}"
+            )
+
+        db = make_sync_session(DB_SYNC_URL)()
+        try:
+            employee = db.execute(select(Employees).where(Employees.user_id == user_id)).scalars().first()
+            db.add(
+                DfEngineExternalApiCalls(
+                    name=employee.nickname if employee else None,
+                    type=type,
+                    method=method,
+                    endpoint=str(response.request.url),
+                    request_headers=request_headers or None,
+                    request_payload=kwargs.get("json") or kwargs.get("data"),
+                    response_status_code=response.status_code,
+                    response_headers=dict(response.headers),
+                    response_body=response_body,
+                    error_message=error_message,
+                    duration_ms=duration_ms,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
 
         if raise_for_status:
             response.raise_for_status()
@@ -137,3 +224,25 @@ class APICaller:
         column. Defaults to `raise_for_status=False` so callers can inspect the
         (still-logged) error response instead of catching an exception."""
         return await self._logged_call("udin", method, url, raise_for_status, user_id, **kwargs)
+
+    def openrouter_sync(
+        self,
+        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
+        url: str,
+        user_id: int,
+        raise_for_status: bool = False,
+        **kwargs: Any,
+    ) -> Response:
+        """Sync counterpart to `openrouter()`, for use from Celery tasks (no event loop)."""
+        return self._logged_call_sync("openrouter", method, url, raise_for_status, user_id, **kwargs)
+
+    def udin_sync(
+        self,
+        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
+        url: str,
+        user_id: int,
+        raise_for_status: bool = False,
+        **kwargs: Any,
+    ) -> Response:
+        """Sync counterpart to `udin()`, for use from Celery tasks (no event loop)."""
+        return self._logged_call_sync("udin", method, url, raise_for_status, user_id, **kwargs)

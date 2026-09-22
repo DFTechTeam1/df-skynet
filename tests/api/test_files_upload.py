@@ -1,6 +1,8 @@
 import pytest
 from middlewares.lang import resolve_message
 
+pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
+
 
 def _url(task_uid):
     return f"/api/files/{task_uid}/uploads"

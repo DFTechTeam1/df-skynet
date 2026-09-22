@@ -9,16 +9,17 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
+from services.mysql.model.df_engine_generations import GenerationKinds
 
 URL = "/api/references-picker"
 
 
-def _url(task_uid, **params):
-    return f"{URL}/{task_uid}", params
+def _url(project_uid, **params):
+    return f"{URL}/{project_uid}", params
 
 
 def _section(body, type_name):
-    return next(s for s in body["data"] if s["type"] == type_name)
+    return next(s for s in body["data"]["paginated"] if s["type"] == type_name)
 
 
 @pytest_asyncio.fixture
@@ -31,21 +32,23 @@ async def generation_fks(user_id) -> dict:
     return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
 
 
-def _make_upload(project_task, user_id, kind=UploadFileTypes.image):
+def _make_upload(project_task, user_id, kind=UploadFileTypes.image, **overrides):
     return DfEngineUploadFilesFactory.create(
         type=kind,
         project_id=project_task.project_id,
         task_id=project_task.id,
         created_by=int(user_id),
+        **overrides,
     )
 
 
-def _make_result(project_task, user_id, generation_fks, **overrides):
+def _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.image, **overrides):
     generation = DfEngineGenerationsFactory.create(
         project_id=project_task.project_id,
         task_id=project_task.id,
         created_by=int(user_id),
         sourceable_id=1,
+        kind=kind,
         **generation_fks,
     )
     return DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), **overrides)
@@ -58,45 +61,65 @@ async def test_returns_uploads_and_generations_in_their_sections(authed_client, 
     video_upload = _make_upload(project_task, user_id, UploadFileTypes.video)
     generation_result = _make_result(project_task, user_id, generation_fks)
 
-    url, params = _url(project_task.uid)
+    url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params)
     assert resp.status_code == 200
     body = resp.json()
 
-    image_section = _section(body, "Image Upload")
-    assert image_section["total_data"] == len(image_section["files"])
+    # Note: this project's uploads/generations accumulate across test runs on the
+    # real shared staging DB, so section totals aren't exact — only membership is checked.
+    image_section = _section(body, "Image Uploads")
+    assert image_section["total_data"] >= 1
     assert image_upload.uid in [f["uid"] for f in image_section["files"]]
 
-    video_section = _section(body, "Video Upload")
-    assert video_section["total_data"] == len(video_section["files"])
+    video_section = _section(body, "Video Uploads")
+    assert video_section["total_data"] >= 1
     assert video_upload.uid in [f["uid"] for f in video_section["files"]]
 
-    generation_section = _section(body, "Image Generation")
-    assert generation_section["total_data"] == len(generation_section["files"])
+    generation_section = _section(body, "Image Generations")
+    assert generation_section["total_data"] >= 1
     assert generation_result.uid in [f["uid"] for f in generation_section["files"]]
 
 
 @pytest.mark.asyncio
-async def test_query_flag_false_returns_empty_section(authed_client, project_task, user_id):
-    """200 OK; a section's query flag set to false comes back empty even though a matching row exists."""
-    _make_upload(project_task, user_id, UploadFileTypes.image)
+async def test_search_filters_by_name_prefix(authed_client, project_task, user_id):
+    """200 OK; `search` only returns uploads whose name starts with the given text."""
+    prefix = f"banner-{uuid4().hex[:8]}"
+    matching = _make_upload(project_task, user_id, UploadFileTypes.image, name=f"{prefix}-hero.png")
+    non_matching = _make_upload(project_task, user_id, UploadFileTypes.image, name="poster.png")
 
-    url, _ = _url(project_task.uid)
-    resp = await authed_client.call("GET", url, params={"image_uploads": False})
+    url, _ = _url(project_task.project.uid)
+    resp = await authed_client.call("GET", url, params={"search": prefix})
     assert resp.status_code == 200
-    assert _section(resp.json(), "Image Upload")["files"] == []
+    section_uids = [f["uid"] for f in _section(resp.json(), "Image Uploads")["files"]]
+    assert matching.uid in section_uids
+    assert non_matching.uid not in section_uids
+
+
+@pytest.mark.asyncio
+async def test_pagination_limits_files_per_section(authed_client, project_task, user_id):
+    """200 OK; itemsPerPage caps the number of files returned per section while total_data reflects the full count."""
+    for _ in range(3):
+        _make_upload(project_task, user_id, UploadFileTypes.image)
+
+    url, _ = _url(project_task.project.uid)
+    resp = await authed_client.call("GET", url, params={"page": 1, "itemsPerPage": 2})
+    assert resp.status_code == 200
+    image_section = _section(resp.json(), "Image Uploads")
+    assert image_section["total_data"] >= 3
+    assert len(image_section["files"]) == 2
 
 
 @pytest.mark.asyncio
 async def test_archived_or_non_main_results_excluded(authed_client, project_task, user_id, generation_fks):
-    """200 OK; an archived result and a non-main (revision) result are excluded from the Image Generation section."""
+    """200 OK; an archived result and a non-main (revision) result are excluded from the Image Generations section."""
     archived = _make_result(project_task, user_id, generation_fks, archieved_at="2024-01-01 00:00:00")
     revision_parent = _make_result(project_task, user_id, generation_fks, is_main=True)
     revision = _make_result(project_task, user_id, generation_fks, is_main=False, parent_id=revision_parent.id)
 
-    url, params = _url(project_task.uid)
+    url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params)
-    section_uids = [f["uid"] for f in _section(resp.json(), "Image Generation")["files"]]
+    section_uids = [f["uid"] for f in _section(resp.json(), "Image Generations")["files"]]
     assert archived.uid not in section_uids
     assert revision.uid not in section_uids
 
@@ -106,25 +129,134 @@ async def test_favourite_result_appears_in_favorites_section(authed_client, proj
     """200 OK; a live, favourited result appears in both its own kind section and Favorites."""
     result = _make_result(project_task, user_id, generation_fks, is_favourite=True)
 
-    url, params = _url(project_task.uid)
+    url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params)
     body = resp.json()
-    assert result.uid in [f["uid"] for f in _section(body, "Image Generation")["files"]]
+    assert result.uid in [f["uid"] for f in _section(body, "Image Generations")["files"]]
     assert result.uid in [f["uid"] for f in _section(body, "Favorites")["files"]]
 
 
 @pytest.mark.asyncio
-async def test_unknown_task_is_404(authed_client):
-    """404 project_task_not_found for a task uid that matches no row."""
+async def test_response_is_cached_on_second_call(authed_client, project_task, user_id, generation_fks):
+    """200 OK; a second identical call returns the same data without erroring, exercising the cache-hit branch."""
+    result = _make_result(project_task, user_id, generation_fks)
+
+    url, params = _url(project_task.project.uid)
+    first = await authed_client.call("GET", url, params=params)
+    second = await authed_client.call("GET", url, params=params)
+    assert first.status_code == second.status_code == 200
+    assert result.uid in [f["uid"] for f in _section(second.json(), "Image Generations")["files"]]
+
+
+@pytest.mark.asyncio
+async def test_unknown_project_is_422(authed_client):
+    """422 project_not_found for a project uid that matches no row (raised as DataValidationError, not DataNotFoundError)."""
     url, params = _url(uuid4())
     resp = await authed_client.call("GET", url, params=params, raise_for_status=False)
-    assert resp.status_code == 404
-    assert resp.json()["message"] == resolve_message("project_task_not_found", "en")
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message("project_not_found", "en")
 
 
 @pytest.mark.asyncio
 async def test_requires_auth(client, project_task):
     """401 when the request carries no bearer token."""
-    url, params = _url(project_task.uid)
+    url, params = _url(project_task.project.uid)
     resp = await client.call("GET", url, params=params, raise_for_status=False)
+    assert resp.status_code == 401
+
+
+GLOBAL_URL = "/api/references-picker"
+
+
+def _global_section(body, type_name):
+    return next(s for s in body["data"]["paginated"] if s["type"] == type_name)
+
+
+def _flat_files(section):
+    return [f for p in section["projects"] for t in p["tasks"] for f in t["files"]]
+
+
+@pytest.mark.asyncio
+async def test_global_picker_groups_by_project_and_task(authed_client, project_task, user_id, generation_fks):
+    """200 OK; global picker (no project_uid) groups uploads/generations by project then task."""
+    image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
+    generation_result = _make_result(project_task, user_id, generation_fks)
+
+    resp = await authed_client.call("GET", GLOBAL_URL, params={})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert image_upload.uid in [f["uid"] for f in _flat_files(_global_section(body, "Image Uploads"))]
+    assert generation_result.uid in [f["uid"] for f in _flat_files(_global_section(body, "Image Generations"))]
+
+
+@pytest.mark.asyncio
+async def test_global_picker_groups_video_generations_by_project_and_task(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; a video-kind generation result lands in the Video Generations section, grouped by project/task."""
+    video_result = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.video)
+
+    resp = await authed_client.call("GET", GLOBAL_URL, params={})
+    assert resp.status_code == 200
+    body = resp.json()
+    section = _global_section(body, "Video Generations")
+    assert video_result.uid in [f["uid"] for f in _flat_files(section)]
+    task = next(
+        t for p in section["projects"] for t in p["tasks"] if any(f["uid"] == video_result.uid for f in t["files"])
+    )
+    assert task["task"] == project_task.name
+
+
+@pytest.mark.asyncio
+async def test_global_picker_file_name_search(authed_client, project_task, user_id):
+    """200 OK; file_name filters uploads by name prefix across all projects."""
+    prefix = f"global-{uuid4().hex[:8]}"
+    matching = _make_upload(project_task, user_id, UploadFileTypes.image, name=f"{prefix}-shot.png")
+    non_matching = _make_upload(project_task, user_id, UploadFileTypes.image, name="unrelated.png")
+
+    resp = await authed_client.call("GET", GLOBAL_URL, params={"file_name": prefix})
+    assert resp.status_code == 200
+    uids = [f["uid"] for f in _flat_files(_global_section(resp.json(), "Image Uploads"))]
+    assert matching.uid in uids
+    assert non_matching.uid not in uids
+
+
+@pytest.mark.asyncio
+async def test_global_picker_project_name_search(authed_client, project_task, user_id):
+    """200 OK; project_name filters uploads to matching projects only."""
+    image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
+
+    resp = await authed_client.call("GET", GLOBAL_URL, params={"project_name": project_task.project.name})
+    assert resp.status_code == 200
+    uids = [f["uid"] for f in _flat_files(_global_section(resp.json(), "Image Uploads"))]
+    assert image_upload.uid in uids
+
+
+@pytest.mark.asyncio
+async def test_global_picker_empty_result(authed_client, user_id):
+    """200 OK; a file_name matching nothing returns an empty section with total_data 0."""
+    resp = await authed_client.call("GET", GLOBAL_URL, params={"file_name": f"nonexistent-{uuid4().hex}"})
+    assert resp.status_code == 200
+    section = _global_section(resp.json(), "Image Uploads")
+    assert section["total_data"] == 0
+    assert _flat_files(section) == []
+
+
+@pytest.mark.asyncio
+async def test_global_picker_cached_on_second_call(authed_client, project_task, user_id):
+    """200 OK; a second identical call returns the same data, exercising the cache-hit branch."""
+    image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
+    params = {"file_name": image_upload.name}
+
+    first = await authed_client.call("GET", GLOBAL_URL, params=params)
+    second = await authed_client.call("GET", GLOBAL_URL, params=params)
+    assert first.status_code == second.status_code == 200
+    uids = [f["uid"] for f in _flat_files(_global_section(second.json(), "Image Uploads"))]
+    assert image_upload.uid in uids
+
+
+@pytest.mark.asyncio
+async def test_global_picker_requires_auth(client):
+    """401 when the request carries no bearer token."""
+    resp = await client.call("GET", GLOBAL_URL, params={}, raise_for_status=False)
     assert resp.status_code == 401

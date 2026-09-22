@@ -28,4 +28,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.create_index("idx_generations_task_id", "df_engine_generations", ["task_id"])
     op.drop_index("idx_generations_task_created_by_created_at", table_name="df_engine_generations")

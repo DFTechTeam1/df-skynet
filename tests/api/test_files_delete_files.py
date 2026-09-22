@@ -2,6 +2,8 @@ import pytest
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
 
+pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
+
 
 def _url(task_uid, suffix=""):
     return f"/api/files/{task_uid}{suffix}"

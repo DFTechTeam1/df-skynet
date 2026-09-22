@@ -1,6 +1,5 @@
 from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from services.mysql import get_db
 from services.mysql.model import DfEngineUploadFileReferences, DfEngineGenerationReferences
 
 
