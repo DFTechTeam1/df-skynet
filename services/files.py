@@ -347,6 +347,7 @@ class FilesService:
         """Drop every cached tree/detail key for this task+user, then rebuild and re-cache the tree."""
         await delete_pattern(ctx.redis, f"user_files:task={ctx.project_task['id']}:user_id={ctx.user_id}*")
         await delete_pattern(ctx.redis, CacheKeys().references_picker_pattern(ctx.user_id))
+        await delete_pattern(ctx.redis, CacheKeys().global_references_picker_pattern(ctx.user_id))
         file_tree = await self.fetch_file_tree(ctx)
         await set_json(ctx.redis, CacheKeys().user_files(ctx.user_id, ctx.project_task["id"]), file_tree)
         return file_tree
@@ -858,6 +859,7 @@ class FilesService:
         # Re-cache /archieved inline so the next GET is a hit, even though it's not in this response.
         await self.refresh_archived_files(ctx)
         await delete_pattern(ctx.redis, CacheKeys().user_galleries_pattern(ctx.user_id))
+        await delete_pattern(ctx.redis, CacheKeys().generation_file_detail_pattern(ctx.user_id))
         return tree
 
     async def set_favorited_generation(
@@ -874,6 +876,7 @@ class FilesService:
         # Re-cache /favourited inline so the next GET is a hit.
         await self.refresh_favourited_files(ctx)
         await delete_pattern(ctx.redis, CacheKeys().user_galleries_pattern(ctx.user_id))
+        await delete_pattern(ctx.redis, CacheKeys().generation_file_detail_pattern(ctx.user_id))
         return tree
 
     async def set_main_generation_result(self, ctx: FileCtx, file_uid: str) -> list[dict[str, Any]]:
@@ -917,7 +920,9 @@ class FilesService:
             await ctx.db.flush()
 
         await delete_pattern(ctx.redis, CacheKeys().references_picker_pattern(ctx.user_id))
+        await delete_pattern(ctx.redis, CacheKeys().global_references_picker_pattern(ctx.user_id))
         await delete_pattern(ctx.redis, CacheKeys().user_galleries_pattern(ctx.user_id))
+        await delete_pattern(ctx.redis, CacheKeys().generation_file_detail_pattern(ctx.user_id))
         return await self.invalidate_and_refresh(ctx)
 
     def raw_path(self, url: str) -> str:

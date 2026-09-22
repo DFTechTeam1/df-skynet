@@ -1,0 +1,147 @@
+import httpx
+from typing import Literal
+from typing import Any, Optional
+from billiard.exceptions import SoftTimeLimitExceeded
+from billiard.einfo import ExceptionInfo
+from celery.exceptions import Retry
+from celery.utils.time import get_exponential_backoff_interval
+from log import logging
+from services.celery_app import celery_app
+from services.mysql import get_sync_db
+from services.mysql.model import DfEngineQueues
+from services.mysql.model.df_engine_queues import QueueEventTypes
+
+
+class GenerationStageError(Exception):
+    def __init__(
+        self,
+        message: str,
+        source: Literal["udin", "openrouter"],
+        status_code: Optional[int] = None,
+        retryable: bool = False,
+        final: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.source = source
+        self.status_code = status_code
+        self.retryable = retryable
+        self.final = final
+
+    def __reduce__(self):
+        return (self.__class__, (str(self), self.source, self.status_code, self.retryable, self.final))
+
+
+def response_error_message(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text or f"HTTP {response.status_code}"
+    error = body.get("error")
+    if isinstance(error, dict):
+        return error.get("message") or str(error)
+    return error or body.get("message") or response.text or f"HTTP {response.status_code}"
+
+
+def classify_error(exc: Exception, source: Literal["udin", "openrouter"]) -> GenerationStageError:
+    if isinstance(exc, SoftTimeLimitExceeded):
+        return GenerationStageError(str(exc), source=source, retryable=True)
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        return GenerationStageError(str(exc), source=source, status_code=status_code, retryable=True, final=False)
+
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+        return GenerationStageError(str(exc), source=source, retryable=True)
+
+    return GenerationStageError(str(exc), source=source, retryable=False, final=True)
+
+
+def retry_countdown(task) -> int:
+    return get_exponential_backoff_interval(
+        factor=1,
+        retries=task.request.retries,
+        maximum=task.retry_backoff_max,
+        full_jitter=task.retry_jitter,
+    )
+
+
+def log_queue(
+    generation_id: int,
+    queue_name: str,
+    event_type: QueueEventTypes,
+    attempt: int,
+    task_id: str,
+    detail: Optional[dict[str, Any]] = None,
+) -> None:
+    try:
+        with get_sync_db() as db:
+            db.add(
+                DfEngineQueues(
+                    generation_id=generation_id,
+                    queue_name=queue_name,
+                    event_type=event_type,
+                    attempt=attempt,
+                    detail={"celery_task_id": task_id, **(detail or {})},
+                )
+            )
+    except Exception:
+        logging.exception(f"failed to write df_engine_queues event={event_type}")
+
+
+class GenerationTask(celery_app.Task):
+    def before_start(self, task_id: str, args: tuple, kwargs: dict[str, Any]) -> None:
+        log_queue(
+            generation_id=args[0] if args else kwargs["generation_id"],
+            queue_name=self.name,
+            event_type=QueueEventTypes.started,
+            attempt=self.request.retries + 1,
+            task_id=task_id,
+        )
+
+    def on_retry(self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: ExceptionInfo) -> None:
+        detail = (
+            {"source": exc.source, "status_code": exc.status_code, "message": str(exc)}
+            if isinstance(exc, GenerationStageError)
+            else {"message": str(exc)}
+        )
+        log_queue(
+            generation_id=args[0] if args else kwargs["generation_id"],
+            queue_name=self.name,
+            event_type=QueueEventTypes.retried,
+            attempt=self.request.retries + 1,
+            task_id=task_id,
+            detail=detail,
+        )
+
+    def on_success(self, retval: Any, task_id: str, args: tuple, kwargs: dict) -> None:
+        log_queue(
+            generation_id=args[0] if args else kwargs["generation_id"],
+            queue_name=self.name,
+            event_type=QueueEventTypes.succeeded,
+            attempt=self.request.retries + 1,
+            task_id=task_id,
+            detail={k: v for k, v in retval.items() if k != "generation_id"} if isinstance(retval, dict) else None,
+        )
+
+    def on_failure(self, exc: Exception, task_id: str, args: tuple, kwargs: dict, einfo: ExceptionInfo) -> None:
+        if isinstance(exc, Retry):
+            return
+
+        detail = (
+            {
+                "source": exc.source,
+                "status_code": exc.status_code,
+                "final": exc.final,
+                "message": str(exc),
+            }
+            if isinstance(exc, GenerationStageError)
+            else {"message": str(exc)}
+        )
+        log_queue(
+            generation_id=args[0] if args else kwargs["generation_id"],
+            queue_name=self.name,
+            event_type=QueueEventTypes.failed,
+            attempt=self.request.retries + 1,
+            task_id=task_id,
+            detail=detail,
+        )

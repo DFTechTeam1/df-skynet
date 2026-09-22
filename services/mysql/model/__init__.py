@@ -32,6 +32,7 @@ from services.mysql.model.df_engine_video_generation_details import DfEngineVide
 from services.mysql.model.employees import Employees
 from services.mysql.model.position_backups import PositionBackups
 from services.mysql.model.project_classes import ProjectClasses
+from services.mysql.model.project_task_pics import ProjectTaskPics
 from services.mysql.model.project_tasks import ProjectTasks
 from services.mysql.model.projects import Projects
 from services.mysql.model.users import Users
@@ -71,6 +72,7 @@ __all__ = [
     "Employees",
     "PositionBackups",
     "ProjectClasses",
+    "ProjectTaskPics",
     "ProjectTasks",
     "Projects",
     "Users",

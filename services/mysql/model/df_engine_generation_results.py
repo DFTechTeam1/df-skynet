@@ -49,6 +49,9 @@ class DfEngineGenerationResults(SQLModel, table=True):
             "remote_side": "[DfEngineGenerationResults.id]",
         }
     )
+    children: list["DfEngineGenerationResults"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.parent_id]", "viewonly": True}
+    )
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.created_by]"}
     )

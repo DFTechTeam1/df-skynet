@@ -74,10 +74,13 @@ class CustomError:
             )
             if exc.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and _wants_html(request):
                 return _error_page("server_error.html", exc.status_code)
+            message = resolve_message(exc.message, lang)
+            if exc.context:
+                message = message.format(**exc.context)
             return JSONResponse(
                 status_code=exc.status_code,
                 content={
-                    "message": resolve_message(exc.message, lang),
+                    "message": message,
                     "error": error,
                 },
             )

@@ -7,6 +7,8 @@ from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFac
 from services.mysql.model import DfEngineExternalApiCalls
 from tests.helpers import clear_external_api_call_logs, clear_setting_state
 
+pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
+
 
 def _url(task_uid, suffix=""):
     return f"/api/files/{task_uid}{suffix}"

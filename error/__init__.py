@@ -8,10 +8,12 @@ class BaseError(Exception):
         status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR,
         message: str = "internal_server_error",
         error: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ):
         self.status_code = status_code
         self.message = message
         self.error = error
+        self.context = context
         super().__init__(message, error)
 
 
@@ -21,8 +23,9 @@ class ServiceError(BaseError):
         status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR,
         message: str = "internal_server_error",
         error: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ):
-        super().__init__(status_code, message, error)
+        super().__init__(status_code, message, error, context)
 
 
 class DataValidationError(BaseError):
@@ -31,8 +34,9 @@ class DataValidationError(BaseError):
         status_code: int = status.HTTP_422_UNPROCESSABLE_CONTENT,
         message: str = "data_validation_error",
         error: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ):
-        super().__init__(status_code, message, error)
+        super().__init__(status_code, message, error, context)
 
 
 class DataNotFoundError(BaseError):
@@ -41,8 +45,9 @@ class DataNotFoundError(BaseError):
         status_code: int = status.HTTP_404_NOT_FOUND,
         message: str = "data_not_found_error",
         error: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ):
-        super().__init__(status_code, message, error)
+        super().__init__(status_code, message, error, context)
 
 
 class DataConflictError(BaseError):
@@ -51,8 +56,9 @@ class DataConflictError(BaseError):
         status_code: int = status.HTTP_409_CONFLICT,
         message: str = "data_conflict_error",
         error: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ):
-        super().__init__(status_code, message, error)
+        super().__init__(status_code, message, error, context)
 
 
 class AuthenticationError(BaseError):
@@ -61,5 +67,6 @@ class AuthenticationError(BaseError):
         status_code: int = status.HTTP_401_UNAUTHORIZED,
         message: str = "invalid_credential",
         error: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ):
-        super().__init__(status_code, message, error)
+        super().__init__(status_code, message, error, context)

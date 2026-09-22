@@ -50,6 +50,14 @@ def format_idr(usd_cost: Optional[Decimal | float], rate: Decimal | float) -> Op
     return f"Rp {rupiah:,}".replace(",", ".")
 
 
+def format_usd(cost: Optional[Decimal | float]) -> Optional[str]:
+    """Format a USD cost as fixed-point (e.g. '$ 0.0000002'), never scientific notation."""
+    if cost is None:
+        return None
+    text = f"{float(cost):.12f}".rstrip("0").rstrip(".")
+    return f"$ {text}"
+
+
 def format_datetime(value: Optional[datetime | str]) -> Optional[str]:
     """Format a datetime (or an ISO-8601 string, e.g. from `utils.serializer.serialize`)
     as 'DD Month YYYY, HH:MM' (e.g. '17 August 2026, 00:07').

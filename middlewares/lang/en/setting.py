@@ -2,6 +2,8 @@ class SettingMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
             "project_not_found": "Project not found.",
+            "project_not_onprocess": "This project must be on process to continue this action.",
+            "project_uid_or_project_id_required": "Provide either project_uid or project_id.",
             "model_option_not_found": "The selected model could not be found.",
             "project_class_not_found": "Project class not found.",
             "project_class_limitation_not_found": "No limits are configured for this project's class.",

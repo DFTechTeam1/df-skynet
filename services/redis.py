@@ -3,6 +3,7 @@ from uuid import UUID
 from functools import lru_cache
 from typing import Any, Optional, Literal
 from redis.asyncio import Redis
+from redis import Redis as SyncRedis
 from redis.exceptions import AuthenticationError as RedisAuthError
 from apps.secret import REDIS_HOST, REDIS_PASSWORD, REDIS_PORT
 from error import AuthenticationError, ServiceError
@@ -21,6 +22,16 @@ def client() -> Redis:
             connection settings.
     """
     return Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+    )
+
+
+@lru_cache
+def sync_client() -> SyncRedis:
+    """Sync counterpart to `client()`, for use from Celery tasks (no event loop)."""
+    return SyncRedis(
         host=REDIS_HOST,
         port=REDIS_PORT,
         password=REDIS_PASSWORD,
@@ -108,6 +119,12 @@ async def set_json(
         redis.RedisError: If an error occurs while communicating with Redis.
     """
     await redis.set(key, json.dumps(value), ex=ttl)
+
+
+def delete_pattern_sync(redis: SyncRedis, pattern: str) -> None:
+    """Sync counterpart to `delete_pattern()`, for use from Celery tasks (no event loop)."""
+    for key in redis.scan_iter(match=pattern):
+        redis.delete(key)
 
 
 async def delete_pattern(redis: Redis, pattern: str) -> None:
@@ -229,30 +246,50 @@ class CacheKeys:
     def user_favourited_files(self, user_id: int, task_id: int) -> str:
         return f"user_files:task={task_id}:user_id={user_id}:list=favourited"
 
+    def user_files_pattern(self, user_id: int, task_id: int) -> str:
+        return f"user_files:task={task_id}:user_id={user_id}*"
+
     def references_picker(
-        self,
-        user_id: int,
-        task_id: int,
-        image_uploads: bool,
-        video_uploads: bool,
-        image_generations: bool,
-        video_generations: bool,
-        favourites: bool,
+        self, user_id: int, project_id: int, page: int, items_per_page: int, search: Optional[str] = None
     ) -> str:
         return (
-            f"references_picker:user_id={user_id}:task_id={task_id}"
-            f":image_uploads={int(image_uploads)}"
-            f":video_uploads={int(video_uploads)}"
-            f":image_generations={int(image_generations)}"
-            f":video_generations={int(video_generations)}"
-            f":favourites={int(favourites)}"
+            f"references_picker:user_id={user_id}:project_id={project_id}:page={page}:size={items_per_page}"
+            f":search={(search or '').strip().lower() or 'all'}"
         )
 
     def references_picker_pattern(self, user_id: int) -> str:
         return f"references_picker:user_id={user_id}*"
 
-    def user_galleries(self, user_id: int, task_id: int) -> str:
-        return f"user_galleries:user_id={user_id}:task_id={task_id}"
+    def global_references_picker(
+        self,
+        user_id: int,
+        project_name: Optional[str],
+        file_name: Optional[str],
+        page: int,
+        items_per_page: int,
+    ) -> str:
+        return (
+            f"global_references_picker:user_id={user_id}:page={page}:size={items_per_page}"
+            f":project={(project_name or '').strip().lower() or 'all'}"
+            f":file={(file_name or '').strip().lower() or 'all'}"
+        )
+
+    def global_references_picker_pattern(self, user_id: int) -> str:
+        return f"global_references_picker:user_id={user_id}*"
+
+    def user_galleries(
+        self, user_id: int, task_id: int, page: int, items_per_page: int, search: Optional[str] = None
+    ) -> str:
+        return (
+            f"user_galleries:user_id={user_id}:task_id={task_id}:page={page}:size={items_per_page}"
+            f":search={(search or '').strip().lower() or 'all'}"
+        )
 
     def user_galleries_pattern(self, user_id: int) -> str:
         return f"user_galleries:user_id={user_id}:task_id=*"
+
+    def generation_file_detail(self, user_id: int, file_uid: str) -> str:
+        return f"generation_file_detail:user_id={user_id}:file_uid={file_uid}"
+
+    def generation_file_detail_pattern(self, user_id: int) -> str:
+        return f"generation_file_detail:user_id={user_id}:file_uid=*"

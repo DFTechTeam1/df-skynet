@@ -7,15 +7,20 @@ requires-python = ">=3.11"
 dependencies = [
     "aiomysql>=0.3.2",
     "alembic>=1.19.1",
+    "celery[redis]>=5.3.1",
     "coverage>=7.15.4",
     "cryptography>=50.0.1",
     "factory-boy>=3.3.3",
     "fastapi==0.121.2",
     "fastapi-controller>=0.0.8",
     "fastapi-limiter>=0.2.0",
+    "flower>=2.1.0",
+    "html2text>=2025.4.15",
     "httpx>=0.28.1",
+    "markdown>=3.10.3",
     "pre-commit>=4.6.2",
     "pydantic>=2.13.4",
+    "pydantic-ai-slim[openrouter]>=2.46.0",
     "pymysql>=1.1.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
@@ -46,6 +51,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 omit = ["conftest.py", "helpers.py"]
+concurrency = ["greenlet", "thread"]
 
 [tool.ruff]
 line-length = 120

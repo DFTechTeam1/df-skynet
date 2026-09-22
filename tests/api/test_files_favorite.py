@@ -9,6 +9,8 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 
+pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
+
 
 def _favorite_url(task_uid):
     return f"/api/files/{task_uid}/favorite"

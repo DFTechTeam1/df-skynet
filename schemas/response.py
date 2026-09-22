@@ -11,3 +11,16 @@ class Response(BaseModel):
 class PaginationResponse(BaseModel):
     paginated: Optional[list[dict[str, Any]]] = None
     totalData: Optional[int] = None
+
+
+class OpenrouterRankingResponse(BaseModel):
+    prompt_injection: float = Field(ge=0, le=1, description="Measure prompt injection.", default=0)
+    image_generation: float = Field(
+        ge=0, le=1, description="Measure prompt is related to image generation task.", default=0
+    )
+    video_generation: float = Field(
+        ge=0, le=1, description="Measure prompt is related to video generation task.", default=0
+    )
+    chat_assistant: float = Field(
+        ge=0, le=1, description="Measure prompt is related to chat assistant task.", default=0
+    )

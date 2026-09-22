@@ -1,6 +1,7 @@
+from contextlib import contextmanager
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Optional
-from apps.secret import DB_ASYNC_URL
+from typing import Any, AsyncGenerator, Generator, Optional
+from apps.secret import DB_ASYNC_URL, DB_SYNC_URL
 from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
@@ -41,6 +42,17 @@ def sync_engine(db_url: str) -> Engine:
 @lru_cache
 def make_sync_session(db_url: str) -> scoped_session[Session]:
     return scoped_session(sessionmaker(bind=sync_engine(db_url), autoflush=False, expire_on_commit=False))
+
+
+@contextmanager
+def get_sync_db() -> Generator[Session, None, None]:
+    with make_sync_session(DB_SYNC_URL)() as session:
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

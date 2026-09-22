@@ -2,6 +2,8 @@ class SettingMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
             "project_not_found": "Project tidak ditemukan.",
+            "project_not_onprocess": "Project ini harus berstatus on process untuk melanjutkan aksi ini.",
+            "project_uid_or_project_id_required": "Isi salah satu antara project_uid atau project_id.",
             "model_option_not_found": "Model yang dipilih tidak ditemukan.",
             "project_class_not_found": "Kelas proyek tidak ditemukan.",
             "project_class_limitation_not_found": "Belum ada batasan yang dikonfigurasi untuk kelas proyek ini.",

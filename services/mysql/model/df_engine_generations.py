@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 from typing import Any, Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import CHAR, DECIMAL, DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text, and_
+from sqlalchemy import CHAR, DECIMAL, DateTime, Enum, ForeignKey, Index, Integer, String, Text, and_
 from sqlalchemy.dialects.mysql import BIGINT
 from sqlalchemy.orm import foreign
 from services.mysql.model.df_engine_api_key_snapshots import DfEngineApiKeySnapshots
@@ -21,6 +21,7 @@ class GenerationKinds(StrEnum):
     motion = auto()
     chat = auto()
     enhancer = auto()
+    image_edit = auto()
 
 
 class GenerationStatuses(StrEnum):
@@ -30,15 +31,25 @@ class GenerationStatuses(StrEnum):
     failed = auto()
 
 
+GENERATION_KIND_ICON_COLOR: dict[str, dict[str, str]] = {
+    GenerationKinds.image: {"icon": "mdi-image", "color": "blue"},
+    GenerationKinds.image_edit: {"icon": "mdi-image-edit", "color": "indigo"},
+    GenerationKinds.video: {"icon": "mdi-video", "color": "purple"},
+    GenerationKinds.element: {"icon": "mdi-shape", "color": "teal"},
+    GenerationKinds.storyboard: {"icon": "mdi-view-sequential", "color": "orange"},
+    GenerationKinds.keyframe: {"icon": "mdi-camera-image", "color": "cyan"},
+    GenerationKinds.motion: {"icon": "mdi-motion", "color": "deep-purple"},
+    GenerationKinds.chat: {"icon": "mdi-chat-outline", "color": "green"},
+    GenerationKinds.enhancer: {"icon": "mdi-auto-fix", "color": "amber"},
+}
+
+
 class DfEngineGenerations(SQLModel, table=True):
     __tablename__ = "df_engine_generations"  # type: ignore
     __table_args__ = (
-        Index("idx_generations_kind", "kind"),
-        Index("idx_generations_kind_created_by", "kind", "created_by"),
-        Index("idx_generations_project_task", "project_id", "task_id"),
+        Index("idx_generations_project_id", "project_id"),
         Index("idx_generations_created_by", "created_by"),
-        Index("idx_generations_status_created_at", "status", "created_at"),
-        Index("idx_generations_sourceable", "sourceable_id", "sourceable_type"),
+        Index("idx_generations_task_created_by_created_at", "task_id", "created_by", "created_at"),
     )
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
@@ -61,10 +72,11 @@ class DfEngineGenerations(SQLModel, table=True):
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id"), nullable=True)
     )
     prompt: str = Field(sa_column=Column(Text, nullable=False))
+    full_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     status: GenerationStatuses = Field(
-        default=GenerationStatuses.processing, sa_column=Column(Enum(GenerationStatuses), nullable=False)
+        default=GenerationStatuses.queued, sa_column=Column(Enum(GenerationStatuses), nullable=False)
     )
-    response: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON(none_as_null=True), nullable=True))
+    response: Optional[str] = Field(default=None, sa_column=Column(Text(length=4294967295), nullable=True))
     status_code: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     token_usage: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     cost: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
@@ -94,12 +106,6 @@ class DfEngineGenerations(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.generation_id]", "viewonly": True}
     )
 
-    # `sourceable_id`/`sourceable_type` is a manual polymorphic ("morph") reference - it points at
-    # EITHER a df_engine_api_keys row OR a df_engine_api_key_snapshots row, never both, discriminated
-    # by `sourceable_type`. These two relationships bake that discriminator into their own primaryjoin
-    # (`foreign()` marks sourceable_id as the join column since there's no real ForeignKey to either
-    # table), so only the matching one ever loads. Batches via selectinload like any normal
-    # relationship - no cached_property, no manual per-row session.get(), safe under AsyncSession.
     api_key: Optional["DfEngineApiKeys"] = Relationship(
         sa_relationship_kwargs={
             "primaryjoin": lambda: and_(  # type: ignore
