@@ -126,7 +126,7 @@ def udin_uploader(
             if task_id is not None:
                 redis = sync_client()
                 cache_key = CacheKeys()
-                redis.delete(cache_key.user_galleries(user_id, task_id))
+                delete_pattern_sync(redis, cache_key.user_galleries_pattern(user_id))
                 delete_pattern_sync(redis, cache_key.references_picker_pattern(user_id))
                 delete_pattern_sync(redis, cache_key.global_references_picker_pattern(user_id))
                 delete_pattern_sync(redis, cache_key.user_files_pattern(user_id, task_id))
