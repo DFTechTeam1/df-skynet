@@ -70,7 +70,7 @@ async def test_delete_blocked_while_linked_to_a_menu(authed_client, db_session, 
 
 @pytest.mark.asyncio
 async def test_delete_twice_is_404_on_the_second_call(authed_client, user_id):
-    """First delete is 200 OK; repeating it is 404 feature_not_found since the row is already gone."""
+    """404 feature_not_found; deleting the same feature twice returns 404 on the second call since the row is already gone."""
     feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
     first = await authed_client.call("DELETE", f"{URL}/{feature.uid}")
     assert first.status_code == 200

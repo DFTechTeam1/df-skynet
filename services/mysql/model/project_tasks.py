@@ -41,5 +41,8 @@ class ProjectTasks(SQLModel, table=True):
     is_pool_type: int = Field(default=0, sa_column=Column(SmallInteger, nullable=False))
 
     project: Optional["Projects"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[ProjectTasks.project_id]"}
+        back_populates="project_tasks", sa_relationship_kwargs={"foreign_keys": "[ProjectTasks.project_id]"}
+    )
+    generations: list["DfEngineGenerations"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.task_id]", "viewonly": True}
     )

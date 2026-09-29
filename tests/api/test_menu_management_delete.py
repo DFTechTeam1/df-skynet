@@ -46,7 +46,7 @@ async def test_delete_cascades_to_mappings(authed_client, db_session, user_id):
 
 @pytest.mark.asyncio
 async def test_delete_twice_is_404_on_the_second_call(authed_client, user_id):
-    """First delete is 200 OK; repeating it is 404 menu_not_found since the row is already gone."""
+    """404 menu_not_found; deleting the same menu twice returns 404 on the second call since the row is already gone."""
     menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
     first = await authed_client.call("DELETE", f"{URL}/{menu.uid}")
     assert first.status_code == 200

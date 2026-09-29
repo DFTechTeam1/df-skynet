@@ -27,6 +27,8 @@ from services.mysql.model import (
 )
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.redis import get_json, set_json, delete_pattern, CacheKeys
+from services.dto import ConnectionContext
+from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting
 
 
 SETTING_CODE = "admin_setting"
@@ -142,24 +144,10 @@ class SettingController(CoreDependencies):
     )
     async def df_engine_to_fetch_global_setting(self) -> Response:
         response = Response()
-        cache_key = CacheKeys()
         try:
-            admin_setting_global_cache_key = cache_key.setting_global()
-            cached_admin_setting_global = await get_json(self.redis, admin_setting_global_cache_key)
-            if cached_admin_setting_global:
-                logging.info(f"user={self.user['user_id']} fetched admin global setting source=cache")
-                response.data = cached_admin_setting_global
-                return response
-
-            records = await query(
-                db=self.db,
-                table=DfEngineSettings,
-                filters=(DfEngineSettings.code == SETTING_CODE,),  # type: ignore
-            )
-            settings = {row.key: (json.loads(row.value) if row.value else None) for row in records}
-
-            await set_json(self.redis, admin_setting_global_cache_key, settings)
-            logging.info(f"user={self.user['user_id']} fetched admin global setting count={len(settings)} source=db")
+            ctx = ConnectionContext(self.db, self.redis, CacheKeys())
+            settings = await get_admin_settings(ctx)
+            logging.info(f"user={self.user['user_id']} fetched admin global setting count={len(settings)}")
             response.data = settings
         except BaseError as e:
             logging.warning(
@@ -343,72 +331,10 @@ class SettingController(CoreDependencies):
         self, uid: UUID = Path(..., description="Project UID.")
     ) -> Response:
         response = Response()
-        cache_key = CacheKeys()
-        limit_fields = (
-            "token_usage_limit",
-            "compose_input_max_chars",
-            "storyboard_prompt_chars",
-            "max_scene_per_storyboard",
-            "max_shot_per_scene",
-            "token_limit_threshold",
-        )
         try:
-            project_setting_cache_key = cache_key.setting_project(uid)
-            cached_project_setting = await get_json(self.redis, project_setting_cache_key)
-            if cached_project_setting:
-                logging.info(f"user={self.user['user_id']} fetched project setting uid={uid} source=cache")
-                response.data = cached_project_setting
-                return response
-
-            project = await query(
-                db=self.db,
-                table=Projects,
-                filters=(Projects.uid == str(uid),),  # type: ignore
-                fetch_one=True,
-            )
-            if not project:
-                raise DataNotFoundError(message="project_not_found")
-
-            saved = await query(
-                db=self.db,
-                table=DfEngineProjectSettings,
-                filters=(DfEngineProjectSettings.project_id == project.id,),  # type: ignore
-                fetch_one=True,
-            )
-
-            if saved:
-                limits = {field: getattr(saved, field) for field in limit_fields}
-                source = "project"
-            else:
-                class_limits_row = await query(
-                    db=self.db,
-                    table=DfEngineSettings,
-                    filters=(
-                        DfEngineSettings.code == SETTING_CODE,  # type: ignore
-                        DfEngineSettings.key == "project_class_limitations",  # type: ignore
-                    ),
-                    fetch_one=True,
-                )
-                if not class_limits_row or not class_limits_row.value:
-                    raise DataValidationError(message="global_setting_not_configured")
-                if project.project_class_id is None:
-                    raise DataValidationError(message="project_class_not_assigned")
-                class_limit = next(
-                    (item for item in json.loads(class_limits_row.value) if item.get("id") == project.project_class_id),
-                    None,
-                )
-                if not class_limit:
-                    raise DataNotFoundError(message="project_class_limitation_not_found")
-                limits = {field: class_limit.get(field) for field in limit_fields}
-                source = "project_class_default"
-
-            data = {
-                "project": project.name,
-                "classification": project.classification,
-                **limits,
-            }
-            await set_json(self.redis, project_setting_cache_key, data)
-            logging.info(f"user={self.user['user_id']} fetched project setting uid={uid} source={source}")
+            ctx = ConnectionContext(self.db, self.redis, CacheKeys())
+            data = await get_project_setting(ctx, project_uid=uid)
+            logging.info(f"user={self.user['user_id']} fetched project setting uid={uid}")
             response.data = data
         except BaseError as e:
             logging.warning(
@@ -471,10 +397,11 @@ class SettingController(CoreDependencies):
             self.db.add(row)
             await self.db.flush()
 
-            await delete_pattern(self.redis, cache_key.setting_project(uid))
+            data = {"project": project.name, "classification": project.classification, **values}
+            await self.redis.delete(cache_key.setting_project(uid))
             logging.info(f"user={self.user['user_id']} saved project setting uid={uid}")
 
-            response.data = {"project": project.name, "classification": project.classification, **values}
+            response.data = data
         except BaseError as e:
             logging.warning(
                 f"user={self.user['user_id']} could not save project setting uid={uid}: {e.message} ({e.status_code})"

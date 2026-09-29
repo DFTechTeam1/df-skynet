@@ -112,7 +112,7 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
     assert "created_by_user" not in item
     assert "updated_by_user" not in item
     assert item["creator"] == creator
-    assert set(item["creator"].keys()) == {"image", "nickname"}
+    assert set(item["creator"].keys()) == {"user_id", "image", "nickname"}
     assert item["updater"] is None
 
 

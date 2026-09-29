@@ -31,6 +31,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.alter_column(
-        TABLE_NAME, "response", existing_type=sa.Text(length=4294967295), type_=sa.Text(), existing_nullable=True
-    )
+    # ponytail: narrowing back to TEXT (64KB) is lossy once any row holds a
+    # base64 image/video payload past that cap (the reason this migration
+    # exists) — MySQL errors with "Data too long" instead of truncating
+    # silently, so we leave the column widened rather than risk data loss.
+    pass

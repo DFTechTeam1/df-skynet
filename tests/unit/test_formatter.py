@@ -10,19 +10,19 @@ class TestFormatCreator:
         assert format_user_employees(None) is None
 
     def test_full_shape(self):
-        """Full user dict flattens employees.nickname into a top-level nickname alongside image."""
-        user = {"image": "pic.png", "employees": {"nickname": "Bastian"}}
-        assert format_user_employees(user) == {"image": "pic.png", "nickname": "Bastian"}
+        """Full user dict flattens employees.nickname into a top-level nickname alongside user_id/image."""
+        user = {"id": 1, "image": "pic.png", "employees": {"nickname": "Bastian"}}
+        assert format_user_employees(user) == {"user_id": 1, "image": "pic.png", "nickname": "Bastian"}
 
     def test_missing_employees_key_gives_none_nickname(self):
-        """Missing employees key still returns image with a None nickname."""
-        user = {"image": "pic.png"}
-        assert format_user_employees(user) == {"image": "pic.png", "nickname": None}
+        """Missing employees key still returns user_id/image with a None nickname."""
+        user = {"id": 1, "image": "pic.png"}
+        assert format_user_employees(user) == {"user_id": 1, "image": "pic.png", "nickname": None}
 
     def test_employees_explicitly_none_gives_none_nickname(self):
         """employees explicitly set to None also yields a None nickname."""
-        user = {"image": None, "employees": None}
-        assert format_user_employees(user) == {"image": None, "nickname": None}
+        user = {"id": None, "image": None, "employees": None}
+        assert format_user_employees(user) == {"user_id": None, "image": None, "nickname": None}
 
 
 class TestFormatDatetime:

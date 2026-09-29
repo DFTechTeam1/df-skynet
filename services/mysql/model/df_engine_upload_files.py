@@ -14,6 +14,13 @@ class UploadFileTypes(StrEnum):
     folder = auto()
 
 
+UPLOAD_TYPE_ICON_COLOR: dict[str, dict[str, str]] = {
+    UploadFileTypes.image: {"icon": "mdi-image", "color": "blue"},
+    UploadFileTypes.video: {"icon": "mdi-video", "color": "purple"},
+    UploadFileTypes.folder: {"icon": "mdi-folder", "color": "amber"},
+}
+
+
 class DfEngineUploadFiles(SQLModel, table=True):
     __tablename__ = "df_engine_upload_files"  # type: ignore
 

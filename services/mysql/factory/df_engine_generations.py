@@ -28,6 +28,7 @@ class DfEngineGenerationsFactory(SQLAlchemyModelFactory):
     task_id = None
     prompt = Faker("sentence")
     full_prompt = None
+    parameter = None
     status = GenerationStatuses.processing
     response = None
     status_code = None

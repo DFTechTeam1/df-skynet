@@ -10,14 +10,16 @@ GALLERIES_URL = "/api/user-galleries"
 FILES_URL = "/api/files"
 
 
-def _entry(body, generation_uid):
-    return next((e for e in body["data"]["paginated"] if e["generation_uid"] == str(generation_uid)), None)
+def _uids(body):
+    return {e["file_uid"] for e in body["data"]}
 
 
 @pytest.mark.asyncio
-async def test_favorite_and_set_main_move_result_across_galleries(authed_client, project_task, user_id, db_session):
-    """Walks a root+variant family through favorite -> set-main, checking the /user-galleries
-    response after each real API call to prove cache invalidation and is_main flips hold end to end."""
+async def test_set_main_moves_the_listed_entry_from_root_to_child(authed_client, project_task, user_id, db_session):
+    """Walks a root+child family through favorite -> set-main, checking the /user-galleries
+    response after each real API call. The list has one entry per generation - its current
+    is_main result, keyed by file_uid - so favoriting a non-main child doesn't add it (this list
+    isn't filtered on favourited_at), and only set-main flips which file_uid is listed."""
     model_option = (await db_session.execute(select(DfEngineModelOptions).limit(1))).scalars().first()
     menu = (await db_session.execute(select(DfEngineMenus).limit(1))).scalars().first()
     feature = (await db_session.execute(select(DfEngineFeatures).limit(1))).scalars().first()
@@ -39,30 +41,32 @@ async def test_favorite_and_set_main_move_result_across_galleries(authed_client,
         generation_id=child_generation.id, created_by=int(user_id), is_main=False, parent_id=root_result.id
     )
 
-    # 1. root is main and absorbs the child as a counted variant; child has no top-level entry
+    # 1. root is main and listed by its own file_uid; the child has no top-level entry of its own
     galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
-    root_entry = _entry(galleries.json(), root_generation.uid)
-    assert root_entry["is_main"] is True
-    assert root_entry["total_variant"] == 2
-    assert _entry(galleries.json(), child_generation.uid) is None
+    uids = _uids(galleries.json())
+    assert str(root_result.uid) in uids
+    assert str(child_result.uid) not in uids
 
-    # 2. favorite the child via the real files API (cache invalidated by the write)
+    # 2. favorite the child via the real files API - favourited_at isn't filtered by this list,
+    # so it stays absent regardless
     favorite_resp = await authed_client.call(
-        "PATCH", f"{FILES_URL}/{project_task.uid}/favorite", json={"file_uids": [str(child_result.uid)]}
+        "PATCH", f"{FILES_URL}/{project_task.project.uid}/favorite", json={"file_uids": [str(child_result.uid)]}
     )
     assert favorite_resp.status_code == 200
+    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
+    uids = _uids(galleries.json())
+    assert str(root_result.uid) in uids
+    assert str(child_result.uid) not in uids
 
-    # 3. set the child as main via the real files API: is_main flips to the child. The old root's
-    # own parent_id isn't reassigned to the new main, so the child's own family shrinks to itself.
-    set_main_resp = await authed_client.call("PATCH", f"{FILES_URL}/{project_task.uid}/set-main/{child_result.uid}")
+    # 3. set the child as main via the real files API: is_main flips to the child, so the listed
+    # file_uid flips too (cache invalidated by the write)
+    set_main_resp = await authed_client.call("PATCH", f"{FILES_URL}/set-main/{child_result.uid}")
     assert set_main_resp.status_code == 200
 
     galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
-    body = galleries.json()
-    child_entry = _entry(body, child_generation.uid)
-    assert child_entry["is_main"] is True
-    assert child_entry["total_variant"] == 1
-    assert _entry(body, root_generation.uid) is None
+    uids = _uids(galleries.json())
+    assert str(child_result.uid) in uids
+    assert str(root_result.uid) not in uids
 
 
 @pytest.mark.asyncio
@@ -97,14 +101,12 @@ async def test_set_main_promoting_a_child_leaves_sibling_absorbed_not_floating(
     promoted_generation, promoted_result = _make(is_main=False, parent_id=root_result.id)
     sibling_generation, _sibling_result = _make(is_main=False, parent_id=root_result.id)
 
-    set_main_resp = await authed_client.call("PATCH", f"{FILES_URL}/{project_task.uid}/set-main/{promoted_result.uid}")
+    set_main_resp = await authed_client.call("PATCH", f"{FILES_URL}/set-main/{promoted_result.uid}")
     assert set_main_resp.status_code == 200
 
     galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
-    body = galleries.json()
+    uids = _uids(galleries.json())
 
-    promoted_entry = _entry(body, promoted_generation.uid)
-    assert promoted_entry is not None, "promoted result must appear at the top level, not be absorbed"
-    assert promoted_entry["is_main"] is True
-    assert _entry(body, root_generation.uid) is None
-    assert _entry(body, sibling_generation.uid) is None
+    assert str(promoted_result.uid) in uids, "promoted result must appear at the top level, not be absorbed"
+    assert str(root_result.uid) not in uids
+    assert str(_sibling_result.uid) not in uids

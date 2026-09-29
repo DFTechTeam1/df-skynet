@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class FeatureTypes(StrEnum):
+    enhance_prompt = auto()
     generate_image = auto()
     generate_video = auto()
     generate_keyframe = auto()

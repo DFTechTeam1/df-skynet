@@ -1,12 +1,16 @@
 import json
+from sqlalchemy.orm import attributes
 from uuid import UUID
 from functools import lru_cache
 from typing import Any, Optional, Literal
 from redis.asyncio import Redis
 from redis import Redis as SyncRedis
 from redis.exceptions import AuthenticationError as RedisAuthError
+from sqlalchemy import event, select
 from apps.secret import REDIS_HOST, REDIS_PASSWORD, REDIS_PORT
 from error import AuthenticationError, ServiceError
+from log import logging
+from services.mysql.model import DfEngineGenerationResults, DfEngineGenerations
 
 
 @lru_cache
@@ -127,6 +131,17 @@ def delete_pattern_sync(redis: SyncRedis, pattern: str) -> None:
         redis.delete(key)
 
 
+def get_json_sync(redis: SyncRedis, key: str) -> Optional[Any]:
+    """Sync counterpart to `get_json()`, for use from Celery tasks (no event loop)."""
+    raw = redis.get(key)
+    return json.loads(raw) if raw is not None else None
+
+
+def set_json_sync(redis: SyncRedis, key: str, value: Any, ttl: int = 86400) -> None:
+    """Sync counterpart to `set_json()`, for use from Celery tasks (no event loop)."""
+    redis.set(key, json.dumps(value), ex=ttl)
+
+
 async def delete_pattern(redis: Redis, pattern: str) -> None:
     """Delete all Redis keys matching the specified pattern.
 
@@ -152,27 +167,32 @@ async def delete_pattern(redis: Redis, pattern: str) -> None:
 
 
 class CacheKeys:
+    # --- user_preference ---
     def user_preference(self, user_id: int) -> str:
         return f"user_preference:{user_id}"
 
+    # --- prompt_templates ---
     def prompt_templates(self, name: Optional[str] = None) -> str:
         return f"prompt_template:list:{(name or '').strip().lower() or 'all'}"
 
     def prompt_template_detail(self, uid: UUID) -> str:
         return f"prompt_template:detail:{uid}"
 
+    # --- menu_management ---
     def menu_managements(self, name: Optional[str] = None) -> str:
         return f"menu_management:list:{(name or '').strip().lower() or 'all'}"
 
     def menu_management_detail(self, uid: UUID) -> str:
         return f"menu_management:detail:{uid}"
 
+    # --- feature_management ---
     def feature_managements(self, name: Optional[str] = None) -> str:
         return f"feature_management:list:{(name or '').strip().lower() or 'all'}"
 
     def feature_management_detail(self, uid: UUID) -> str:
         return f"feature_management:detail:{uid}"
 
+    # --- setting (global + per-project) ---
     def setting_detail(self, project_uid: Optional[UUID] = None) -> str:
         return f"setting:detail:{project_uid or 'all'}"
 
@@ -185,20 +205,21 @@ class CacheKeys:
     def setting_logs_pattern(self) -> str:
         return "setting:logs:*"
 
+    def setting_global(self) -> str:
+        return "setting:global"
+
+    def setting_project(self, project_uid: Optional[UUID] = None, project_id: Optional[int] = None) -> str:
+        return f"setting:project:uid={project_uid}:id={project_id}"
+
+    def setting_project_pattern(self) -> str:
+        return f"setting:project:*"
+
+    # --- model_management ---
     def model_pagination_pattern(self) -> str:
         return "model_option:*"
 
     def model_option_details(self, uid: UUID) -> str:
-        return f"model_option:details:uid={uid}"
-
-    def setting_global(self) -> str:
-        return "setting:global"
-
-    def setting_project(self, uid: UUID) -> str:
-        return f"setting:project:{uid}"
-
-    def setting_project_pattern(self) -> str:
-        return f"setting:project:*"
+        return f"model_option:detail:uid={uid}"
 
     def model_pagination(
         self,
@@ -216,6 +237,7 @@ class CacheKeys:
             f":is_deleted={is_deleted if is_deleted is not None else 'all'}"
         )
 
+    # --- api_key_management ---
     def api_key_management(self) -> str:
         return "api_key_management:list:all"
 
@@ -225,30 +247,24 @@ class CacheKeys:
     def api_key_management_pattern(self) -> str:
         return "api_key_management:*"
 
+    def api_key_main(self, employee_id: int) -> str:
+        return f"api_key_management:main:employee_id={employee_id}"
+
+    # --- api_logs ---
     def api_logs(self, source: str, page: int, items_per_page: int) -> str:
         return f"api_logs:source={source}:page={page}:size={items_per_page}"
 
     def api_logs_pattern(self) -> str:
         return "api_logs:*"
 
-    def user_files(self, user_id: int, task_id: int) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}:scope=live"
-
-    def user_folder_detail(self, user_id: int, task_id: int, folder_path: str) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}:scope=live:folder={folder_path}"
-
-    def user_file_detail(self, user_id: int, task_id: int, file_uid: str, kind: str = "file") -> str:
-        return f"user_files:task={task_id}:user_id={user_id}:kind={kind}:file={file_uid}"
-
-    def user_archived_files(self, user_id: int, task_id: int) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}:list=archieved"
-
-    def user_favourited_files(self, user_id: int, task_id: int) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}:list=favourited"
-
+    # --- files (uploads) ---
     def user_files_pattern(self, user_id: int, task_id: int) -> str:
-        return f"user_files:task={task_id}:user_id={user_id}*"
+        return f"user_files:task_id={task_id}:user_id={user_id}*"
 
+    def uploaded_files(self, file_uids: list[str]) -> str:
+        return f"uploaded_files:list:file_uids={file_uids}"
+
+    # --- references_picker ---
     def references_picker(
         self, user_id: int, project_id: int, page: int, items_per_page: int, search: Optional[str] = None
     ) -> str:
@@ -270,13 +286,14 @@ class CacheKeys:
     ) -> str:
         return (
             f"global_references_picker:user_id={user_id}:page={page}:size={items_per_page}"
-            f":project={(project_name or '').strip().lower() or 'all'}"
-            f":file={(file_name or '').strip().lower() or 'all'}"
+            f":project_name={(project_name or '').strip().lower() or 'all'}"
+            f":file_name={(file_name or '').strip().lower() or 'all'}"
         )
 
     def global_references_picker_pattern(self, user_id: int) -> str:
         return f"global_references_picker:user_id={user_id}*"
 
+    # --- user_galleries ---
     def user_galleries(
         self, user_id: int, task_id: int, page: int, items_per_page: int, search: Optional[str] = None
     ) -> str:
@@ -288,8 +305,88 @@ class CacheKeys:
     def user_galleries_pattern(self, user_id: int) -> str:
         return f"user_galleries:user_id={user_id}:task_id=*"
 
+    # --- generation_detail ---
     def generation_file_detail(self, user_id: int, file_uid: str) -> str:
-        return f"generation_file_detail:user_id={user_id}:file_uid={file_uid}"
+        return f"generation_files:detail:user_id={user_id}:file_uid={file_uid}"
+
+    def generation_detail(self, user_id: int, generation_uid: str) -> str:
+        return f"generation_detail:user_id={user_id}:generation_uid={generation_uid}"
 
     def generation_file_detail_pattern(self, user_id: int) -> str:
-        return f"generation_file_detail:user_id={user_id}:file_uid=*"
+        return f"generation_files:detail:user_id={user_id}:file_uid=*"
+
+    # --- projects ---
+    def get_project(self, project_uid: Optional[UUID] = None, project_id: Optional[int] = None) -> str:
+        return f"projects:uid={project_uid}:id={project_id}"
+
+    def get_project_task(self, task_uid: Optional[UUID] = None, task_id: Optional[int] = None) -> str:
+        return f"projects:tasks:uid={task_uid}:id={task_id}"
+
+    def get_user_tasks(self, task_id: int, employee_id: int) -> str:
+        return f"projects:tasks:pics:task_id={task_id}:employee_id={employee_id}"
+
+    # --- employees ---
+    def active_employee(self, user_id: Optional[int] = None, employee_id: Optional[int] = None) -> str:
+        return f"employees:active:user_id={user_id}:employee_id={employee_id}"
+
+    # --- menus / features ---
+    def get_menu(
+        self,
+        menu_uid: Optional[UUID] = None,
+        feature_uid: Optional[UUID] = None,
+        search: Optional[str] = None,
+    ) -> str:
+        return (
+            f"menus:features:menu_uid={menu_uid}:feature_uid={feature_uid}"
+            f":search={(search or '').strip().lower() or 'all'}"
+        )
+
+    # --- generation_files ---
+    def generation_files_main_list(
+        self, task_id: int, user_id: Optional[int] = None, search: Optional[str] = None
+    ) -> str:
+        return (
+            f"generation_files:main:task_id={task_id}:user_id={user_id}"
+            f":search={(search or '').strip().lower() or 'all'}"
+        )
+
+    def generation_files_main_list_pattern(self, task_id: int) -> str:
+        return f"generation_files:main:task_id={task_id}:*"
+
+    def generation_files_archived_list(self, user_id: int, project_id: int) -> str:
+        return f"generation_files:archived:user_id={user_id}:project_id={project_id}"
+
+    def generation_files_favourited_list(self, user_id: int, project_id: int) -> str:
+        return f"generation_files:favourited:user_id={user_id}:project_id={project_id}"
+
+    def generation_files_result_list(
+        self,
+        user_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+        file_uids: Optional[list[str]] = None,
+    ) -> str:
+        return f"generation_files:results:user_id={user_id}:project_id={project_id}:file_uids={file_uids}"
+
+    def generation_files_references_picker(
+        self,
+        type: Literal["uploads", "generations"],
+        user_id: int,
+        project_id: Optional[int] = None,
+        search: Optional[str] = None,
+    ) -> str:
+        return (
+            f"generation_files:references_picker:type={type}:user_id={user_id}:project_id={project_id}"
+            f":search={(search or '').strip().lower() or 'all'}"
+        )
+
+    def generation_files_references_picker_pattern(self, user_id: int) -> str:
+        return f"generation_files:references_picker:type=*:user_id={user_id}:*"
+
+    def generation_files_main_detail(self, file_uid: UUID) -> str:
+        return f"generation_files:main:detail:file_uid={file_uid}"
+
+    def generation_files_variant_detail(self, file_uid: UUID) -> str:
+        return f"generation_files:variant:detail:file_uid={file_uid}"
+
+    def generation_files_variants_detail(self, file_uid: UUID) -> str:
+        return f"generation_files:variants:detail:file_uid={file_uid}"

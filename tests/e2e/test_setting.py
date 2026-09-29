@@ -15,6 +15,8 @@ MODELS_URL = "/api/models"
 
 @pytest.mark.asyncio
 async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_sync, project_with_class):
+    """Walks global settings from empty through first save, no-op save, a logged change,
+    a per-project override, and the model-sync cascade that nulls a setting on the way."""
     project_uid, class_id, _ = project_with_class
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)

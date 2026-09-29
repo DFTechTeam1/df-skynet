@@ -2,6 +2,7 @@ class GenerationsMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
             "input_references_exceeded": "You've added too many references for this model.",
+            "input_references_required": "This model requires at least {min} reference image(s).",
             "unsupported_generation_parameter": "This parameter isn't supported by the selected model.",
             "generation_parameters_invalid": "Some of the parameters you sent aren't supported by this model.",
             "generation_parameter_must_be_number": "This value must be a number.",
@@ -18,8 +19,11 @@ class GenerationsMessage:
             "generation_area_incomplete": "To set a focus area, x_min, x_max, y_min, and y_max must all be filled in.",
             "generation_area_image_edit_only": "Focus area (x_min, x_max, y_min, y_max) can only be set for image_edit generations.",
             "openrouter_generation_failed": "OpenRouter couldn't generate this. Please try again later.",
+            "prompt_ranking_failed": "We couldn't verify this prompt right now. Please try again later.",
+            "ranking_model_not_configured": "No text model is configured to verify prompts. Please contact an administrator.",
             "api_key_token_usage_limit_exceeded": "This API key has reached its usage limit and can no longer be used to generate.",
             "prompt_injection_detected": "This prompt looks like an attempt to manipulate the system (score: {score}). Please rephrase it as a plain description of the image or video you want.",
             "prompt_not_generation_related": "This prompt doesn't look related to {type_label} (score: {score}). Please describe what you'd like the {type_label} to look like.",
             "generation_file_not_found": "This generated file could not be found.",
+            "main_generation_file_not_found": "The main version of this generated file could not be found.",
         }

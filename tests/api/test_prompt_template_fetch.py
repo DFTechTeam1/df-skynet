@@ -122,7 +122,7 @@ async def test_response_shape_has_creater_not_created_by_user(authed_client, db_
     assert "created_by_user" not in item
     assert "updated_by_user" not in item
     assert item["creator"] == creator
-    assert set(item["creator"].keys()) == {"image", "nickname"}
+    assert set(item["creator"].keys()) == {"user_id", "image", "nickname"}
     assert item["updater"] is None
 
 
@@ -134,7 +134,7 @@ async def test_no_sensitive_user_fields_leak(authed_client, user_id):
     item = find_by_name(resp.json()["data"], row.name)
     # creator is whitelisted to exactly {image, nickname} — no password,
     # no remember_token, no anything else off the real Users row.
-    assert set(item["creator"].keys()) == {"image", "nickname"}
+    assert set(item["creator"].keys()) == {"user_id", "image", "nickname"}
 
 
 @pytest.mark.asyncio
