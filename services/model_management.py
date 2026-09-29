@@ -62,13 +62,14 @@ class ModelManagement:
 
     def format(self, record: dict[str, Any], *, for_list: bool = False) -> dict[str, Any]:
         """Shape one serialized `DfEngineModelOptions` row for an API response:
-        formatted timestamps, resolved `action` block, `id` dropped. List items
-        also drop `is_available` (it's implied — the default list only carries
+        formatted timestamps, resolved `action` block. `id` is kept — the
+        generations-create flow reads it back off this same cached shape
+        (see `model_option_details` cache key). List items also drop
+        `is_available` (it's implied — the default list only carries
         available rows)."""
         record["action"] = self.action(record)
         record["last_sync_at"] = format_datetime(record["last_sync_at"])
         record["created"] = format_datetime(epoch_to_wib(record["created"]))
         record["deleted_at"] = format_datetime(record["deleted_at"])
-        record.pop("id", None)
         record.pop("is_available", None)
         return record

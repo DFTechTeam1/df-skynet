@@ -21,7 +21,7 @@ async def test_returns_formatted_model_detail(authed_client):
     assert body["uid"] == model.uid
     assert body["name"] == "Detail Model"
     assert body["is_enabled"] is True
-    assert "id" not in body
+    assert body["id"] == model.id
     assert "is_available" not in body
     assert body["action"] == {
         "can_enable_disable": True,

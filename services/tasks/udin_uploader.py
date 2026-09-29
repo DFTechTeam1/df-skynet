@@ -7,11 +7,14 @@ from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
 from services.api_caller import APICaller
 from services.celery_app import celery_app
+from services.dto import SyncedConnectionContext
+from services.dto.synced.projects import get_project
 from services.mysql import get_sync_db
-from services.mysql.model import DfEngineGenerationResults, DfEngineGenerationUploads, DfEngineGenerations, Projects
+from services.mysql.model import DfEngineGenerationResults, DfEngineGenerationUploads, DfEngineGenerations
 from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_json_sync, sync_client
+from error import DataNotFoundError
 from utils import local_time
 from services.tasks.base import (
     GenerationStageError,
@@ -64,11 +67,14 @@ def udin_uploader(
         if generation.project_id is None:
             raise GenerationStageError("df_engine_generations.project_id not set", source="udin", final=True)
 
-        project = db.get(Projects, generation.project_id)
-        if project is None:
+        try:
+            project = get_project(
+                SyncedConnectionContext(db, sync_client(), CacheKeys()), project_id=generation.project_id
+            )
+        except DataNotFoundError:
             raise GenerationStageError("linked project not found", source="udin", final=True)
 
-        project_uid = project.uid
+        project_uid = project["uid"]
         generation_uid = str(generation.uid)
         task_id = generation.task_id
         project_id = generation.project_id

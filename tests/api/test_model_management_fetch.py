@@ -97,13 +97,13 @@ async def test_fetch_no_is_enabled_filter_returns_both(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_response_shape_strips_id_and_keeps_uid(authed_client):
-    """200 OK; internal `id` is stripped, `uid` is exposed, dates are formatted strings."""
+async def test_response_shape_keeps_id_and_uid(authed_client):
+    """200 OK; `id` and `uid` are both exposed, dates are formatted strings."""
     row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
 
     resp = await authed_client.call("GET", URL, params={"search": row.name})
     item = resp.json()["data"]["paginated"][0]
-    assert "id" not in item
+    assert item["id"] == row.id
     assert item["uid"] == row.uid
     assert isinstance(item["last_sync_at"], str)
 
