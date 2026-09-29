@@ -15,6 +15,7 @@ from services.mysql.model import (
     Projects,
 )
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
+from services.model_management import ModelManagement
 from services.redis import get_json, set_json
 from services.dto import ConnectionContext
 from services.dto.format_response import FeatureableAction, MenuRecord, FeatureRecord, PromptTemplateRecord
@@ -232,7 +233,7 @@ async def get_model(ctx: ConnectionContext, model_uid: UUID, type: ModelUsageTyp
     if not row:
         raise DataNotFoundError(message="model_option_not_found")
 
-    model = serialize(row)
+    model = ModelManagement().format(serialize(row))
     await set_json(ctx.redis, model_key, model)
     logging.info(f"model option cache set key={model_key}")
     return model

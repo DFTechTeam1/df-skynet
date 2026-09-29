@@ -128,3 +128,57 @@ async def query(
     if fetch_one:
         return result.scalars().first() if scalar else result.first()
     return result.scalars().all() if scalar else result.all()
+
+
+def query_sync(
+    db: Session,
+    table: type[SQLModel],
+    columns: Optional[tuple[Any, ...]] = None,
+    joins: Optional[tuple[Any, ...]] = None,
+    filters: Optional[tuple[Any, ...]] = None,
+    options: Optional[tuple[Any, ...]] = None,
+    order_by: Optional[tuple[Any, ...]] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+    fetch_one: bool = False,
+) -> Any:
+    """Sync mirror of `query()` for Celery tasks — same SELECT-builder, same
+    signature, `db.execute(stmt)` without `await`."""
+    stmt = select(*columns) if columns else select(table)
+
+    if joins:
+        for join in joins:
+            if isinstance(join, tuple):
+                if len(join) == 3:
+                    target, onclause, is_outer = join
+                    stmt = stmt.join(target, onclause, isouter=is_outer)
+                else:
+                    target, onclause = join
+                    stmt = stmt.join(target, onclause)
+            else:
+                stmt = stmt.join(join)
+
+    if options:
+        stmt = stmt.options(*options)
+
+    if filters is not None:
+        stmt = stmt.where(*filters)
+
+    if order_by is not None:
+        stmt = stmt.order_by(*order_by)
+
+    if limit is None and fetch_one:
+        limit = 1
+
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    if offset is not None:
+        stmt = stmt.offset(offset)
+
+    result = db.execute(stmt)
+    scalar = not columns or len(columns) == 1
+
+    if fetch_one:
+        return result.scalars().first() if scalar else result.first()
+    return result.scalars().all() if scalar else result.all()
