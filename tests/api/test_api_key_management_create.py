@@ -116,7 +116,7 @@ async def test_create_sets_pic_from_employee_uid(authed_client, db_session, acti
 
 @pytest.mark.asyncio
 async def test_create_logs_the_openrouter_call(authed_client, db_session, active_employee_uid):
-    """A DfEngineExternalApiCalls row is written for the POST /keys attempt."""
+    """200 OK; a DfEngineExternalApiCalls row is written for the POST /keys attempt."""
     name = f"Create Logged {uuid4().hex[:8]}"
     resp = await authed_client.call(
         "POST",

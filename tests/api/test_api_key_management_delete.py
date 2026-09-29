@@ -130,7 +130,7 @@ async def test_delete_excludes_key_from_copy_endpoint(authed_client, db_session,
 
 @pytest.mark.asyncio
 async def test_delete_logs_the_openrouter_call(authed_client, db_session, user_id, active_employee_uid):
-    """A DfEngineExternalApiCalls row is written for the DELETE /keys/{hash} attempt."""
+    """200 OK; a DfEngineExternalApiCalls row is written for the DELETE /keys/{hash} attempt."""
     employee = await _employee(db_session, active_employee_uid)
     row = _key(employee.id, user_id)
 
@@ -167,7 +167,7 @@ async def test_deleted_key_name_can_be_reused(authed_client, db_session, user_id
 
 @pytest.mark.asyncio
 async def test_delete_twice_is_404_on_the_second_call(authed_client, db_session, user_id, active_employee_uid):
-    """First delete is 200 OK; repeating it is 404 since the row is already gone."""
+    """404; deleting the same key twice returns 404 on the second call since the row is already gone."""
     employee = await _employee(db_session, active_employee_uid)
     row = _key(employee.id, user_id)
     assert (await authed_client.call("DELETE", f"{URL}/{row.uid}")).status_code == 200

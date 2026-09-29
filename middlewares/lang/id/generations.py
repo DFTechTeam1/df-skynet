@@ -2,6 +2,7 @@ class GenerationsMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
             "input_references_exceeded": "Kamu menambahkan terlalu banyak referensi untuk model ini.",
+            "input_references_required": "Model ini membutuhkan minimal {min} referensi gambar.",
             "unsupported_generation_parameter": "Parameter ini tidak didukung oleh model yang dipilih.",
             "generation_parameters_invalid": "Beberapa parameter yang kamu kirim tidak didukung oleh model ini.",
             "generation_parameter_must_be_number": "Nilai ini harus berupa angka.",
@@ -18,8 +19,11 @@ class GenerationsMessage:
             "generation_area_incomplete": "Untuk mengatur area fokus, x_min, x_max, y_min, dan y_max harus diisi semua.",
             "generation_area_image_edit_only": "Area fokus (x_min, x_max, y_min, y_max) hanya bisa diisi untuk image_edit.",
             "openrouter_generation_failed": "OpenRouter gagal membuat hasil ini. Silakan coba lagi nanti.",
+            "prompt_ranking_failed": "Kami tidak bisa memverifikasi prompt ini saat ini. Silakan coba lagi nanti.",
+            "ranking_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk memverifikasi prompt. Silakan hubungi admin.",
             "api_key_token_usage_limit_exceeded": "API key ini sudah mencapai batas penggunaannya dan tidak bisa dipakai untuk generate lagi.",
             "prompt_injection_detected": "Prompt ini terlihat seperti upaya memanipulasi sistem (skor: {score}). Tolong tulis ulang sebagai deskripsi biasa dari gambar atau video yang kamu inginkan.",
             "prompt_not_generation_related": "Prompt ini sepertinya tidak berkaitan dengan {type_label} (skor: {score}). Tolong jelaskan {type_label} seperti apa yang kamu inginkan.",
             "generation_file_not_found": "File hasil generate ini tidak ditemukan.",
+            "main_generation_file_not_found": "Versi utama dari file hasil generate ini tidak ditemukan.",
         }

@@ -1,14 +1,21 @@
+import json
+import uuid
+from pathlib import Path
 from typing import Any, Optional
 from celery.exceptions import SoftTimeLimitExceeded
 from httpx import HTTPStatusError, NetworkError, TimeoutException
 from apps.secret import OPENROUTER_BASE_URL
 from services.api_caller import APICaller
 from services.celery_app import celery_app
+from services.dto import SyncedConnectionContext
 from services.mysql import get_sync_db
 from services.mysql.model import DfEngineGenerations
+from config.variables import USD_TO_IDR_RATE
 from services.mysql.model.df_engine_generations import GenerationStatuses
+from services.redis import CacheKeys, get_json_sync, set_json_sync, sync_client
 from services.tasks.base import GenerationTask, classify_error, response_error_message, retry_countdown
 from services.tasks.udin_uploader import udin_uploader
+from utils.formatter import format_idr, format_usd
 
 
 @celery_app.task(
@@ -31,7 +38,8 @@ def image_generation(
     payload: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     with get_sync_db() as db:
-        generation = db.get(DfEngineGenerations, generation_id)
+        ctx = SyncedConnectionContext(db, sync_client(), CacheKeys())
+        generation = ctx.db.get(DfEngineGenerations, generation_id)
         if generation is None:
             raise ValueError("Generation record not found.")
 
@@ -42,7 +50,11 @@ def image_generation(
             return {"generation_id": generation_id, "status": "already_processed", "skipped": True}
 
         generation.status = GenerationStatuses.processing
-        db.add(generation)
+        ctx.db.add(generation)
+        generation_detail_key = ctx.key.generation_detail(user_id, str(generation.uid))
+        cached_generation_detail = get_json_sync(ctx.redis, generation_detail_key)
+        if cached_generation_detail is not None:
+            set_json_sync(ctx.redis, generation_detail_key, {**cached_generation_detail, "status": generation.status})
 
     caller = APICaller(base_url=OPENROUTER_BASE_URL, headers=headers or {})
     try:
@@ -66,13 +78,27 @@ def image_generation(
 
     body = response.json()
     usage = body.get("usage", {})
+    images = {f"image.{idx}": item["b64_json"] for idx, item in enumerate(body["data"])}
     with get_sync_db() as db:
-        generation = db.get(DfEngineGenerations, generation_id)
-        generation.response = body["data"][0]["b64_json"]  # type: ignore
+        ctx = SyncedConnectionContext(db, sync_client(), CacheKeys())
+        generation = ctx.db.get(DfEngineGenerations, generation_id)
+        generation.response = json.dumps(images)  # type: ignore
         generation.status_code = response.status_code  # type: ignore
         generation.token_usage = usage.get("total_tokens")  # type: ignore
         generation.cost = usage.get("cost")  # type: ignore
-        db.add(generation)
+        ctx.db.add(generation)
+        generation_detail_key = ctx.key.generation_detail(user_id, str(generation.uid))  # type: ignore
+        cached_generation_detail = get_json_sync(ctx.redis, generation_detail_key)
+        if cached_generation_detail is not None:
+            set_json_sync(
+                ctx.redis,
+                generation_detail_key,
+                {
+                    **cached_generation_detail,
+                    "cost_usd": format_usd(generation.cost),  # type: ignore
+                    "cost_idr": format_idr(generation.cost, USD_TO_IDR_RATE),  # type: ignore
+                },
+            )
 
     udin_uploader.delay(generation_id, user_id)  # type:ignore
     return {"generation_id": generation_id, "status": "openrouter_success"}

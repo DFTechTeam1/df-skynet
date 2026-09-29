@@ -17,7 +17,7 @@ class DfEngineGenerationResults(SQLModel, table=True):
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
-    updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+    updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True, onupdate=local_time))
     archieved_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     generation_id: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_generations.id"), nullable=True)
@@ -31,7 +31,7 @@ class DfEngineGenerationResults(SQLModel, table=True):
     path: str = Field(sa_column=Column(Text, nullable=False))
     size: int = Field(sa_column=Column(BigInteger, nullable=False))
     is_main: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
-    is_favourite: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+    favourited_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)

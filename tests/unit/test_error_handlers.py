@@ -37,7 +37,7 @@ def test_base_handler_returns_html_page_when_browser_accept_header_is_sent():
 
 
 def test_base_handler_service_error_500_also_respects_accept_header():
-    """A ServiceError (500 BaseError) gets the same content negotiation as an unwrapped exception."""
+    """500; a ServiceError (500 BaseError) gets the same content negotiation as an unwrapped exception."""
     json_resp = register_error.base_handler(_request("application/json"), ServiceError())
     assert json_resp.status_code == 500
     assert json_resp.headers["content-type"].startswith("application/json")
@@ -48,7 +48,7 @@ def test_base_handler_service_error_500_also_respects_accept_header():
 
 
 def test_base_handler_non_500_base_error_is_unaffected_by_accept_header():
-    """A non-500 BaseError (e.g. 404) always returns JSON, regardless of Accept — negotiation is 500-only."""
+    """404; a non-500 BaseError always returns JSON, regardless of Accept — negotiation is 500-only."""
     resp = register_error.base_handler(_request("text/html"), DataNotFoundError())
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("application/json")

@@ -32,3 +32,6 @@ class DfEngineMenus(SQLModel, table=True):
     df_engine_menu_feature_mappings: list["DfEngineMenuFeatureMappings"] = Relationship(  # type: ignore
         back_populates="df_engine_menus"
     )
+    df_engine_generations: list["DfEngineGenerations"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.menu_id]", "viewonly": True}
+    )

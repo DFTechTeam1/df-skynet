@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 from typing import Any, Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import CHAR, DECIMAL, DateTime, Enum, ForeignKey, Index, Integer, String, Text, and_
+from sqlalchemy import CHAR, DECIMAL, DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text, and_
 from sqlalchemy.dialects.mysql import BIGINT
 from sqlalchemy.orm import foreign
 from services.mysql.model.df_engine_api_key_snapshots import DfEngineApiKeySnapshots
@@ -73,6 +73,7 @@ class DfEngineGenerations(SQLModel, table=True):
     )
     prompt: str = Field(sa_column=Column(Text, nullable=False))
     full_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    parameter: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON(none_as_null=True), nullable=True))
     status: GenerationStatuses = Field(
         default=GenerationStatuses.queued, sa_column=Column(Enum(GenerationStatuses), nullable=False)
     )
@@ -102,8 +103,14 @@ class DfEngineGenerations(SQLModel, table=True):
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.created_by]"}
     )
-    result: Optional["DfEngineGenerationResults"] = Relationship(  # type: ignore
+    results: list["DfEngineGenerationResults"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.generation_id]", "viewonly": True}
+    )
+    generation_references: list["DfEngineGenerationReferences"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationReferences.generation_id]", "viewonly": True}
+    )
+    upload_file_references: list["DfEngineUploadFileReferences"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineUploadFileReferences.generation_id]", "viewonly": True}
     )
 
     api_key: Optional["DfEngineApiKeys"] = Relationship(

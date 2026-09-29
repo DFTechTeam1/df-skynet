@@ -15,6 +15,8 @@ class MenuPayload(BaseModel):
     features, or with one or many, all in the same call.
     """
 
+    # TODO: add icon that accept string data, mandatory, min length 1
+
     name: str = Field(
         ...,
         min_length=1,

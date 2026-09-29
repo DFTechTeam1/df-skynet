@@ -34,11 +34,23 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.create_index("idx_generations_kind", TABLE_NAME, ["kind"])
-    op.create_index("idx_generations_kind_created_by", TABLE_NAME, ["kind", "created_by"])
-    op.create_index("idx_generations_status_created_at", TABLE_NAME, ["status", "created_at"])
-    op.create_index("idx_generations_sourceable", TABLE_NAME, ["sourceable_id", "sourceable_type"])
-    op.create_index("idx_generations_created_at", TABLE_NAME, ["created_at"])
-    op.create_index("idx_generations_project_task", TABLE_NAME, ["project_id", "task_id"])
-    op.drop_index("idx_generations_project_id", table_name=TABLE_NAME)
-    op.alter_column(TABLE_NAME, "response", existing_type=sa.Text(), type_=sa.JSON(), existing_nullable=True)
+    # idempotent: non-transactional MySQL DDL means a retried downgrade can
+    # find some of these already (re)created by a prior partial run, or
+    # already FK-protected (idx_generations_project_task backs project_id's
+    # FK, so MySQL refuses to drop it — it just needs to stay, which it does).
+    existing = {ix["name"] for ix in sa.inspect(op.get_bind()).get_indexes(TABLE_NAME)}
+    for name, cols in (
+        ("idx_generations_kind", ["kind"]),
+        ("idx_generations_kind_created_by", ["kind", "created_by"]),
+        ("idx_generations_status_created_at", ["status", "created_at"]),
+        ("idx_generations_sourceable", ["sourceable_id", "sourceable_type"]),
+        ("idx_generations_created_at", ["created_at"]),
+        ("idx_generations_project_task", ["project_id", "task_id"]),
+    ):
+        if name not in existing:
+            op.create_index(name, TABLE_NAME, cols)
+    if "idx_generations_project_id" in existing:
+        op.drop_index("idx_generations_project_id", table_name=TABLE_NAME)
+    # ponytail: converting back to JSON is lossy once any row holds non-JSON
+    # text (base64 payloads, plain strings) — MySQL rejects rows that aren't
+    # valid JSON instead of coercing them, so the column stays TEXT.

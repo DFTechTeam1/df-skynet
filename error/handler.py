@@ -67,16 +67,19 @@ class CustomError:
     def base_handler(self, request: Request, exc: Exception) -> Any:
         if isinstance(exc, BaseError):
             lang = getattr(request.state, "lang", DEFAULT_LANG)
+
+            def _resolve(msg: str) -> str:
+                resolved = resolve_message(msg, lang)
+                return resolved.format(**exc.context) if exc.context else resolved
+
             error = (
-                {field: [resolve_message(msg, lang) for msg in messages] for field, messages in exc.error.items()}
+                {field: [_resolve(msg) for msg in messages] for field, messages in exc.error.items()}
                 if exc.error
                 else exc.error
             )
             if exc.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and _wants_html(request):
                 return _error_page("server_error.html", exc.status_code)
-            message = resolve_message(exc.message, lang)
-            if exc.context:
-                message = message.format(**exc.context)
+            message = _resolve(exc.message)
             return JSONResponse(
                 status_code=exc.status_code,
                 content={

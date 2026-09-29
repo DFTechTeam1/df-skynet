@@ -65,3 +65,4 @@ class Projects(SQLModel, table=True):
     )
 
     project_classes: Optional["ProjectClasses"] = Relationship(back_populates="projects")  # type: ignore
+    project_tasks: list["ProjectTasks"] = Relationship(back_populates="project")  # type: ignore

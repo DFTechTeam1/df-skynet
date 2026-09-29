@@ -15,12 +15,6 @@ class PaginationResponse(BaseModel):
 
 class OpenrouterRankingResponse(BaseModel):
     prompt_injection: float = Field(ge=0, le=1, description="Measure prompt injection.", default=0)
-    image_generation: float = Field(
-        ge=0, le=1, description="Measure prompt is related to image generation task.", default=0
-    )
-    video_generation: float = Field(
-        ge=0, le=1, description="Measure prompt is related to video generation task.", default=0
-    )
-    chat_assistant: float = Field(
-        ge=0, le=1, description="Measure prompt is related to chat assistant task.", default=0
+    relatedness: float = Field(
+        ge=0, le=1, description="Measure how related the prompt is to the given task description.", default=0
     )

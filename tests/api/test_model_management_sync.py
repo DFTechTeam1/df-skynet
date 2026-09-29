@@ -1,18 +1,3 @@
-"""Tests for POST /models (sync).
-
-The sync endpoint reconciles a WHOLE usage type against OpenRouter's response:
-anything of that type not in the response gets flagged `is_available = False`.
-`df_engine_model_options` is real, shared, already-synced data (hundreds of rows
-per type) — so a naive test that configures a small, incomplete fake model list
-would mass-disable every real row of that type.
-
-To stay safe every test here that goes through the HTTP endpoint configures the
-`text` path with its OWN full current catalog (reconstructed from the DB) and
-then adds / omits exactly the one row it wants to exercise, so nothing else can
-be inserted or disabled as a side effect. Unconfigured paths (`video`, `image`)
-return a 5xx from the mock and are skipped untouched.
-"""
-
 import json
 import pytest
 from uuid import uuid4
@@ -97,7 +82,7 @@ async def test_sync_inserts_new_model_and_preserves_existing_catalog(authed_clie
 async def test_sync_refreshes_present_model_and_flags_missing_one_unavailable(
     authed_client, db_session, mock_model_sync
 ):
-    """A model still in the response is refreshed and stays available; one
+    """200 OK; a model still in the response is refreshed and stays available; one
     absent from it is flagged is_available=False. Both are brand-new,
     uniquely-named factory rows so no real catalog data is touched."""
     kept = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
@@ -134,7 +119,7 @@ async def test_sync_refreshes_present_model_and_flags_missing_one_unavailable(
 async def test_sync_leaves_a_soft_deleted_model_frozen_when_still_on_openrouter(
     authed_client, db_session, mock_model_sync
 ):
-    """A soft-deleted model that OpenRouter still lists is skipped entirely by
+    """200 OK; a soft-deleted model that OpenRouter still lists is skipped entirely by
     sync — its is_available and metadata are left exactly as they were."""
     from utils import local_time
 
@@ -171,7 +156,7 @@ async def test_sync_leaves_a_soft_deleted_model_frozen_when_still_on_openrouter(
 async def test_sync_does_not_flag_a_soft_deleted_model_unavailable_when_gone_from_openrouter(
     authed_client, db_session, mock_model_sync
 ):
-    """A soft-deleted model absent from OpenRouter's response is NOT flagged
+    """200 OK; a soft-deleted model absent from OpenRouter's response is NOT flagged
     is_available=False — deleted models keep their availability frozen."""
     from utils import local_time
 
@@ -200,7 +185,7 @@ async def test_sync_does_not_flag_a_soft_deleted_model_unavailable_when_gone_fro
 
 @pytest.mark.asyncio
 async def test_sync_ignores_items_without_an_id(authed_client, db_session, mock_model_sync):
-    """An item missing `id` is skipped, not inserted; valid items alongside it
+    """200 OK; an item missing `id` is skipped, not inserted; valid items alongside it
     still sync."""
     rows = await _available_text_rows(db_session)
     valid_id = f"test-vendor/with-id-{uuid4().hex[:10]}"
@@ -225,7 +210,7 @@ async def test_sync_ignores_items_without_an_id(authed_client, db_session, mock_
 
 @pytest.mark.asyncio
 async def test_sync_nulls_engine_setting_when_main_model_goes_unavailable(authed_client, db_session, mock_model_sync):
-    """A main text model that sync makes unavailable is dropped from any
+    """200 OK; a main text model that sync makes unavailable is dropped from any
     `admin_setting` still pointing at it (enhancer_model / assistant_model),
     and the change is written to df_engine_setting_logs."""
     await clear_setting_state(db_session)

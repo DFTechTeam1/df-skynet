@@ -46,7 +46,7 @@ async def test_copy_key_differs_from_masked_list_value(authed_client, db_session
 
 @pytest.mark.asyncio
 async def test_copy_does_not_write_an_openrouter_log(authed_client, db_session, user_id, active_employee_uid):
-    """Copy is a local-only lookup — it never contacts OpenRouter, so no log row is written."""
+    """200 OK; copy is a local-only lookup — it never contacts OpenRouter, so no log row is written."""
     employee = await _employee(db_session, active_employee_uid)
     row = DfEngineApiKeysFactory.create(name=f"Key {uuid4().hex[:8]}", employee_id=employee.id, created_by=int(user_id))
     before = (await db_session.execute(select(DfEngineExternalApiCalls.id))).scalars().all()

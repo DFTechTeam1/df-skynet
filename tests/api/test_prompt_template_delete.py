@@ -21,7 +21,7 @@ async def test_delete_success(authed_client, user_id):
 
 @pytest.mark.asyncio
 async def test_delete_twice_is_404_on_the_second_call(authed_client, user_id):
-    """First delete is 200 OK; repeating it is 404 prompt_template_not_found since the row is already gone."""
+    """404 prompt_template_not_found; deleting the same template twice returns 404 on the second call since the row is already gone."""
     row = DfEnginePromptTemplatesFactory.create(prompt="a prompt", created_by=int(user_id))
     first = await authed_client.call("DELETE", f"{URL}/{row.uid}")
     assert first.status_code == 200

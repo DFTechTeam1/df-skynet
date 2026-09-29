@@ -9,19 +9,17 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 
-pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
+
+def _favorite_url(project_uid):
+    return f"/api/files/{project_uid}/favorite"
 
 
-def _favorite_url(task_uid):
-    return f"/api/files/{task_uid}/favorite"
+def _archived_url(project_uid):
+    return f"/api/files/{project_uid}/archieved"
 
 
-def _archived_url(task_uid):
-    return f"/api/files/{task_uid}/archieved"
-
-
-def _favourited_url(task_uid):
-    return f"/api/files/{task_uid}/favourited"
+def _favourited_url(project_uid):
+    return f"/api/files/{project_uid}/favourited"
 
 
 @pytest_asyncio.fixture
@@ -34,51 +32,36 @@ async def generation_fks(user_id) -> dict:
     return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
 
 
-def _make_result(
-    project_task, user_id, generation_fks, archieved_at=None, name="a.png", kind="images", is_favourite=False
-):
-    """A `DfEngineGenerationResults` row (with its parent `DfEngineGenerations`) shaped
-    so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper."""
-    generation = DfEngineGenerationsFactory.create(
+def _make_generation(project_task, user_id, generation_fks, **overrides):
+    return DfEngineGenerationsFactory.create(
         project_id=project_task.project_id,
         task_id=project_task.id,
         created_by=int(user_id),
         sourceable_id=1,
         **generation_fks,
+        **overrides,
     )
-    path = f"storage/DF-Engine/{project_task.project.uid}/generated/{kind}/{name}"
-    return DfEngineGenerationResultsFactory.create(
-        path=path,
-        generation_id=generation.id,
-        created_by=int(user_id),
-        archieved_at=archieved_at,
-        is_favourite=is_favourite,
-    )
+
+
+def _make_result(project_task, user_id, generation_fks, **overrides):
+    generation = _make_generation(project_task, user_id, generation_fks)
+    return DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), **overrides)
 
 
 def _find_flat(files, uid):
-    return next((f for f in files if f["uid"] == uid), None)
-
-
-def _find_file_node(nodes, uid):
-    for node in nodes:
-        found = next((f for f in node["files"] if f["uid"] == uid), None)
-        if found is not None:
-            return found
-        found = _find_file_node(node["childs"], uid)
-        if found is not None:
-            return found
-    return None
+    return next((f for f in files if f["file_uid"] == str(uid)), None)
 
 
 @pytest.mark.asyncio
-async def test_favorite_file_moves_it_from_live_to_favourited(authed_client, project_task, user_id, generation_fks):
-    """200 OK; default body (is_favorited=true) keeps a live generation result in the returned tree and adds it to /favourited."""
+async def test_favorite_file_appears_in_favourited_list(authed_client, project_task, user_id, generation_fks):
+    """200 OK; default body (is_favorited=true) returns the updated favourited list, and the file shows there."""
     result = _make_result(project_task, user_id, generation_fks)
 
-    resp = await authed_client.call("PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid)]})
+    resp = await authed_client.call(
+        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid)]}
+    )
     assert resp.status_code == 200
-    assert _find_file_node(resp.json()["data"], result.uid) is not None
+    assert _find_flat(resp.json()["data"], result.uid) is not None
 
 
 @pytest.mark.asyncio
@@ -88,11 +71,11 @@ async def test_favorite_multiple_files_at_once(authed_client, project_task, user
     second = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(first.uid), str(second.uid)]}
+        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(first.uid), str(second.uid)]}
     )
     assert resp.status_code == 200
-    assert _find_file_node(resp.json()["data"], first.uid) is not None
-    assert _find_file_node(resp.json()["data"], second.uid) is not None
+    assert _find_flat(resp.json()["data"], first.uid) is not None
+    assert _find_flat(resp.json()["data"], second.uid) is not None
 
 
 @pytest.mark.asyncio
@@ -101,65 +84,68 @@ async def test_favorite_files_dedupes_repeated_uid(authed_client, project_task, 
     result = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid), str(result.uid)]}
+        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid), str(result.uid)]}
     )
     assert resp.status_code == 200
-    assert _find_file_node(resp.json()["data"], result.uid) is not None
+    assert _find_flat(resp.json()["data"], result.uid) is not None
 
 
 @pytest.mark.asyncio
 async def test_favorite_archived_file_is_200(authed_client, project_task, user_id, generation_fks):
-    """200 OK; archive/favorite are decoupled, so an archived item can be favorited directly."""
+    """200 OK; archive/favorite are decoupled, so an archived item can be favorited directly and stays archived."""
     result = _make_result(project_task, user_id, generation_fks, archieved_at=datetime.now())
 
-    resp = await authed_client.call("PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid)]})
+    resp = await authed_client.call(
+        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid)]}
+    )
     assert resp.status_code == 200
-    assert _find_file_node(resp.json()["data"], result.uid) is None
 
-    archived_resp = await authed_client.call("GET", _archived_url(project_task.uid))
+    archived_resp = await authed_client.call("GET", _archived_url(project_task.project.uid))
     assert _find_flat(archived_resp.json()["data"], result.uid) is not None
 
-    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.uid))
+    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.project.uid))
     assert _find_flat(favourited_resp.json()["data"], result.uid) is not None
 
 
 @pytest.mark.asyncio
-async def test_favorite_files_partial_match_is_422_all_or_nothing(authed_client, project_task, user_id, generation_fks):
-    """422 file_uids_invalid; one bad uid in the list fails the whole batch, leaving the valid one untouched."""
+async def test_favorite_files_partial_match_is_404_all_or_nothing(authed_client, project_task, user_id, generation_fks):
+    """404 file_not_found; one bad uid in the list fails the whole batch, leaving the valid one untouched."""
     result = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call(
         "PATCH",
-        _favorite_url(project_task.uid),
+        _favorite_url(project_task.project.uid),
         json={"file_uids": [str(result.uid), str(uuid4())]},
         raise_for_status=False,
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 404
     assert resp.json()["error"] == {"file_uids.1": [resolve_message("file_not_found", "en")]}
 
 
 @pytest.mark.asyncio
 async def test_unfavorite_file_removes_it_from_favourited(authed_client, project_task, user_id, generation_fks):
-    """200 OK; is_favorited=false keeps the (still live) item in the returned tree but drops it from /favourited."""
-    result = _make_result(project_task, user_id, generation_fks, is_favourite=True)
+    """200 OK; is_favorited=false clears favourited_at, dropping the item from /favourited."""
+    result = _make_result(project_task, user_id, generation_fks, favourited_at=datetime.now())
 
     resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid)], "is_favorited": False}
+        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid)], "is_favorited": False}
     )
     assert resp.status_code == 200
-    assert _find_file_node(resp.json()["data"], result.uid) is not None
+
+    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.project.uid))
+    assert _find_flat(favourited_resp.json()["data"], result.uid) is None
 
 
 @pytest.mark.asyncio
-async def test_unfavorite_file_not_favourited_is_422(authed_client, project_task, user_id, generation_fks):
-    """422 file_uids_invalid; target uid isn't currently favourited."""
-    result = _make_result(project_task, user_id, generation_fks, is_favourite=False)
+async def test_unfavorite_file_not_favourited_is_404(authed_client, project_task, user_id, generation_fks):
+    """404 file_not_found; target uid isn't currently favourited."""
+    result = _make_result(project_task, user_id, generation_fks, favourited_at=None)
 
     resp = await authed_client.call(
         "PATCH",
-        _favorite_url(project_task.uid),
+        _favorite_url(project_task.project.uid),
         json={"file_uids": [str(result.uid)], "is_favorited": False},
         raise_for_status=False,
     )
-    assert resp.status_code == 422
-    assert resp.json()["error"] == {"file_uids.0": [resolve_message("file_not_favourited", "en")]}
+    assert resp.status_code == 404
+    assert resp.json()["error"] == {"file_uids.0": [resolve_message("file_not_found", "en")]}

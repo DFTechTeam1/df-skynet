@@ -1,3 +1,4 @@
+from datetime import datetime
 import pytest
 import pytest_asyncio
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
@@ -6,11 +7,9 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 
-pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
 
-
-def _url(task_uid, suffix=""):
-    return f"/api/files/{task_uid}/favourited{suffix}"
+def _url(project_uid):
+    return f"/api/files/{project_uid}/favourited"
 
 
 @pytest_asyncio.fixture
@@ -23,43 +22,23 @@ async def generation_fks(user_id) -> dict:
     return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
 
 
-def _make_result(project_task, user_id, generation_fks, name="a.png", kind="images", is_favourite=False, is_main=False):
-    """A `DfEngineGenerationResults` row (with its parent `DfEngineGenerations`) shaped
-    so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper.
-    Defaults to `is_main=False` since only a non-main result can be archived - a family always
-    needs exactly one `is_main=True` member, so a non-main row is given a hidden main parent."""
-    generation = DfEngineGenerationsFactory.create(
+def _make_generation(project_task, user_id, generation_fks, **overrides):
+    return DfEngineGenerationsFactory.create(
         project_id=project_task.project_id,
         task_id=project_task.id,
         created_by=int(user_id),
         sourceable_id=1,
         **generation_fks,
+        **overrides,
     )
-    parent_id = None
-    if not is_main:
-        parent_generation = DfEngineGenerationsFactory.create(
-            project_id=project_task.project_id,
-            task_id=project_task.id,
-            created_by=int(user_id),
-            sourceable_id=1,
-            **generation_fks,
-        )
-        parent_id = DfEngineGenerationResultsFactory.create(
-            generation_id=parent_generation.id, created_by=int(user_id), is_main=True
-        ).id
-    path = f"storage/DF-Engine/{project_task.project.uid}/generated/{kind}/{name}"
-    return DfEngineGenerationResultsFactory.create(
-        path=path,
-        generation_id=generation.id,
-        created_by=int(user_id),
-        is_favourite=is_favourite,
-        is_main=is_main,
-        parent_id=parent_id,
-    )
+
+
+def _make_result(generation, user_id, **overrides):
+    return DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), **overrides)
 
 
 def _find_flat(files, uid):
-    return next((f for f in files if f["uid"] == uid), None)
+    return next((f for f in files if f["file_uid"] == uid), None)
 
 
 @pytest.mark.asyncio
@@ -67,10 +46,12 @@ async def test_get_favourited_files_only_returns_favourited_generations(
     authed_client, project_task, user_id, generation_fks
 ):
     """200 OK; flat list of only this user's favourited generation results."""
-    favourited = _make_result(project_task, user_id, generation_fks, name="fav.png", is_favourite=True)
-    not_favourited = _make_result(project_task, user_id, generation_fks, name="not_fav.png", is_favourite=False)
+    favourited = _make_result(
+        _make_generation(project_task, user_id, generation_fks), user_id, favourited_at=datetime.now()
+    )
+    not_favourited = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, favourited_at=None)
 
-    resp = await authed_client.call("GET", _url(project_task.uid))
+    resp = await authed_client.call("GET", _url(project_task.project.uid))
     assert resp.status_code == 200
     assert isinstance(resp.json()["data"], list)
     assert _find_flat(resp.json()["data"], favourited.uid) is not None
@@ -79,65 +60,48 @@ async def test_get_favourited_files_only_returns_favourited_generations(
 
 @pytest.mark.asyncio
 async def test_favourited_action_flags(authed_client, project_task, user_id, generation_fks):
-    """200 OK; a favourited (but not archived) generation result allows unfavorite, and
-    archiving/moving are independent locks unaffected by the favourite state."""
-    result = _make_result(project_task, user_id, generation_fks, name="fav_flags.png", is_favourite=True)
+    """200 OK; a favourited (but not archived, non-main) generation result allows unfavorite, and
+    archiving is an independent lock unaffected by the favourite state."""
+    result = _make_result(
+        _make_generation(project_task, user_id, generation_fks), user_id, favourited_at=datetime.now(), is_main=False
+    )
 
-    resp = await authed_client.call("GET", _url(project_task.uid))
+    resp = await authed_client.call("GET", _url(project_task.project.uid))
     file = _find_flat(resp.json()["data"], result.uid)
     assert file["action"]["can_favorited"] is False
     assert file["action"]["can_unfavorited"] is True
     assert file["action"]["can_archieve"] is True
-    assert file["action"]["can_choose_to_move"] is True
 
 
 @pytest.mark.asyncio
-async def test_favourited_entry_matches_file_entry_shape_with_no_variants(
+async def test_favourited_entry_matches_generation_result_record_shape(
     authed_client, project_task, user_id, generation_fks
 ):
-    """200 OK; favourited entries carry the same fields as `GET /files/{task_uid}` file entries
-    (is_main/kind/prompt/cost/full actions) and never a `variants` key - they're always leaves."""
-    result = _make_result(project_task, user_id, generation_fks, name="shape.png", is_favourite=True)
+    """200 OK; favourited entries are a `GenerationResultRecord` with the generation-context
+    fields (status/creator/cost/model/prompt) dropped, since they're redundant per-user context."""
+    result = _make_result(
+        _make_generation(project_task, user_id, generation_fks), user_id, favourited_at=datetime.now()
+    )
 
-    resp = await authed_client.call("GET", _url(project_task.uid))
+    resp = await authed_client.call("GET", _url(project_task.project.uid))
     file = _find_flat(resp.json()["data"], result.uid)
     assert file.keys() == {
-        "uid",
+        "id",
+        "flag_created_at",
+        "flag_favourited_at",
+        "flag_archieved_at",
+        "kind",
+        "file_uid",
+        "generation_uid",
         "name",
-        "type",
+        "is_main",
         "path",
         "size",
-        "md5",
-        "creator",
-        "updater",
-        "is_main",
-        "source",
-        "kind",
-        "model",
-        "prompt",
-        "cost",
+        "version",
+        "created_at",
+        "favourited_at",
+        "archieved_at",
+        "icon",
+        "color",
         "action",
     }
-    assert "variants" not in file
-
-
-@pytest.mark.asyncio
-async def test_get_favourited_files_filters_by_type(authed_client, project_task, user_id, generation_fks):
-    """200 OK; `type=image`/`type=video` restrict the list, omitted returns both."""
-    image = _make_result(project_task, user_id, generation_fks, name="a.png", kind="images", is_favourite=True)
-    video = _make_result(project_task, user_id, generation_fks, name="a.mp4", kind="videos", is_favourite=True)
-
-    resp = await authed_client.call("GET", _url(project_task.uid))
-    data = resp.json()["data"]
-    assert _find_flat(data, image.uid) is not None
-    assert _find_flat(data, video.uid) is not None
-
-    resp = await authed_client.call("GET", _url(project_task.uid, "?type=image"))
-    data = resp.json()["data"]
-    assert _find_flat(data, image.uid) is not None
-    assert _find_flat(data, video.uid) is None
-
-    resp = await authed_client.call("GET", _url(project_task.uid, "?type=video"))
-    data = resp.json()["data"]
-    assert _find_flat(data, image.uid) is None
-    assert _find_flat(data, video.uid) is not None

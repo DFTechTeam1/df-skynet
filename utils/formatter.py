@@ -16,6 +16,7 @@ def format_user_employees(user: Optional[dict[str, Any]]) -> Optional[dict[str, 
         return None
     employees = user.get("employees") or {}
     return {
+        "user_id": user.get("id"),
         "image": user.get("image"),
         "nickname": employees.get("nickname"),
     }
@@ -26,6 +27,7 @@ def format_employee_users(employee: Optional[dict[str, Any]]) -> Optional[dict[s
         return None
     users = employee.get("users") or {}
     return {
+        "user_id": employee.get("user_id"),
         "image": users.get("image"),
         "nickname": employee.get("nickname"),
     }
@@ -50,11 +52,18 @@ def format_idr(usd_cost: Optional[Decimal | float], rate: Decimal | float) -> Op
     return f"Rp {rupiah:,}".replace(",", ".")
 
 
+def per_image_cost(cost: Optional[Decimal | float], parameter: Optional[dict]) -> Optional[Decimal | float]:
+    """A generation's `cost` is billed for the whole batch (`parameter["n"]`
+    images) — divide it down to a per-image cost for display."""
+    n = (parameter or {}).get("n") or 1
+    return cost / n if cost is not None and n > 1 else cost
+
+
 def format_usd(cost: Optional[Decimal | float]) -> Optional[str]:
     """Format a USD cost as fixed-point (e.g. '$ 0.0000002'), never scientific notation."""
     if cost is None:
         return None
-    text = f"{float(cost):.12f}".rstrip("0").rstrip(".")
+    text = f"{float(cost):.4f}"
     return f"$ {text}"
 
 

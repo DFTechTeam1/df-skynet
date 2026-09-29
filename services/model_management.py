@@ -1,5 +1,7 @@
 from typing import Any, Literal, Optional
 
+from sqlalchemy import func
+
 from services.mysql.model import DfEngineModelOptions
 from utils import epoch_to_wib
 from utils.formatter import format_datetime
@@ -30,6 +32,8 @@ class ModelManagement:
             conditions.append(DfEngineModelOptions.deleted_at.is_(None))  # type: ignore
         if type:
             conditions.append(DfEngineModelOptions.type == type)  # type: ignore
+        if type == "image":
+            conditions.append(func.json_length(DfEngineModelOptions.supported_parameters) >= 1)  # type: ignore
         if search:
             conditions.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
         if is_enabled is not None:

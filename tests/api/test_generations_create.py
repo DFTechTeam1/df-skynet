@@ -1,3 +1,4 @@
+import json
 import pytest
 import pytest_asyncio
 from types import SimpleNamespace
@@ -11,6 +12,8 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
+from services.mysql.model.df_engine_settings import DfEngineSettings
+from services.redis import CacheKeys, client as redis_client, delete_pattern
 
 URL = "/api/generations"
 
@@ -67,18 +70,65 @@ async def pic_api_key(db_session, user_id):
         .all()
     )
     preexisting_data = [row.model_dump() for row in preexisting]
-    if preexisting_data:
-        await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == PIC_EMPLOYEE_ID))
-        await db_session.commit()
+    await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == PIC_EMPLOYEE_ID))
+    await db_session.commit()
 
     key = DfEngineApiKeysFactory.create(employee_id=PIC_EMPLOYEE_ID, is_main=True, created_by=int(user_id))
     try:
         yield key
     finally:
         await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == PIC_EMPLOYEE_ID))
-        for data in preexisting_data:
+        for data in preexisting_data:  # pragma: no cover - only hit if this employee already had a key on the shared DB
             db_session.add(DfEngineApiKeys(**data))
         await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def ranking_model(db_session):
+    """Configures a real, enabled/available text model as the admin `enhancer_model`,
+    satisfying `rank_prompt`'s required-ranking-model guard in the generations
+    controller. Writes the `DfEngineSettings` row directly (not via `POST /setting`,
+    which full-replaces `folder_depth_limit`/`admin_view` too and would clobber
+    shared state) and snapshots/restores it, matching this file's other fixtures."""
+    model = DfEngineModelOptionsFactory.create(
+        type=ModelUsageTypes.text, is_enabled=True, is_available=True, deleted_at=None
+    )
+    existing = (
+        (
+            await db_session.execute(
+                select(DfEngineSettings).where(
+                    DfEngineSettings.code == "admin_setting", DfEngineSettings.key == "enhancer_model"
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    previous_value = existing.value if existing else None
+    await db_session.execute(
+        delete(DfEngineSettings).where(
+            DfEngineSettings.code == "admin_setting", DfEngineSettings.key == "enhancer_model"
+        )
+    )
+    db_session.add(
+        DfEngineSettings(
+            code="admin_setting", key="enhancer_model", value=json.dumps({"uid": model.uid, "name": model.name})
+        )
+    )
+    await db_session.commit()
+    await delete_pattern(redis_client(), CacheKeys().setting_global())
+    try:
+        yield model
+    finally:
+        await db_session.execute(
+            delete(DfEngineSettings).where(
+                DfEngineSettings.code == "admin_setting", DfEngineSettings.key == "enhancer_model"
+            )
+        )
+        if previous_value is not None:
+            db_session.add(DfEngineSettings(code="admin_setting", key="enhancer_model", value=previous_value))
+        await db_session.commit()
+        await delete_pattern(redis_client(), CacheKeys().setting_global())
 
 
 @pytest_asyncio.fixture
@@ -98,7 +148,7 @@ async def generation_project_settings(db_session, project_task):
         .all()
     )
     preexisting_data = [row.model_dump() for row in preexisting]
-    if preexisting_data:
+    if preexisting_data:  # pragma: no cover - only hit if this project already had a row on the shared DB
         await db_session.execute(
             delete(DfEngineProjectSettings).where(DfEngineProjectSettings.project_id == project_id)
         )
@@ -122,7 +172,7 @@ async def generation_project_settings(db_session, project_task):
         await db_session.execute(
             delete(DfEngineProjectSettings).where(DfEngineProjectSettings.project_id == project_id)
         )
-        for data in preexisting_data:
+        for data in preexisting_data:  # pragma: no cover - only hit if this project already had a row on the shared DB
             db_session.add(DfEngineProjectSettings(**data))
         await db_session.commit()
 
@@ -167,6 +217,7 @@ async def test_image_generation_happy_path_dispatches_task_and_returns_galleries
     generation_menu_feature,
     image_model,
     pic_api_key,
+    ranking_model,
     generation_project_settings,
     fake_generation_backends,
 ):
@@ -193,10 +244,11 @@ async def test_response_is_the_new_generation_not_a_prior_one(
     generation_menu_feature,
     image_model,
     pic_api_key,
+    ranking_model,
     generation_project_settings,
     fake_generation_backends,
 ):
-    """A second generation on the same task returns only itself — an earlier
+    """200 OK; a second generation on the same task returns only itself — an earlier
     generation on that task must not be reflected in the response."""
     menu, feature = generation_menu_feature
     first = await authed_client.call("POST", _url(project_task.uid), json=_payload(menu, feature, image_model))
@@ -213,6 +265,7 @@ async def test_video_type_returns_early_with_no_data(
     generation_menu_feature,
     video_model,
     pic_api_key,
+    ranking_model,
     generation_project_settings,
     fake_generation_backends,
 ):

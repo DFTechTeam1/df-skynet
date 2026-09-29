@@ -82,6 +82,7 @@ async def test_delete_rejected_when_already_deleted(authed_client):
 
 @pytest.mark.asyncio
 async def test_delete_unknown_uid_is_404(authed_client):
+    """404 model_option_not_found when the uid matches no model."""
     resp = await authed_client.call("DELETE", f"{URL}/{uuid4()}", raise_for_status=False)
     assert resp.status_code == 404
     assert resp.json()["message"] == resolve_message("model_option_not_found", "en")
@@ -89,6 +90,7 @@ async def test_delete_unknown_uid_is_404(authed_client):
 
 @pytest.mark.asyncio
 async def test_delete_requires_auth(client):
+    """401 when the request carries no bearer token."""
     row = _deletable()
     resp = await client.call("DELETE", f"{URL}/{row.uid}", raise_for_status=False)
     assert resp.status_code == 401
@@ -131,6 +133,7 @@ async def test_recover_rejected_when_not_deleted(authed_client):
 
 @pytest.mark.asyncio
 async def test_recover_unknown_uid_is_404(authed_client):
+    """404 when the uid matches no model."""
     resp = await authed_client.call("PATCH", f"{URL}/{uuid4()}/recover", raise_for_status=False)
     assert resp.status_code == 404
 

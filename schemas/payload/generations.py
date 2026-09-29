@@ -75,3 +75,9 @@ class GenerationsPayload(BaseModel):
         if errors:
             raise DataValidationError(message="references_invalid", error=errors)
         return self
+
+
+class PromptEnhancerPayload(BaseModel):
+    prompt: str = Field(min_length=1, description="User prompts.")
+    menu_uid: UUID = Field(default=UUID("1977607c-400f-4356-9692-46fbcfa889f0"), description="Menu UID.")
+    feature_uid: UUID = Field(default=UUID("f4cda7d6-3b9e-4643-9571-3b317f33e033"), description="Feature UID.")

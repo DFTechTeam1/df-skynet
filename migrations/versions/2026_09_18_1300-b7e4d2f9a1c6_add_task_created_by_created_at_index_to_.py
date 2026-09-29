@@ -8,6 +8,7 @@ Create Date: 2026-09-18 13:00:00.000000
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -28,5 +29,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.create_index("idx_generations_task_id", "df_engine_generations", ["task_id"])
-    op.drop_index("idx_generations_task_created_by_created_at", table_name="df_engine_generations")
+    # idempotent: see 2026_09_19_1100-c4f8e2a17d3b for why (non-transactional
+    # MySQL DDL means a retried downgrade can find these already applied).
+    existing = {ix["name"] for ix in sa.inspect(op.get_bind()).get_indexes("df_engine_generations")}
+    if "idx_generations_task_id" not in existing:
+        op.create_index("idx_generations_task_id", "df_engine_generations", ["task_id"])
+    if "idx_generations_task_created_by_created_at" in existing:
+        op.drop_index("idx_generations_task_created_by_created_at", table_name="df_engine_generations")

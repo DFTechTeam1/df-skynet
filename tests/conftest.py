@@ -79,6 +79,7 @@ async def _clear_all_redis_caches():
         "global_references_picker:*",
         "user_galleries:*",
         "generation_file_detail:*",
+        "generation_files:*",
     ):
         await delete_pattern(redis, pattern)
     yield
@@ -308,8 +309,8 @@ class _FakeUdinRequest:
 
 
 class _FakeUdinResponse:
-    """Stands in for the subset of `httpx.Response` `FilesService.call_udin`/
-    `upload_files` reads off a udin call: status_code, headers, request.url, and .json()/.content."""
+    """Stands in for the subset of `httpx.Response` the Files controller reads off a udin
+    call: status_code, headers, request.url, and .json()/.content."""
 
     def __init__(self, status_code: int, payload: Optional[dict[str, Any]] = None, url: str = ""):
         self.status_code = status_code
@@ -323,8 +324,8 @@ class _FakeUdinResponse:
 
 
 class _FakeUdinStreamResponse:
-    """Stands in for the subset of `httpx.Response` `FilesService.download_file` reads off a
-    streamed udin GET: status_code, raise_for_status(), and aiter_bytes()."""
+    """Stands in for the subset of `httpx.Response` the Files controller's download route reads
+    off a streamed udin GET: status_code, raise_for_status(), and aiter_bytes()."""
 
     def __init__(self, status_code: int, content: bytes):
         self.status_code = status_code
@@ -411,7 +412,6 @@ def mock_udin(monkeypatch):
     _FakeUdinCaller.responses = {}
     _FakeUdinCaller.stream_responses = {}
     _FakeUdinCaller.calls = []
-    monkeypatch.setattr("services.files.APICaller", _FakeUdinCaller)
     monkeypatch.setattr("apps.controller.files.APICaller", _FakeUdinCaller)
     return SimpleNamespace(
         set=lambda keyword, status_code, payload=None: _FakeUdinCaller.responses.__setitem__(

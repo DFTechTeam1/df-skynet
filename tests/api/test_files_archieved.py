@@ -7,11 +7,9 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 
-pytestmark = pytest.mark.skip(reason="files.py endpoints temporarily disabled")
 
-
-def _url(task_uid, suffix=""):
-    return f"/api/files/{task_uid}/archieved{suffix}"
+def _url(project_uid):
+    return f"/api/files/{project_uid}/archieved"
 
 
 @pytest_asyncio.fixture
@@ -24,30 +22,23 @@ async def generation_fks(user_id) -> dict:
     return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
 
 
-def _make_result(
-    project_task, user_id, generation_fks, archieved_at=None, name="a.png", kind="images", is_favourite=False
-):
-    """A `DfEngineGenerationResults` row (with its parent `DfEngineGenerations`) shaped
-    so `FilesService.base_of`/`type_root_of` recognize it, mirroring the upload-file helper."""
-    generation = DfEngineGenerationsFactory.create(
+def _make_generation(project_task, user_id, generation_fks, **overrides):
+    return DfEngineGenerationsFactory.create(
         project_id=project_task.project_id,
         task_id=project_task.id,
         created_by=int(user_id),
         sourceable_id=1,
         **generation_fks,
+        **overrides,
     )
-    path = f"storage/DF-Engine/{project_task.project.uid}/generated/{kind}/{name}"
-    return DfEngineGenerationResultsFactory.create(
-        path=path,
-        generation_id=generation.id,
-        created_by=int(user_id),
-        archieved_at=archieved_at,
-        is_favourite=is_favourite,
-    )
+
+
+def _make_result(generation, user_id, **overrides):
+    return DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), **overrides)
 
 
 def _find_flat(files, uid):
-    return next((f for f in files if f["uid"] == uid), None)
+    return next((f for f in files if f["file_uid"] == uid), None)
 
 
 @pytest.mark.asyncio
@@ -55,10 +46,12 @@ async def test_get_archived_files_only_returns_archived_generations(
     authed_client, project_task, user_id, generation_fks
 ):
     """200 OK; flat list of only archived generation results, never live ones."""
-    archived = _make_result(project_task, user_id, generation_fks, archieved_at=datetime.now(), name="archived.png")
-    live = _make_result(project_task, user_id, generation_fks, archieved_at=None, name="live.png")
+    archived = _make_result(
+        _make_generation(project_task, user_id, generation_fks), user_id, archieved_at=datetime.now()
+    )
+    live = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=None)
 
-    resp = await authed_client.call("GET", _url(project_task.uid))
+    resp = await authed_client.call("GET", _url(project_task.project.uid))
     assert resp.status_code == 200
     assert isinstance(resp.json()["data"], list)
     assert _find_flat(resp.json()["data"], archived.uid) is not None
@@ -67,69 +60,44 @@ async def test_get_archived_files_only_returns_archived_generations(
 
 @pytest.mark.asyncio
 async def test_archived_action_flags(authed_client, project_task, user_id, generation_fks):
-    """200 OK; an archived generation result allows unarchieve and moving/favoriting are independent locks."""
-    result = _make_result(project_task, user_id, generation_fks, archieved_at=datetime.now(), name="archived_flags.png")
+    """200 OK; an archived generation result allows unarchieve, favoriting is an independent lock."""
+    result = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=datetime.now())
 
-    resp = await authed_client.call("GET", _url(project_task.uid))
+    resp = await authed_client.call("GET", _url(project_task.project.uid))
     file = _find_flat(resp.json()["data"], result.uid)
     assert file["action"]["can_archieve"] is False
     assert file["action"]["can_unarchieve"] is True
     assert file["action"]["can_favorited"] is True
     assert file["action"]["can_unfavorited"] is False
-    assert file["action"]["can_choose_to_move"] is False
 
 
 @pytest.mark.asyncio
-async def test_archived_entry_matches_file_entry_shape_with_no_variants(
+async def test_archived_entry_matches_generation_result_record_shape(
     authed_client, project_task, user_id, generation_fks
 ):
-    """200 OK; archived entries carry the same fields as `GET /files/{task_uid}` file entries
-    (is_main/kind/prompt/cost/full actions) and never a `variants` key - they're always leaves."""
-    result = _make_result(project_task, user_id, generation_fks, archieved_at=datetime.now(), name="shape.png")
+    """200 OK; archived entries are a `GenerationResultRecord` with the generation-context
+    fields (status/creator/cost/model/prompt) dropped, since they're redundant per-user context."""
+    result = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=datetime.now())
 
-    resp = await authed_client.call("GET", _url(project_task.uid))
+    resp = await authed_client.call("GET", _url(project_task.project.uid))
     file = _find_flat(resp.json()["data"], result.uid)
     assert file.keys() == {
-        "uid",
+        "id",
+        "flag_created_at",
+        "flag_favourited_at",
+        "flag_archieved_at",
+        "kind",
+        "file_uid",
+        "generation_uid",
         "name",
-        "type",
+        "is_main",
         "path",
         "size",
-        "md5",
-        "creator",
-        "updater",
-        "is_main",
-        "source",
-        "kind",
-        "model",
-        "prompt",
-        "cost",
+        "version",
+        "created_at",
+        "favourited_at",
+        "archieved_at",
+        "icon",
+        "color",
         "action",
     }
-    assert "variants" not in file
-
-
-@pytest.mark.asyncio
-async def test_get_archived_files_filters_by_type(authed_client, project_task, user_id, generation_fks):
-    """200 OK; `type=image`/`type=video` restrict the list, omitted returns both."""
-    image = _make_result(
-        project_task, user_id, generation_fks, archieved_at=datetime.now(), name="a.png", kind="images"
-    )
-    video = _make_result(
-        project_task, user_id, generation_fks, archieved_at=datetime.now(), name="a.mp4", kind="videos"
-    )
-
-    resp = await authed_client.call("GET", _url(project_task.uid))
-    data = resp.json()["data"]
-    assert _find_flat(data, image.uid) is not None
-    assert _find_flat(data, video.uid) is not None
-
-    resp = await authed_client.call("GET", _url(project_task.uid, "?type=image"))
-    data = resp.json()["data"]
-    assert _find_flat(data, image.uid) is not None
-    assert _find_flat(data, video.uid) is None
-
-    resp = await authed_client.call("GET", _url(project_task.uid, "?type=video"))
-    data = resp.json()["data"]
-    assert _find_flat(data, image.uid) is None
-    assert _find_flat(data, video.uid) is not None
