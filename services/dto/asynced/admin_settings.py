@@ -228,6 +228,8 @@ async def get_model(ctx: ConnectionContext, model_uid: UUID, type: ModelUsageTyp
     ]
     if type == ModelUsageTypes.image:
         filters.append(func.json_length(DfEngineModelOptions.supported_parameters) >= 1)  # type: ignore
+    if type == ModelUsageTypes.text:
+        filters.append(func.json_length(DfEngineModelOptions.default_parameters) >= 1)  # type: ignore
 
     row = await query(ctx.db, DfEngineModelOptions, filters=tuple(filters), fetch_one=True)
     if not row:

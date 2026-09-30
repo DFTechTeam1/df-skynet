@@ -2,7 +2,6 @@ from services.mysql.factory.df_engine_api_key_rotation_issues import DfEngineApi
 from services.mysql.factory.df_engine_api_key_snapshots import DfEngineApiKeySnapshotsFactory
 from services.mysql.factory.df_engine_api_keys import DfEngineApiKeysFactory
 from services.mysql.factory.df_engine_chat_details import DfEngineChatDetailsFactory
-from services.mysql.factory.df_engine_enhancer_details import DfEngineEnhancerDetailsFactory
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_generation_reconciliation_issues import (
@@ -12,7 +11,6 @@ from services.mysql.factory.df_engine_generation_references import DfEngineGener
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_generation_uploads import DfEngineGenerationUploadsFactory
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
-from services.mysql.factory.df_engine_image_generation_details import DfEngineImageGenerationDetailsFactory
 from services.mysql.factory.df_engine_keyframe_details import DfEngineKeyframeDetailsFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
@@ -36,7 +34,6 @@ __all__ = [
     "DfEngineApiKeySnapshotsFactory",
     "DfEngineApiKeysFactory",
     "DfEngineChatDetailsFactory",
-    "DfEngineEnhancerDetailsFactory",
     "DfEngineFeaturePromptMappingsFactory",
     "DfEngineFeaturesFactory",
     "DfEngineGenerationReconciliationIssuesFactory",
@@ -44,7 +41,6 @@ __all__ = [
     "DfEngineGenerationResultsFactory",
     "DfEngineGenerationUploadsFactory",
     "DfEngineGenerationsFactory",
-    "DfEngineImageGenerationDetailsFactory",
     "DfEngineKeyframeDetailsFactory",
     "DfEngineMenuFeatureMappingsFactory",
     "DfEngineMenusFactory",

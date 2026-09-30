@@ -4,40 +4,27 @@ from typing import Any, Optional
 from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import delete, func, or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
-from schemas.response import Response
-from schemas.payload.menu_management import MenuPayload
+from schemas.response import PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql import query
 from apps.secret import OPENROUTER_API_KEY
 from services.mysql.model import (
-    DfEngineFeatures,
-    DfEngineMenuFeatureMappings,
-    DfEngineMenus,
     DfEngineModelOptions,
     DfEngineGenerations,
-    DfEngineGenerationReconciliationIssues,
     DfEngineGenerationReferences,
     DfEngineGenerationResults,
-    DfEngineGenerationUploads,
-    DfEngineImageGenerationDetails,
     DfEngineUploadFileReferences,
     Employees,
-    ProjectTasks,
     Users,
     DfEngineApiKeys,
-    Projects,
 )
-from config.variables import USD_TO_IDR_RATE
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR, GenerationKinds, GenerationStatuses
-from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.redis import get_json, set_json, delete_pattern, CacheKeys
-from services.menu_management import MenuManagementService
 from services.dto.asynced.projects import get_project, get_project_task
 from services.dto.asynced.employees import get_employee
 from services.dto.asynced.generation_files import (
@@ -47,21 +34,21 @@ from services.dto.asynced.generation_files import (
     get_generation_main_file_detail,
     get_generation_main_variants,
     get_generation_files,
+    get_enhance_prompt,
 )
+from services.dto.asynced.generation_files import _build_references
 from services.dto.asynced.uploaded_files import get_uploaded_files
 from services.dto.asynced.api_keys import get_api_key, validate_api_key_limitation
 from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting, get_model, get_menu
 from log import logging
-from schemas.payload.generations import GenerationsPayload
+from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from services.model_management import ModelManagement
 from utils.serializer import serialize
-from validations.prompt import rank_prompt
+from validations.prompt import enhance_prompt, rank_prompt
 from validations.model import validate_image_parameter, validate_references
 from parser.openrouter import parse_generation_payload
-from services.api_caller import APICaller
 from services.redis import CacheKeys
-from apps.secret import OPENROUTER_BASE_URL, UDIN_API_KEY, UDIN_BASE_URL
 from services.tasks.image_generation import image_generation
 from services.dto.format_response import GenerationResultRecord
 from utils.formatter import format_datetime, format_user_employees
@@ -273,55 +260,7 @@ class GenerationsController(CoreDependencies):
         response_model=Response,
     )
     async def generation_with_uid_to_enhance_user_prompt(
-        self, task_uid: UUID = Path(..., description="Task UID.")
-    ) -> Response:
-        response = Response()
-
-        try:
-            pass
-        except BaseError:
-            raise
-        except Exception:
-            logging.error(traceback.format_exc())
-            raise ServiceError()
-        return response
-
-    @controller.post(
-        "/generations/image-edit/{file_uid}",
-        summary="Edit generated image",
-        description=(
-            "Applies the user's edit instructions to the previously generated image "
-            "identified by `file_uid` and produces a new, modified version of it. "
-            "The original image is preserved."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["Generations"],
-        response_model=Response,
-    )
-    async def generation_with_uid_to_edit_generated_image(
-        self, file_uid: UUID = Path(description="File UID.")
-    ) -> Response:
-        response = Response()
-
-        try:
-            pass
-        except BaseError:
-            raise
-        except Exception:
-            logging.error(traceback.format_exc())
-            raise ServiceError()
-        return response
-
-    @controller.post(
-        "/generations/{task_uid}",
-        summary="Generate an image or video.",
-        description="Creates a new image or video from your prompt using AI.",
-        status_code=status.HTTP_200_OK,
-        tags=["Generations"],
-        response_model=Response,
-    )
-    async def generation_with_uid_to_generate_an_image_or_video(
-        self, schema: GenerationsPayload, task_uid: UUID = Path(description="Task UID")
+        self, schema: PromptEnhancerPayload, task_uid: UUID = Path(..., description="Task UID.")
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
@@ -354,6 +293,336 @@ class GenerationsController(CoreDependencies):
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
             merged_prompt = "\n".join([schema.prompt, *injected_prompts])
+
+            enhancer_setting = admin_setting.get("enhancer_model")
+            enhancer_model = (
+                await get_model(ctx, enhancer_setting["uid"], ModelUsageTypes.text) if enhancer_setting else None
+            )
+
+            if enhancer_model is None:
+                raise DataValidationError(message="enhancer_model_not_configured")
+
+            api_key = await get_api_key(
+                ctx, 3
+            )  # Later will be filled with employee_boss["id"], currently we override using static value
+            await validate_api_key_limitation(ctx, project["id"], api_key["id"])
+            enhanced = await enhance_prompt(merged_prompt, enhancer_model["model_id"], api_key["key"], user_id)
+
+            generation = DfEngineGenerations(
+                kind=GenerationKinds.enhancer,
+                model_id=enhancer_model["id"],
+                menu_id=menu["id"],  # type: ignore
+                feature_id=matched_feature["id"],
+                sourceable_id=api_key["id"],
+                sourceable_type=DfEngineApiKeys.__name__,
+                project_id=project["id"],
+                task_id=task["id"],
+                prompt=schema.prompt,
+                full_prompt=merged_prompt,
+                response=enhanced["text"],
+                status=GenerationStatuses.success,
+                status_code=enhanced["status_code"],
+                token_usage=enhanced["usage"].get("total_tokens"),
+                cost=enhanced["usage"].get("cost"),
+                created_by=user_id,
+            )
+            self.db.add(generation)
+            await self.db.flush()
+
+            response.data = PromptEnhancerResult(prompt=enhanced["text"], enhance_uid=generation.uid)  # type: ignore
+            await set_json(
+                ctx.redis,
+                cache_key.enhancer_detail(str(generation.uid)),
+                {
+                    "id": generation.id,
+                    "prompt": generation.prompt,
+                    "full_prompt": generation.full_prompt,
+                    "response": enhanced["text"],
+                    "enhance_uid": str(generation.uid),
+                },
+            )
+            logging.info(f"user={user_id} enhanced prompt task_uid={task_uid} enhance_uid={generation.uid}")
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.post(
+        "/generations/image-edit/{file_uid}",
+        summary="Edit generated image",
+        description=(
+            "Applies the user's edit instructions to the previously generated image "
+            "identified by `file_uid` and produces a new, modified version of it. "
+            "The original image is preserved."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Generations"],
+        response_model=Response,
+    )
+    async def generation_with_uid_to_edit_generated_image(
+        self, schema: EditImageGenerationPayload, file_uid: UUID = Path(description="File UID.")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+
+        TASK_STATUS_ONPROCESS = 1
+        PROJECT_STATUS_ONGOING = 1
+
+        try:
+            generated_files = await get_generation_files(ctx, user_id=user_id, file_uids=[str(file_uid)])
+            source_file = generated_files[0]
+            edit_parent_id = source_file["parent_id"] or source_file["id"]
+            task_id = serialize(
+                await query(
+                    db=self.db,
+                    columns=(DfEngineGenerations.task_id,),
+                    table=DfEngineGenerations,
+                    filters=(DfEngineGenerations.uid == generated_files[0]["generation_uid"],),
+                    fetch_one=True,
+                )
+            )
+
+            task = await get_project_task(ctx, task_id=task_id)
+            # if task['status'] != TASK_STATUS_ONPROCESS:
+            #     raise DataValidationError(message="project_task_not_onprocess")
+
+            project = await get_project(ctx, project_id=task["project_id"])
+            # if project['status'] != PROJECT_STATUS_ONGOING:
+            #     raise DataValidationError(message="project_not_ongoing")
+
+            employee_user = await get_employee(ctx, user_id=user_id)
+            employee_boss = await get_employee(ctx, employee_id=employee_user["boss_id"])
+
+            admin_setting = await get_admin_settings(ctx)
+            project_setting = await get_project_setting(ctx, project_uid=project["uid"])
+
+            if len(schema.prompt) > project_setting["compose_input_max_chars"]:
+                raise DataValidationError(
+                    message="prompt_length_exceeded",
+                    context={"length": len(schema.prompt), "max_chars": project_setting["compose_input_max_chars"]},
+                )
+
+            resolved_prompt = schema.prompt
+            enhance_id = None
+            if schema.enhance_uid:
+                enhanced = await get_enhance_prompt(ctx, schema.enhance_uid)
+                response.data = enhanced
+                enhance_id = enhanced["id"]
+                resolved_prompt = enhanced["response"]
+
+            menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
+            matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
+            injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
+            merged_prompt = "\n".join([resolved_prompt, *injected_prompts])
+            if schema.x_min is not None:
+                merged_prompt = "\n".join(
+                    [
+                        merged_prompt,
+                        f"Apply edits only within the focus area (normalized 0-1 coordinates): "
+                        f"x_min={schema.x_min}, x_max={schema.x_max}, y_min={schema.y_min}, y_max={schema.y_max}.",
+                    ]
+                )
+
+            assistant_setting = admin_setting.get("assistant_model")
+            enhancer_setting = admin_setting.get("enhancer_model")
+            generation_model = await get_model(ctx, schema.model_uid, ModelUsageTypes.image)
+            assistant_model = (
+                await get_model(ctx, assistant_setting["uid"], ModelUsageTypes.text) if assistant_setting else None
+            )
+            enhancer_model = (
+                await get_model(ctx, enhancer_setting["uid"], ModelUsageTypes.text) if enhancer_setting else None
+            )
+            ranking_model = enhancer_model or assistant_model
+            if ranking_model is None:
+                raise DataValidationError(message="ranking_model_not_configured")
+
+            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "generated"]
+            generated_file_uids.append(str(file_uid))
+            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "upload"]
+
+            uploaded_files = await get_uploaded_files(ctx, uploaded_file_uids)
+            generated_files = await get_generation_files(ctx, file_uids=generated_file_uids)
+
+            diva_references = [str(ref.diva_url) for ref in schema.references if ref.type == "diva"]
+            uploaded_file_references = [record["path"] for record in uploaded_files]
+            generated_references = [record["path"] for record in generated_files]
+            all_references = await validate_references(
+                [*diva_references, *uploaded_file_references, *generated_references],
+                generation_model["supported_parameters"],
+            )
+
+            api_key = await get_api_key(
+                ctx, 3
+            )  # Later will be filled with employee_boss["id"], currently we override using static value
+            await validate_api_key_limitation(ctx, project["id"], api_key["id"])
+            await rank_prompt(
+                resolved_prompt,
+                ranking_model["model_id"],
+                api_key["key"],
+                GenerationKinds.image,
+            )
+
+            """Insert generation record"""
+            generation = DfEngineGenerations(
+                kind=GenerationKinds.image_edit,
+                model_id=generation_model["id"],
+                menu_id=menu["id"],  # type: ignore
+                feature_id=matched_feature["id"],
+                sourceable_id=api_key["id"],
+                sourceable_type=DfEngineApiKeys.__name__,
+                project_id=project["id"],
+                task_id=task["id"],
+                prompt=resolved_prompt,
+                full_prompt=merged_prompt,
+                parameter=schema.parameter,
+                created_by=user_id,
+                enhance_id=enhance_id,
+            )
+            self.db.add(generation)
+            await self.db.flush()
+
+            """Insert reference records using data already fetched via get_uploaded_files/get_generation_files"""
+            for file in uploaded_files:
+                self.db.add(DfEngineUploadFileReferences(generation_id=generation.id, file_id=file["id"]))
+            for file in generated_files:
+                self.db.add(DfEngineGenerationReferences(generation_id=generation.id, result_id=file["id"]))
+            await self.db.flush()
+
+            validate_image_parameter(schema.parameter, generation_model["supported_parameters"])
+            if schema.parameter.get("n", 1) != 1:
+                raise DataValidationError(
+                    message="generation_parameters_invalid", error={"n": ["generation_parameter_above_maximum"]}
+                )
+            payload = parse_generation_payload(
+                "image",
+                generation_model["model_id"],
+                merged_prompt,
+                schema.parameter,
+                all_references,
+            )
+            await self.db.commit()  # must be visible to the Celery worker's own DB connection before dispatch
+            image_generation.delay(  # type:ignore
+                generation.id,
+                user_id,
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}"
+                },  # Later will be changed from API key from boss_id
+                payload=payload,
+            )
+
+            """Invalidate cache related to is_main listings, same as set-main"""
+            await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(task["id"]))
+            await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
+            await delete_pattern(ctx.redis, ctx.key.user_galleries_pattern(user_id))
+            await delete_pattern(ctx.redis, ctx.key.generation_file_detail_pattern(user_id))
+            await self.redis.delete(cache_key.generation_files_result_list(user_id, project["id"]))
+
+            generation_detail_key = cache_key.generation_detail(user_id, str(generation.uid))
+            record = serialize(
+                await query(
+                    db=self.db,
+                    table=DfEngineGenerations,
+                    options=(
+                        selectinload(DfEngineGenerations.created_by_user)  # type: ignore
+                        .load_only(Users.image)  # type: ignore
+                        .selectinload(Users.employees)  # type: ignore
+                        .load_only(Employees.nickname),  # type: ignore
+                        selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+                    ),
+                    filters=(DfEngineGenerations.id == generation.id,),
+                    fetch_one=True,
+                )
+            )
+            response.data = GenerationResultRecord(
+                kind=record["kind"],
+                generation_uid=record["uid"],
+                parent_id=edit_parent_id,
+                created_at=format_datetime(record["created_at"]),
+                icon=GENERATION_KIND_ICON_COLOR.get(record["kind"], {}).get("icon"),
+                color=GENERATION_KIND_ICON_COLOR.get(record["kind"], {}).get("color"),
+                status=record["status"],
+                creator=format_user_employees(record.get("created_by_user")),
+                model=(record.get("model_option") or {}).get("name"),
+                prompt=record["prompt"],
+                parameter=record.get("parameter"),
+            ).model_dump(
+                mode="json",
+                exclude={
+                    "flag_created_at",
+                    "flag_favourited_at",
+                    "flag_archieved_at",
+                    "version",
+                    "updated_at",
+                    "parameter",
+                },
+            )
+            response.data["type"] = record["kind"]
+            await set_json(ctx.redis, generation_detail_key, response.data)
+            logging.info(
+                f"user={user_id} queued image edit file_uid={file_uid} generation_uid={generation.uid} "
+                f"parent_id={edit_parent_id}"
+            )
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.post(
+        "/generations/{task_uid}",
+        summary="Generate an image or video.",
+        description="Creates a new image or video from your prompt using AI.",
+        status_code=status.HTTP_200_OK,
+        tags=["Generations"],
+        response_model=Response,
+    )
+    async def generation_with_uid_to_generate_an_image_or_video(
+        self, schema: ImageVideoGenerationPayload, task_uid: UUID = Path(description="Task UID")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+
+        # TASK_STATUS_ONPROCESS = 1
+        # PROJECT_STATUS_ONGOING = 1
+
+        try:
+            task = await get_project_task(ctx, task_uid)
+            # if task['status'] != TASK_STATUS_ONPROCESS:
+            #     raise DataValidationError(message="project_task_not_onprocess")
+
+            project = await get_project(ctx, project_id=task["project_id"])
+            # if project['status'] != PROJECT_STATUS_ONGOING:
+            #     raise DataValidationError(message="project_not_ongoing")
+
+            employee_user = await get_employee(ctx, user_id=user_id)
+            employee_boss = await get_employee(ctx, employee_id=employee_user["boss_id"])
+
+            admin_setting = await get_admin_settings(ctx)
+            project_setting = await get_project_setting(ctx, project_uid=project["uid"])
+
+            if len(schema.prompt) > project_setting["compose_input_max_chars"]:
+                raise DataValidationError(
+                    message="prompt_length_exceeded",
+                    context={"length": len(schema.prompt), "max_chars": project_setting["compose_input_max_chars"]},
+                )
+
+            resolved_prompt = schema.prompt
+            enhance_id = None
+            if schema.enhance_uid:
+                enhanced = await get_enhance_prompt(ctx, schema.enhance_uid)
+                response.data = enhanced
+                enhance_id = enhanced["id"]
+                resolved_prompt = enhanced["response"]
+
+            menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
+            matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
+            injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
+            merged_prompt = "\n".join([resolved_prompt, *injected_prompts])
 
             assistant_setting = admin_setting.get("assistant_model")
             enhancer_setting = admin_setting.get("enhancer_model")
@@ -389,7 +658,7 @@ class GenerationsController(CoreDependencies):
             )  # Later will be filled with employee_boss["id"], currently we override using static value
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             await rank_prompt(
-                schema.prompt,
+                resolved_prompt,
                 ranking_model["model_id"],
                 api_key["key"],
                 GenerationKinds.image if schema.type == "image" else GenerationKinds.video,
@@ -405,10 +674,11 @@ class GenerationsController(CoreDependencies):
                 sourceable_type=DfEngineApiKeys.__name__,
                 project_id=project["id"],
                 task_id=task["id"],
-                prompt=schema.prompt,
+                prompt=resolved_prompt,
                 full_prompt=merged_prompt,
                 parameter=schema.parameter,
                 created_by=user_id,
+                enhance_id=enhance_id,
             )
             self.db.add(generation)
             await self.db.flush()
@@ -430,7 +700,6 @@ class GenerationsController(CoreDependencies):
                         schema.parameter,
                         all_references,
                     )
-                    self.db.add(DfEngineImageGenerationDetails(generation_id=generation.id, parameter=payload))
                     await self.db.commit()
                     image_generation.delay(  # type:ignore
                         generation.id,
@@ -442,7 +711,7 @@ class GenerationsController(CoreDependencies):
                     )
                 case _:
                     """Will be configured later"""
-                    await self.db.commit()
+                    logging.info(f"user={user_id} generation kind={schema.type} not yet implemented, skipped")
                     return response
 
             """Invalidate cache related to is_main listings, same as set-main"""
@@ -492,12 +761,14 @@ class GenerationsController(CoreDependencies):
                     "flag_archieved_at",
                     "version",
                     "updated_at",
-                    "full_prompt",
                     "parameter",
                 },
             )
             response.data["type"] = record["kind"]
             await set_json(ctx.redis, generation_detail_key, response.data)
+            logging.info(
+                f"user={user_id} queued {schema.type} generation task_uid={task_uid} generation_uid={generation.uid}"
+            )
         except BaseError:
             raise
         except Exception:
@@ -506,30 +777,25 @@ class GenerationsController(CoreDependencies):
         return response
 
     @controller.get(
-        "/generations/{file_uid}",
-        summary="Fetch a generated file's result.",
+        "/generation-main-results/{generation_uid}",
+        summary="Fetch generation main result.",
         description="Poll this once a generation finishes (e.g. after a Pusher success event) to fetch the final generated file record.",
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
     )
-    async def generation_with_file_uid_to_fetch_result(
-        self, file_uid: UUID = Path(description="Generated file UID.")
+    async def generation_with_generation_uid_to_fetch_main_generation_result(
+        self, generation_uid: UUID = Path(description="Generation UID.")
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            generation_file_detail_key = cache_key.generation_file_detail(user_id, str(file_uid))
-            cached_generation_file_detail = await get_json(ctx.redis, generation_file_detail_key)
-            if cached_generation_file_detail is not None:
-                response.data = cached_generation_file_detail
-                return response
-
             record = serialize(
                 await query(
-                    db=self.db,
-                    table=DfEngineGenerationResults,
+                    ctx.db,
+                    DfEngineGenerationResults,
+                    joins=(DfEngineGenerationResults.generation,),  # type: ignore
                     options=(
                         selectinload(DfEngineGenerationResults.created_by_user)  # type: ignore
                         .load_only(Users.image)  # type: ignore
@@ -547,13 +813,18 @@ class GenerationsController(CoreDependencies):
                         .selectinload(DfEngineGenerations.model_option)  # type: ignore
                         .load_only(DfEngineModelOptions.name),  # type: ignore
                     ),
-                    filters=(DfEngineGenerationResults.uid == str(file_uid),),  # type: ignore
+                    filters=(
+                        DfEngineGenerations.uid == str(generation_uid),  # type: ignore
+                        DfEngineGenerationResults.is_main == True,  # type: ignore
+                        DfEngineGenerations.kind.in_(
+                            ["image", "image_edit", "video"],
+                        ),  # type: ignore
+                    ),
                     fetch_one=True,
                 )
             )
             if not record:
                 raise DataNotFoundError(message="generation_file_not_found")
-
             response.data = GenerationResultRecord.from_result(record, user_id).model_dump(
                 mode="json",
                 exclude={
@@ -566,7 +837,74 @@ class GenerationsController(CoreDependencies):
                     "full_prompt",
                 },
             )
-            await set_json(ctx.redis, generation_file_detail_key, response.data)
+            logging.info(f"user={user_id} fetched generation result source=db generation_uid={generation_uid}")
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/generation-edit-results/{generation_uid}",
+        summary="Fetch image edit generation result.",
+        description="Returns the full record for a specific generated file version, including action flags and references.",
+        status_code=status.HTTP_200_OK,
+        tags=["Generations"],
+        response_model=Response,
+    )
+    async def generation_with_generation_uid_to_fetch_edit_result(
+        self, generation_uid: UUID = Path(description="Generation UID.")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            generation_id = (
+                select(DfEngineGenerations.id)  # type: ignore
+                .where(
+                    DfEngineGenerations.uid == str(generation_uid),
+                    DfEngineGenerations.kind.in_(
+                        ["image", "image_edit", "video"],
+                    ),  # type: ignore
+                )
+                .scalar_subquery()
+            )
+            record = serialize(
+                await query(
+                    ctx.db,
+                    DfEngineGenerationResults,
+                    options=(
+                        selectinload(DfEngineGenerationResults.created_by_user)  # type: ignore
+                        .load_only(Users.image)  # type: ignore
+                        .selectinload(Users.employees)  # type: ignore
+                        .load_only(Employees.nickname),  # type: ignore
+                        selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                        .load_only(
+                            DfEngineGenerations.uid,  # type: ignore
+                            DfEngineGenerations.kind,  # type: ignore
+                            DfEngineGenerations.status,  # type: ignore
+                            DfEngineGenerations.prompt,  # type: ignore
+                            DfEngineGenerations.full_prompt,  # type: ignore
+                            DfEngineGenerations.cost,  # type: ignore
+                        )
+                        .selectinload(DfEngineGenerations.model_option)  # type: ignore
+                        .load_only(DfEngineModelOptions.name),  # type: ignore
+                    ),
+                    filters=(DfEngineGenerationResults.generation_id == generation_id,),  # type: ignore
+                    fetch_one=True,
+                )
+            )
+            if not record:
+                raise DataNotFoundError(message="generation_file_not_found")
+            response.data = {
+                **GenerationResultRecord.from_result(record, user_id).model_dump(
+                    mode="json",
+                    exclude={"flag_created_at", "flag_favourited_at", "flag_archieved_at"},
+                ),
+                "references": _build_references(record.get("generation") or {}),
+            }
+            logging.info(f"user={user_id} fetched edit result detail generation_uid={generation_uid}")
         except BaseError:
             raise
         except Exception:
@@ -655,6 +993,9 @@ class GenerationsController(CoreDependencies):
                 else:
                     await set_json(ctx.redis, generation_variant_key, target)
                     response.data = target
+            logging.info(
+                f"user={user_id} fetched generated file details file_uid={file_uid} is_main={target['is_main']}"
+            )
         except BaseError:
             raise
         except Exception:

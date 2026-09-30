@@ -34,6 +34,8 @@ class ModelManagement:
             conditions.append(DfEngineModelOptions.type == type)  # type: ignore
         if type == "image":
             conditions.append(func.json_length(DfEngineModelOptions.supported_parameters) >= 1)  # type: ignore
+        if type == "text":
+            conditions.append(func.json_length(DfEngineModelOptions.default_parameters) >= 1)  # type: ignore
         if search:
             conditions.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
         if is_enabled is not None:

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, SQLModel
@@ -14,7 +15,7 @@ class DfEngineApiKeySnapshots(SQLModel, table=True):
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
-    limit: Optional[float] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
+    limit: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
     limit_reset: Optional[str] = Field(default=None, sa_column=Column(String(20), nullable=True))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     key: str = Field(sa_column=Column(String(255), nullable=False, unique=True))

@@ -80,11 +80,24 @@ class DfEngineGenerations(SQLModel, table=True):
     response: Optional[str] = Field(default=None, sa_column=Column(Text(length=4294967295), nullable=True))
     status_code: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     token_usage: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
-    cost: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
+    cost: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(12, 6), nullable=True))
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
     )
-
+    enhance_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_generations.id"), nullable=True),
+    )
+    x_min: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
+    x_max: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
+    y_min: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
+    y_max: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
+    enhancer: Optional["DfEngineGenerations"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={
+            "foreign_keys": "[DfEngineGenerations.enhance_id]",
+            "remote_side": "[DfEngineGenerations.id]",
+        }
+    )
     model_option: Optional["DfEngineModelOptions"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.model_id]"}
     )

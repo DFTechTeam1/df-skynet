@@ -4,12 +4,12 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport
 from jose import jwt
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import selectinload
 from uuid import uuid4
-from apps.secret import DB_ASYNC_URL, ERP_EMAIL, ERP_PASSWORD, LOGIN_URL
+from apps.secret import DB_ASYNC_URL, DB_SYNC_URL, ERP_EMAIL, ERP_PASSWORD, LOGIN_URL
 from services.api_caller import APICaller
-from services.mysql import make_session
+from services.mysql import make_session, make_sync_session
 from services.mysql.model import (
     DfEngineApiKeys,
     Employees,
@@ -22,6 +22,21 @@ from services.mysql.model import (
 
 EMPLOYEE_STATUS_RESIGNED = 6
 ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager"]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cleanup_factory_created_rows():
+    import services.mysql.factory as _factories
+
+    session = make_sync_session(DB_SYNC_URL)
+    models = {getattr(_factories, name)._meta.model for name in _factories.__all__}
+    watermarks = {model: session.execute(select(func.max(model.id))).scalar() or 0 for model in models}
+    yield
+    session.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+    for model, watermark in watermarks.items():
+        session.execute(delete(model).where(model.id > watermark))
+    session.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+    session.commit()
 
 
 @pytest.fixture(scope="session")

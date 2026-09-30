@@ -10,7 +10,7 @@ class GenerationReferences(BaseModel):
     type: Literal["diva", "upload", "generated"]
 
 
-class EditGenerationsPayload(BaseModel):
+class EditImageGenerationPayload(BaseModel):
     prompt: str = Field(min_length=1, description="User prompts.")
     enhance_uid: Optional[UUID] = Field(None, description="Enhancer UID.")
     model_uid: UUID = Field(default=UUID("e440a822-5ada-4ea5-99d9-92f0d38edf96"), description="Model UID.")
@@ -51,7 +51,7 @@ class EditGenerationsPayload(BaseModel):
         return self
 
 
-class GenerationsPayload(BaseModel):
+class ImageVideoGenerationPayload(BaseModel):
     prompt: str = Field(min_length=1, description="User prompts.")
     enhance_uid: Optional[UUID] = Field(None, description="Enhancer UID.")
     model_uid: UUID = Field(default=UUID("e440a822-5ada-4ea5-99d9-92f0d38edf96"), description="Model UID.")

@@ -11,6 +11,7 @@ from apps.secret import DB_ASYNC_URL
 from services.mysql import engine, make_session, query
 from services.mysql.model import ProjectClasses, DfEngineSettings
 from services.mysql.factory import DfEngineSettingsFactory
+from services.redis import client as redis_client, CacheKeys
 
 SETTING_CODE = "admin_setting"
 
@@ -57,6 +58,7 @@ async def seed() -> None:
     for key, value in missing.items():
         DfEngineSettingsFactory.create(key=key, value=json.dumps(value), code=SETTING_CODE)
 
+    await redis_client().delete(CacheKeys().setting_global())
     logging.info(f"seeder={SETTING_CODE} inserted {len(missing)} new row(s) for {len(project_classes)} project class")
 
 
