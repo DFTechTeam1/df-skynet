@@ -82,8 +82,9 @@ def validate_image_parameter(parameter: dict[str, Any], supported_parameter: dic
 
     errors: dict[str, list[str]] = {}
     for key, value in parameter.items():
-        if key == "n" and value != 1:
-            errors.setdefault(key, []).append("generation_parameter_above_maximum")
+        if key == "n":
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                errors.setdefault(key, []).append("generation_parameter_below_minimum")
             continue
         spec = supported_parameter.get(key)
         if spec is None:

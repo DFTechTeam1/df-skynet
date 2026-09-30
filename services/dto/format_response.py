@@ -53,6 +53,7 @@ class GenerationResultRecord(BaseModel):
     kind: Optional[str] = None
     file_uid: Optional[Any] = None
     generation_uid: Optional[str] = None
+    parent_id: Optional[int] = None
     name: Optional[str] = None
     is_main: Optional[bool] = None
     path: Optional[str] = None
@@ -88,6 +89,7 @@ class GenerationResultRecord(BaseModel):
             kind=kind,
             file_uid=result["uid"],
             generation_uid=generation.get("uid"),
+            parent_id=result["parent_id"],
             name=result["name"],
             is_main=result["is_main"],
             path=format_udin_url(result["path"]),

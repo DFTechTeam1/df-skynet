@@ -3,6 +3,7 @@ import time
 from typing import Any
 from celery.exceptions import SoftTimeLimitExceeded
 from httpx import HTTPStatusError, NetworkError, TimeoutException
+from sqlalchemy import or_
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
 from services.api_caller import APICaller
@@ -10,9 +11,14 @@ from services.celery_app import celery_app
 from services.dto import SyncedConnectionContext
 from services.dto.synced.projects import get_project
 from services.mysql import get_sync_db
-from services.mysql.model import DfEngineGenerationResults, DfEngineGenerationUploads, DfEngineGenerations
+from services.mysql.model import (
+    DfEngineGenerationReferences,
+    DfEngineGenerationResults,
+    DfEngineGenerationUploads,
+    DfEngineGenerations,
+)
 from services.mysql.model.df_engine_generation_uploads import UploadStatuses
-from services.mysql.model.df_engine_generations import GenerationStatuses
+from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_json_sync, sync_client
 from error import DataNotFoundError
 from utils import local_time
@@ -81,11 +87,39 @@ def udin_uploader(
         images = list(json.loads(generation.response).values())
         uploaded_versions = {result.version for result in existing_results}
         parent = next((result for result in existing_results if result.parent_id is None), None)
+        parent_id = parent.id if parent else None
+        version_start = 0
+        family_ids: list[int] = []
+
+        if generation.kind == GenerationKinds.image_edit:
+            reference = (
+                db.query(DfEngineGenerationReferences)
+                .filter_by(generation_id=generation_id)
+                .order_by(DfEngineGenerationReferences.id)  # type: ignore
+                .first()
+            )
+            source_result = db.get(DfEngineGenerationResults, reference.result_id) if reference else None
+            if source_result is not None:
+                root_id = source_result.parent_id or source_result.id
+                family = (
+                    db.query(DfEngineGenerationResults)
+                    .filter(
+                        or_(
+                            DfEngineGenerationResults.id == root_id,  # type: ignore
+                            DfEngineGenerationResults.parent_id == root_id,  # type: ignore
+                        )
+                    )
+                    .all()
+                )
+                family_ids = [result.id for result in family]
+                version_start = max((result.version for result in family), default=0)
+                parent_id = root_id
 
     caller = APICaller(base_url=UDIN_BASE_URL, headers={"X-API-Key": UDIN_API_KEY}, timeout=30)
+    demoted_family = False
     try:
         for idx, b64_json in enumerate(images):
-            version = idx + 1
+            version = version_start + idx + 1
             if version in uploaded_versions:
                 continue  # already uploaded on a prior attempt of this task
 
@@ -115,6 +149,12 @@ def udin_uploader(
 
             uploaded = response.json().get("data") or {}
             with get_sync_db() as db:
+                if family_ids and not demoted_family:
+                    db.query(DfEngineGenerationResults).filter(
+                        DfEngineGenerationResults.id.in_(family_ids)  # type: ignore
+                    ).update({DfEngineGenerationResults.is_main: False}, synchronize_session=False)  # type: ignore
+                    demoted_family = True
+
                 result = DfEngineGenerationResults(
                     generation_id=generation_id,
                     name=uploaded.get("name", ""),
@@ -122,15 +162,15 @@ def udin_uploader(
                     size=uploaded.get("size", 0),
                     md5=uploaded.get("md5"),
                     version=version,
-                    is_main=version == 1,
-                    parent_id=parent.id if parent else None,
+                    is_main=idx == 0,
+                    parent_id=parent_id,
                     created_by=user_id,
                 )
                 db.add(result)
                 db.flush()
                 db.refresh(result)
-                if version == 1:
-                    parent = result
+                if not family_ids and idx == 0:
+                    parent_id = result.id
     finally:
         caller.sync_client.close()
 
@@ -170,6 +210,21 @@ def udin_uploader(
                 delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(task_id))
                 redis.delete(cache_key.generation_files_result_list(user_id, project_id))
                 delete_pattern_sync(redis, cache_key.generation_files_references_picker_pattern(user_id))
+
+            if family_ids:
+                with get_sync_db() as db:
+                    family_rows = (
+                        db.query(DfEngineGenerationResults.uid, DfEngineGenerations.task_id)  # type: ignore
+                        .join(DfEngineGenerations, DfEngineGenerations.id == DfEngineGenerationResults.generation_id)
+                        .filter(DfEngineGenerationResults.id.in_(family_ids))  # type: ignore
+                        .all()
+                    )
+                for family_uid, family_task_id in family_rows:
+                    redis.delete(cache_key.generation_files_main_detail(family_uid))
+                    redis.delete(cache_key.generation_files_variant_detail(family_uid))
+                    redis.delete(cache_key.generation_files_variants_detail(family_uid))
+                    if family_task_id is not None:
+                        delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(family_task_id))
 
             return {"generation_id": generation_id, "status": "success", "result_ids": result_ids}
         except Exception:

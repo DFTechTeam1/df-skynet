@@ -35,3 +35,8 @@ class DfEngineGenerationsFactory(SQLAlchemyModelFactory):
     token_usage = None
     cost = None
     created_by = None
+    enhance_id = None
+    x_min = None
+    x_max = None
+    y_min = None
+    y_max = None

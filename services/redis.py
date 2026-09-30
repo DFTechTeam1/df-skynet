@@ -312,6 +312,9 @@ class CacheKeys:
     def generation_detail(self, user_id: int, generation_uid: str) -> str:
         return f"generation_detail:user_id={user_id}:generation_uid={generation_uid}"
 
+    def enhancer_detail(self, generation_uid: str) -> str:
+        return f"enhancer_detail:generation_uid={generation_uid}"
+
     def generation_file_detail_pattern(self, user_id: int) -> str:
         return f"generation_files:detail:user_id={user_id}:file_uid=*"
 

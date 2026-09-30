@@ -15,6 +15,7 @@ from services.mysql.model import (
     Projects,
     ProjectTasks,
 )
+from services.mysql.model.df_engine_generations import GenerationKinds
 from log import logging
 from error import DataNotFoundError, DataValidationError
 from services.mysql import query
@@ -165,6 +166,7 @@ async def get_archieved_files(ctx: ConnectionContext, project_id: int, user_id: 
                 "prompt",
                 "full_prompt",
                 "parameter",
+                "parent_id",
             )
             for record in serialize(generations)
             for result in record["results"]
@@ -180,8 +182,35 @@ async def get_archieved_files(ctx: ConnectionContext, project_id: int, user_id: 
     return archieved_files
 
 
-async def get_enhanced_prompt(ctx: ConnectionContext, generation_uid: UUID) -> dict[str, Any]:
-    return {}
+async def get_enhance_prompt(ctx: ConnectionContext, enhance_uid: UUID) -> dict[str, Any]:
+    enhancer_key = ctx.key.enhancer_detail(str(enhance_uid))
+    cached = await get_json(ctx.redis, enhancer_key)
+    if cached is not None:
+        logging.info(f"enhance_uid={enhance_uid} fetched enhanced prompt source=cache")
+        return cached
+
+    generation = await query(
+        ctx.db,
+        DfEngineGenerations,
+        filters=(
+            DfEngineGenerations.uid == str(enhance_uid),  # type: ignore
+            DfEngineGenerations.kind == GenerationKinds.enhancer,  # type: ignore
+        ),
+        fetch_one=True,
+    )
+    if not generation:
+        raise DataNotFoundError(message="enhanced_prompt_not_found")
+
+    data = {
+        "id": generation.id,
+        "prompt": generation.prompt,
+        "full_prompt": generation.full_prompt,
+        "enhance_uid": str(generation.uid),
+        "response": generation.response,
+    }
+    await set_json(ctx.redis, enhancer_key, data)
+    logging.info(f"enhance_uid={enhance_uid} fetched enhanced prompt source=db")
+    return data
 
 
 async def get_generation_files(
@@ -232,6 +261,7 @@ async def get_generation_files(
             )
             for record in serialize(generations)
             for result in record["results"]
+            if not file_uids or result["uid"] in file_uids
         ),
         key=lambda r: r["flag_created_at"],
         reverse=True,
@@ -285,6 +315,7 @@ async def get_favourited_files(ctx: ConnectionContext, project_id: int, user_id:
                 "prompt",
                 "full_prompt",
                 "parameter",
+                "parent_id",
             )
             for record in serialize(generations)
             for result in record["results"]

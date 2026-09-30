@@ -45,4 +45,5 @@ def test_task_profiles_cover_every_generation_kind_used_in_validation():
         GenerationKinds.element,
         GenerationKinds.storyboard,
         GenerationKinds.chat,
+        GenerationKinds.enhancer,
     }

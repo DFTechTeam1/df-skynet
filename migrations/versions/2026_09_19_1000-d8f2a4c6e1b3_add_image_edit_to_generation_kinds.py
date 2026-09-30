@@ -35,7 +35,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
+    """Downgrade schema. `image_edit` isn't in OLD_KINDS, so any row already
+    using it is reassigned to `image` first - otherwise MySQL refuses to
+    shrink the enum whenever such rows exist."""
+    op.execute(f"UPDATE {TABLE_NAME} SET kind = 'image' WHERE kind = 'image_edit'")
     op.alter_column(
         TABLE_NAME,
         "kind",

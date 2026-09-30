@@ -2,7 +2,6 @@ from services.mysql.model.df_engine_api_key_rotation_issues import DfEngineApiKe
 from services.mysql.model.df_engine_api_key_snapshots import DfEngineApiKeySnapshots
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model.df_engine_chat_details import DfEngineChatDetails
-from services.mysql.model.df_engine_enhancer_details import DfEngineEnhancerDetails
 from services.mysql.model.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappings
 from services.mysql.model.df_engine_features import DfEngineFeatures
 from services.mysql.model.df_engine_generation_reconciliation_issues import DfEngineGenerationReconciliationIssues
@@ -10,7 +9,6 @@ from services.mysql.model.df_engine_generation_references import DfEngineGenerat
 from services.mysql.model.df_engine_generation_results import DfEngineGenerationResults
 from services.mysql.model.df_engine_generation_uploads import DfEngineGenerationUploads
 from services.mysql.model.df_engine_generations import DfEngineGenerations
-from services.mysql.model.df_engine_image_generation_details import DfEngineImageGenerationDetails
 from services.mysql.model.df_engine_keyframe_details import DfEngineKeyframeDetails
 from services.mysql.model.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappings
 from services.mysql.model.df_engine_menus import DfEngineMenus
@@ -42,7 +40,6 @@ __all__ = [
     "DfEngineApiKeySnapshots",
     "DfEngineApiKeys",
     "DfEngineChatDetails",
-    "DfEngineEnhancerDetails",
     "DfEngineFeaturePromptMappings",
     "DfEngineFeatures",
     "DfEngineGenerationReconciliationIssues",
@@ -50,7 +47,6 @@ __all__ = [
     "DfEngineGenerationResults",
     "DfEngineGenerationUploads",
     "DfEngineGenerations",
-    "DfEngineImageGenerationDetails",
     "DfEngineKeyframeDetails",
     "DfEngineMenuFeatureMappings",
     "DfEngineMenus",

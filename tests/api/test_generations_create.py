@@ -91,7 +91,11 @@ async def ranking_model(db_session):
     which full-replaces `folder_depth_limit`/`admin_view` too and would clobber
     shared state) and snapshots/restores it, matching this file's other fixtures."""
     model = DfEngineModelOptionsFactory.create(
-        type=ModelUsageTypes.text, is_enabled=True, is_available=True, deleted_at=None
+        type=ModelUsageTypes.text,
+        is_enabled=True,
+        is_available=True,
+        deleted_at=None,
+        default_parameters={"temperature": 0.7},
     )
     existing = (
         (
@@ -125,7 +129,7 @@ async def ranking_model(db_session):
                 DfEngineSettings.code == "admin_setting", DfEngineSettings.key == "enhancer_model"
             )
         )
-        if previous_value is not None:
+        if previous_value is not None:  # pragma: no cover - only hit if enhancer_model was already configured
             db_session.add(DfEngineSettings(code="admin_setting", key="enhancer_model", value=previous_value))
         await db_session.commit()
         await delete_pattern(redis_client(), CacheKeys().setting_global())
@@ -281,8 +285,12 @@ async def test_video_type_returns_early_with_no_data(
 
 
 @pytest.mark.asyncio
-async def test_unknown_menu_is_404(authed_client, project_task, generation_menu_feature, image_model):
-    """404 menu_not_found when menu_uid matches no active menu — exercises `except BaseError: raise`."""
+async def test_unknown_menu_is_404(
+    authed_client, project_task, generation_menu_feature, image_model, generation_project_settings
+):
+    """404 menu_not_found when menu_uid matches no active menu — exercises `except BaseError: raise`.
+    Needs `generation_project_settings` since `get_project_setting` runs before the menu lookup and
+    would otherwise 422 on this project having no project_class_limitations configured."""
     _menu, feature = generation_menu_feature
     unmapped_menu = SimpleNamespace(uid="00000000-0000-0000-0000-000000000000")
     payload = _payload(unmapped_menu, feature, image_model)

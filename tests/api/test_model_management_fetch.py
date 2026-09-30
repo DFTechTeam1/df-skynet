@@ -28,7 +28,12 @@ async def test_fetch_filter_by_type(authed_client):
     """200 OK; `type` restricts results to that one usage type only."""
     prefix = f"TypeFilter{uuid4().hex[:8]}"
     text_row = DfEngineModelOptionsFactory.create(
-        name=f"{prefix}-text", type="text", is_available=True, is_enabled=False, is_main=False
+        name=f"{prefix}-text",
+        type="text",
+        is_available=True,
+        is_enabled=False,
+        is_main=False,
+        default_parameters={"temperature": 0.7},
     )
     image_row = DfEngineModelOptionsFactory.create(
         name=f"{prefix}-image", type="image", is_available=True, is_enabled=False, is_main=False

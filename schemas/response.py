@@ -1,4 +1,5 @@
 from typing import Any, Optional
+from uuid import UUID
 from pydantic import BaseModel, Field
 from middlewares.lang import current_lang, resolve_message
 
@@ -18,3 +19,8 @@ class OpenrouterRankingResponse(BaseModel):
     relatedness: float = Field(
         ge=0, le=1, description="Measure how related the prompt is to the given task description.", default=0
     )
+
+
+class PromptEnhancerResult(BaseModel):
+    prompt: str
+    enhance_uid: UUID
