@@ -46,8 +46,13 @@ from error import ServiceError, BaseError, DataNotFoundError, DataValidationErro
 from services.model_management import ModelManagement
 from utils.serializer import serialize
 from validations.prompt import enhance_prompt, rank_prompt
-from validations.model import validate_image_parameter, validate_references
-from parser.openrouter import parse_generation_payload
+from validations.model import (
+    validate_image_model_parameter,
+    validate_video_model_parameter,
+    validate_total_image_references,
+    validate_image_availability,
+)
+from parser.openrouter import parse_openrouter_payload
 from services.redis import CacheKeys
 from services.tasks.image_generation import image_generation
 from services.dto.format_response import GenerationResultRecord
@@ -439,20 +444,23 @@ class GenerationsController(CoreDependencies):
             if ranking_model is None:
                 raise DataValidationError(message="ranking_model_not_configured")
 
-            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "generated"]
+            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "generated"]
             generated_file_uids.append(str(file_uid))
-            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "upload"]
+            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "upload"]
 
             uploaded_files = await get_uploaded_files(ctx, uploaded_file_uids)
             generated_files = await get_generation_files(ctx, file_uids=generated_file_uids)
 
-            diva_references = [str(ref.diva_url) for ref in schema.references if ref.type == "diva"]
+            diva_references = [str(ref.diva_url) for ref in schema.references if ref.source == "diva"]
             uploaded_file_references = [record["path"] for record in uploaded_files]
             generated_references = [record["path"] for record in generated_files]
-            all_references = await validate_references(
-                [*diva_references, *uploaded_file_references, *generated_references],
-                generation_model["supported_parameters"],
+            user_image_references = [*diva_references, *uploaded_file_references, *generated_references]
+
+            input_references_parameter = (generation_model["supported_parameters"] or {}).get(
+                "input_references", {"max": 0}
             )
+            validate_total_image_references(user_image_references, input_references_parameter)
+            all_references = await validate_image_availability(user_image_references)
 
             api_key = await get_api_key(
                 ctx, 3
@@ -491,17 +499,17 @@ class GenerationsController(CoreDependencies):
                 self.db.add(DfEngineGenerationReferences(generation_id=generation.id, result_id=file["id"]))
             await self.db.flush()
 
-            validate_image_parameter(schema.parameter, generation_model["supported_parameters"])
+            validate_image_model_parameter(schema.parameter, generation_model)
             if schema.parameter.get("n", 1) != 1:
                 raise DataValidationError(
                     message="generation_parameters_invalid", error={"n": ["generation_parameter_above_maximum"]}
                 )
-            payload = parse_generation_payload(
-                "image",
+            payload = parse_openrouter_payload(
                 generation_model["model_id"],
                 merged_prompt,
                 schema.parameter,
                 all_references,
+                "image",
             )
             await self.db.commit()  # must be visible to the Celery worker's own DB connection before dispatch
             image_generation.delay(  # type:ignore
@@ -639,24 +647,30 @@ class GenerationsController(CoreDependencies):
             if ranking_model is None:
                 raise DataValidationError(message="ranking_model_not_configured")
 
-            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "generated"]
-            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "upload"]
+            """Image References"""
+            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "generated"]
+            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "upload"]
 
             uploaded_files = await get_uploaded_files(ctx, uploaded_file_uids)
             generated_files = await get_generation_files(ctx, file_uids=generated_file_uids)
 
-            diva_references = [str(ref.diva_url) for ref in schema.references if ref.type == "diva"]
+            diva_references = [str(ref.diva_url) for ref in schema.references if ref.source == "diva"]
             uploaded_file_references = [record["path"] for record in uploaded_files]
             generated_references = [record["path"] for record in generated_files]
-            all_references = await validate_references(
-                [*diva_references, *uploaded_file_references, *generated_references],
-                generation_model["supported_parameters"],
+
+            user_image_references = [*diva_references, *uploaded_file_references, *generated_references]
+            input_references_parameter = (
+                (generation_model["supported_parameters"] or {}).get("input_references", {"max": 0})
+                if schema.type == "image"
+                else None
             )
 
-            api_key = await get_api_key(
-                ctx, 3
-            )  # Later will be filled with employee_boss["id"], currently we override using static value
+            validate_total_image_references(user_image_references, input_references_parameter)
+            validated_image_references = await validate_image_availability(user_image_references)
+
+            api_key = await get_api_key(ctx, 3)  # will changed into employee_boss["id"]
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
+
             await rank_prompt(
                 resolved_prompt,
                 ranking_model["model_id"],
@@ -692,14 +706,15 @@ class GenerationsController(CoreDependencies):
 
             match schema.type:
                 case "image":
-                    validate_image_parameter(schema.parameter, generation_model["supported_parameters"])
-                    payload = parse_generation_payload(
-                        schema.type,
+                    validate_image_model_parameter(schema.parameter, generation_model)
+                    payload = parse_openrouter_payload(
                         generation_model["model_id"],
                         merged_prompt,
                         schema.parameter,
-                        all_references,
+                        validated_image_references,
+                        schema.type,
                     )
+
                     await self.db.commit()
                     image_generation.delay(  # type:ignore
                         generation.id,
@@ -710,9 +725,55 @@ class GenerationsController(CoreDependencies):
                         payload=payload,
                     )
                 case _:
-                    """Will be configured later"""
-                    logging.info(f"user={user_id} generation kind={schema.type} not yet implemented, skipped")
-                    return response
+                    """Video frame references"""
+                    frame_image_generated_uids = [
+                        str(ref.file_uid) for ref in schema.frame_images if ref.source == "generated"
+                    ]
+                    frame_image_uploaded_uids = [
+                        str(ref.file_uid) for ref in schema.frame_images if ref.source == "upload"
+                    ]
+
+                    frame_image_uploaded_files = await get_uploaded_files(ctx, frame_image_uploaded_uids)
+                    frame_image_generated_files = await get_generation_files(ctx, file_uids=frame_image_generated_uids)
+
+                    uploaded_path_by_uid = {record["file_uid"]: record["path"] for record in frame_image_uploaded_files}
+                    generated_path_by_uid = {
+                        record["file_uid"]: record["path"] for record in frame_image_generated_files
+                    }
+
+                    unvalidated_frame_images = [
+                        {
+                            "frame_type": ref.type,
+                            "image": (
+                                str(ref.diva_url)
+                                if ref.source == "diva"
+                                else uploaded_path_by_uid[str(ref.file_uid)]
+                                if ref.source == "upload"
+                                else generated_path_by_uid[str(ref.file_uid)]
+                            ),
+                        }
+                        for ref in schema.frame_images
+                    ]
+
+                    validated_frame_image_paths = await validate_image_availability(
+                        [frame["image"] for frame in unvalidated_frame_images]
+                    )
+                    validated_frame_images = [
+                        {"frame_type": frame["frame_type"], "image": image}
+                        for frame, image in zip(unvalidated_frame_images, validated_frame_image_paths)
+                    ]
+
+                    validate_video_model_parameter(
+                        {**schema.parameter, "frame_images": validated_frame_images}, generation_model
+                    )
+                    payload = parse_openrouter_payload(
+                        generation_model["model_id"],
+                        merged_prompt,
+                        schema.parameter,
+                        validated_image_references,
+                        schema.type,
+                        validated_frame_images,
+                    )
 
             """Invalidate cache related to is_main listings, same as set-main"""
             await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(task["id"]))
@@ -816,9 +877,9 @@ class GenerationsController(CoreDependencies):
                     filters=(
                         DfEngineGenerations.uid == str(generation_uid),  # type: ignore
                         DfEngineGenerationResults.is_main == True,  # type: ignore
-                        DfEngineGenerations.kind.in_(
+                        DfEngineGenerations.kind.in_(  # type: ignore
                             ["image", "image_edit", "video"],
-                        ),  # type: ignore
+                        ),
                     ),
                     fetch_one=True,
                 )
@@ -864,9 +925,9 @@ class GenerationsController(CoreDependencies):
                 select(DfEngineGenerations.id)  # type: ignore
                 .where(
                     DfEngineGenerations.uid == str(generation_uid),
-                    DfEngineGenerations.kind.in_(
+                    DfEngineGenerations.kind.in_(  # type: ignore
                         ["image", "image_edit", "video"],
-                    ),  # type: ignore
+                    ),
                 )
                 .scalar_subquery()
             )

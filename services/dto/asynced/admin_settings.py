@@ -215,7 +215,7 @@ async def get_project_setting(
 async def get_model(ctx: ConnectionContext, model_uid: UUID, type: ModelUsageTypes) -> dict[str, Any]:
     model_key = ctx.key.model_option_details(model_uid)
     model = await get_json(ctx.redis, model_key)
-    if model is not None:
+    if model is not None and model.get("type") == type:
         logging.info(f"model option cache hit key={model_key}")
         return model
 
@@ -230,6 +230,12 @@ async def get_model(ctx: ConnectionContext, model_uid: UUID, type: ModelUsageTyp
         filters.append(func.json_length(DfEngineModelOptions.supported_parameters) >= 1)  # type: ignore
     if type == ModelUsageTypes.text:
         filters.append(func.json_length(DfEngineModelOptions.default_parameters) >= 1)  # type: ignore
+    if type == ModelUsageTypes.video:
+        filters.append(func.json_length(DfEngineModelOptions.supported_resolutions) >= 1)  # type: ignore
+        filters.append(func.json_length(DfEngineModelOptions.supported_aspect_ratios) >= 1)  # type: ignore
+        filters.append(func.json_length(DfEngineModelOptions.supported_sizes) >= 1)  # type: ignore
+        filters.append(func.json_length(DfEngineModelOptions.supported_durations) >= 1)  # type: ignore
+        filters.append(func.json_length(DfEngineModelOptions.supported_frame_images) >= 1)  # type: ignore
 
     row = await query(ctx.db, DfEngineModelOptions, filters=tuple(filters), fetch_one=True)
     if not row:

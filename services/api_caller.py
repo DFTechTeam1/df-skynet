@@ -24,6 +24,7 @@ class APICaller:
             transport=transport,
             base_url=base_url,
             headers=headers,
+            http2=True,
         )
         self.sync_client = Client(
             verify=verify,
@@ -31,6 +32,7 @@ class APICaller:
             transport=transport,
             base_url=base_url,
             headers=headers,
+            http2=True,
         )
 
     async def call(

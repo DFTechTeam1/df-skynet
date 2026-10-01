@@ -7,7 +7,11 @@ from error import DataValidationError
 class GenerationReferences(BaseModel):
     file_uid: Optional[UUID] = Field(default=None, description="File UID either from generated or uploaded by user.")
     diva_url: Optional[HttpUrl] = Field(default=None, description="Streamed file from DiVA.")
-    type: Literal["diva", "upload", "generated"]
+    source: Literal["diva", "upload", "generated"]
+
+
+class FrameImageReferences(GenerationReferences):
+    type: Literal["first_frame", "last_frame"]
 
 
 class EditImageGenerationPayload(BaseModel):
@@ -27,12 +31,21 @@ class EditImageGenerationPayload(BaseModel):
     y_max: Optional[float] = Field(default=None, ge=0, le=1, description="Focus area bottom bound (0-1).")
 
     @model_validator(mode="after")
+    def dedupe_references(self):
+        deduped: dict[tuple[str, str], GenerationReferences] = {}
+        for ref in self.references:
+            uid = str(ref.diva_url) if ref.source == "diva" else str(ref.file_uid)
+            deduped[(ref.source, uid)] = ref
+        self.references = list(deduped.values())
+        return self
+
+    @model_validator(mode="after")
     def check_references(self):
         errors: dict[str, list[str]] = {}
         for idx, ref in enumerate(self.references):
-            if ref.type == "diva" and ref.diva_url is None:
+            if ref.source == "diva" and ref.diva_url is None:
                 errors[f"references.{idx}"] = ["reference_diva_url_required"]
-            elif ref.type in ("upload", "generated") and ref.file_uid is None:
+            elif ref.source in ("upload", "generated") and ref.file_uid is None:
                 errors[f"references.{idx}"] = ["reference_file_uid_required"]
         if errors:
             raise DataValidationError(message="references_invalid", error=errors)
@@ -63,15 +76,55 @@ class ImageVideoGenerationPayload(BaseModel):
     references: list[GenerationReferences] = Field(default_factory=list, description="Generation references.")
     type: Literal["image", "video"] = Field("image", description="Target generation types.")
     parameter: dict[str, Any] = Field(description="Dynamic parameter based on target model.")
+    frame_images: list[FrameImageReferences] = Field(
+        default_factory=list,
+        min_length=0,
+        max_length=2,
+        description="First/last frame references. Video generations only.",
+    )
+
+    @model_validator(mode="after")
+    def dedupe_references(self):
+        deduped: dict[tuple[str, str], GenerationReferences] = {}
+        for ref in self.references:
+            uid = str(ref.diva_url) if ref.source == "diva" else str(ref.file_uid)
+            deduped[(ref.source, uid)] = ref
+        self.references = list(deduped.values())
+        return self
 
     @model_validator(mode="after")
     def check_references(self):
         errors: dict[str, list[str]] = {}
         for idx, ref in enumerate(self.references):
-            if ref.type == "diva" and ref.diva_url is None:
+            if ref.source == "diva" and ref.diva_url is None:
                 errors[f"references.{idx}"] = ["reference_diva_url_required"]
-            elif ref.type in ("upload", "generated") and ref.file_uid is None:
+            elif ref.source in ("upload", "generated") and ref.file_uid is None:
                 errors[f"references.{idx}"] = ["reference_file_uid_required"]
+        if errors:
+            raise DataValidationError(message="references_invalid", error=errors)
+        return self
+
+    @model_validator(mode="after")
+    def check_frame_images(self):
+        if self.frame_images and self.type != "video":
+            raise DataValidationError(
+                message="frame_images_invalid",
+                error={"frame_images": ["frame_images_requires_video_type"]},
+            )
+
+        types = [ref.type for ref in self.frame_images]
+        if len(types) != len(set(types)):
+            raise DataValidationError(
+                message="frame_images_duplicate_type",
+                error={"frame_images": ["frame_images_duplicate_type"]},
+            )
+
+        errors: dict[str, list[str]] = {}
+        for idx, ref in enumerate(self.frame_images):
+            if ref.source == "diva" and ref.diva_url is None:
+                errors[f"frame_images.{idx}"] = ["reference_diva_url_required"]
+            elif ref.source in ("upload", "generated") and ref.file_uid is None:
+                errors[f"frame_images.{idx}"] = ["reference_file_uid_required"]
         if errors:
             raise DataValidationError(message="references_invalid", error=errors)
         return self
