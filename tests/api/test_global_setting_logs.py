@@ -72,7 +72,7 @@ async def test_logs_pagination(authed_client, db_session, project_class_id):
 
 @pytest.mark.asyncio
 async def test_logs_search_filters_by_user_name_prefix(authed_client, db_session):
-    """200 OK; `search` matches the log row's stored user_name as a case-insensitive prefix."""
+    """200 OK; `search` matches the log row's stored user_name, case-insensitive."""
     await clear_setting_state(db_session)
     await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}})
     await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}})

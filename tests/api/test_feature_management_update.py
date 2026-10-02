@@ -2,13 +2,15 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
+from services.dto import ConnectionContext
+from services.dto.asynced.admin_settings import get_menu
 from services.mysql.model import DfEngineFeaturePromptMappings, DfEngineMenuFeatureMappings
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
-from services.redis import client as redis_client
+from services.redis import CacheKeys, client as redis_client
 from tests.helpers import find_by_name, response_names
 
 URL = "/api/feature-management"
@@ -225,3 +227,41 @@ async def test_update_invalidates_the_list_cache(authed_client, user_id):
     found = response_names(resp.json())
     assert renamed in found
     assert feature.name not in found
+
+
+@pytest.mark.asyncio
+async def test_update_invalidates_get_menu_cache(db_session, authed_client, user_id):
+    """Regression: get_menu caches a feature's prompt_templates; linking a second template via
+    PATCH must invalidate that cache too, or callers keep seeing only the first template."""
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    feature = _make_feature(user_id)
+    DfEngineMenuFeatureMappingsFactory.create(df_engine_menus=menu, df_engine_features=feature)
+    first_template = _make_template(user_id)
+    DfEngineFeaturePromptMappingsFactory.create(df_engine_features=feature, df_engine_prompt_templates=first_template)
+
+    ctx = ConnectionContext(db_session, redis_client(), CacheKeys())
+    before = await get_menu(ctx, int(user_id), menu_uid=menu.uid, feature_uid=feature.uid)
+    assert len(before["features"][0]["prompt_templates"]) == 1
+
+    # db_session's transaction took its MySQL REPEATABLE READ snapshot on that query above, so it
+    # can't see the PATCH's commit (made on a different connection) until it starts a new
+    # transaction; expire_all() alone only clears the ORM's own identity-map cache, not the
+    # DB-side snapshot. A real second HTTP request wouldn't have this problem — each gets its own
+    # fresh session/transaction — this is purely an artifact of reusing one session across both reads.
+    await db_session.commit()
+    db_session.expire_all()
+
+    second_template = _make_template(user_id)
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{feature.uid}",
+        json={
+            "name": feature.name,
+            "type": "generate_image",
+            "template_uids": [first_template.uid, second_template.uid],
+        },
+    )
+    assert resp.status_code == 200
+
+    after = await get_menu(ctx, int(user_id), menu_uid=menu.uid, feature_uid=feature.uid)
+    assert len(after["features"][0]["prompt_templates"]) == 2

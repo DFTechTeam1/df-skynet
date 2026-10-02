@@ -11,7 +11,6 @@ from schemas.response import PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql import query
-from apps.secret import OPENROUTER_API_KEY
 from services.mysql.model import (
     DfEngineModelOptions,
     DfEngineGenerations,
@@ -295,7 +294,6 @@ class GenerationsController(CoreDependencies):
                     message="prompt_length_exceeded",
                     context={"length": len(schema.prompt), "max_chars": project_setting["compose_input_max_chars"]},
                 )
-
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
@@ -309,9 +307,7 @@ class GenerationsController(CoreDependencies):
             if enhancer_model is None:
                 raise DataValidationError(message="enhancer_model_not_configured")
 
-            api_key = await get_api_key(
-                ctx, 3
-            )  # Later will be filled with employee_boss["id"], currently we override using static value
+            api_key = await get_api_key(ctx, employee_boss["id"])
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             enhanced = await enhance_prompt(merged_prompt, enhancer_model["model_id"], api_key["key"], user_id)
 
@@ -464,9 +460,7 @@ class GenerationsController(CoreDependencies):
             validate_total_image_references(user_image_references, input_references_parameter)
             all_references = await validate_image_availability(user_image_references)
 
-            api_key = await get_api_key(
-                ctx, 3
-            )  # Later will be filled with employee_boss["id"], currently we override using static value
+            api_key = await get_api_key(ctx, employee_boss["id"])
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             await rank_prompt(
                 resolved_prompt,
@@ -517,9 +511,7 @@ class GenerationsController(CoreDependencies):
             image_generation.delay(  # type:ignore
                 generation.id,
                 user_id,
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}"
-                },  # Later will be changed from API key from boss_id
+                headers={"Authorization": f"Bearer {api_key['key']}"},
                 payload=payload,
             )
 
@@ -670,7 +662,7 @@ class GenerationsController(CoreDependencies):
             validate_total_image_references(user_image_references, input_references_parameter)
             validated_image_references = await validate_image_availability(user_image_references)
 
-            api_key = await get_api_key(ctx, 3)  # will changed into employee_boss["id"]
+            api_key = await get_api_key(ctx, employee_boss["id"])
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
             await rank_prompt(
@@ -721,9 +713,7 @@ class GenerationsController(CoreDependencies):
                     image_generation.delay(  # type:ignore
                         generation.id,
                         user_id,
-                        headers={
-                            "Authorization": f"Bearer {OPENROUTER_API_KEY}"
-                        },  # Later will be changed from API key from boss_id
+                        headers={"Authorization": f"Bearer {api_key['key']}"},
                         payload=payload,
                     )
                 case _:
@@ -781,9 +771,7 @@ class GenerationsController(CoreDependencies):
                     video_generation.delay(  # type:ignore
                         generation.id,
                         user_id,
-                        headers={
-                            "Authorization": f"Bearer {OPENROUTER_API_KEY}"
-                        },  # Later will be changed from API key from boss_id
+                        headers={"Authorization": f"Bearer {api_key['key']}"},
                         payload=payload,
                     )
 

@@ -2,6 +2,7 @@ import pytest
 import pytest_asyncio
 from uuid import uuid4
 from middlewares.lang import resolve_message
+from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
@@ -44,16 +45,80 @@ def _entry(body, file_uid):
 
 
 @pytest.mark.asyncio
-async def test_generation_with_no_result_yet_is_excluded(authed_client, project_task, user_id, generation_fks):
-    """200 OK; a still-processing generation (no result row yet) has no main result, so it's excluded from the list."""
-    before = await authed_client.call("GET", _url(project_task.uid))
-    baseline = len(before.json()["data"])
-
-    _make_generation(project_task, user_id, generation_fks)
+async def test_processing_generation_with_no_result_yet_appears_as_a_pending_entry(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; a still-processing generation with no result row yet still shows up, as a pending
+    placeholder entry (no file_uid, status=processing) so the UI can render it loading."""
+    generation = _make_generation(project_task, user_id, generation_fks)  # default status=processing
 
     resp = await authed_client.call("GET", _url(project_task.uid))
     assert resp.status_code == 200
-    assert len(resp.json()["data"]) == baseline
+    entries = [e for e in resp.json()["data"] if e["generation_uid"] == str(generation.uid)]
+    assert len(entries) == 1
+    assert entries[0]["file_uid"] is None
+    assert entries[0]["status"] == "processing"
+    assert entries[0]["action"]["can_download"] is False
+
+
+@pytest.mark.asyncio
+async def test_queued_generation_with_no_result_is_not_shown(authed_client, project_task, user_id, generation_fks):
+    """200 OK; status is still the gate on top of the has-a-result check — a queued (not yet
+    processing) generation with no result doesn't appear as a pending entry either."""
+    generation = _make_generation(project_task, user_id, generation_fks, status=GenerationStatuses.queued)
+
+    resp = await authed_client.call("GET", _url(project_task.uid))
+    assert not any(e["generation_uid"] == str(generation.uid) for e in resp.json()["data"])
+
+
+@pytest.mark.asyncio
+async def test_my_task_includes_my_pending_generation_and_excludes_others(
+    authed_client, project_task, user_id, other_user_id, generation_fks
+):
+    """200 OK; my_task=true restricts to generations the caller created — including one still
+    pending with no result — and excludes another member's generation."""
+    mine_pending = _make_generation(project_task, user_id, generation_fks)
+    mine_done = _make_generation(project_task, user_id, generation_fks)
+    mine_done_result = _make_result(mine_done, user_id, is_main=True)
+
+    others = DfEngineGenerationsFactory.create(
+        project_id=project_task.project_id,
+        task_id=project_task.id,
+        created_by=other_user_id,
+        sourceable_id=1,
+        **generation_fks,
+    )
+    others_result = _make_result(others, other_user_id, is_main=True)
+
+    resp = await authed_client.call("GET", _url(project_task.uid), params={"my_task": True})
+    data = resp.json()["data"]
+    generation_uids = {e["generation_uid"] for e in data}
+    file_uids = {e["file_uid"] for e in data}
+    assert str(mine_pending.uid) in generation_uids
+    assert str(mine_done_result.uid) in file_uids
+    assert str(others_result.uid) not in file_uids
+
+
+@pytest.mark.asyncio
+async def test_failed_or_queued_generation_is_excluded_even_with_a_main_result(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; only success/processing generations are listed — a main result from a failed
+    or queued generation never appears, even though it has an is_main result row."""
+    failed = _make_generation(project_task, user_id, generation_fks, status=GenerationStatuses.failed)
+    failed_result = _make_result(failed, user_id, is_main=True)
+
+    queued = _make_generation(project_task, user_id, generation_fks, status=GenerationStatuses.queued)
+    queued_result = _make_result(queued, user_id, is_main=True)
+
+    success = _make_generation(project_task, user_id, generation_fks, status=GenerationStatuses.success)
+    success_result = _make_result(success, user_id, is_main=True)
+
+    resp = await authed_client.call("GET", _url(project_task.uid))
+    uids = [e["file_uid"] for e in resp.json()["data"]]
+    assert str(failed_result.uid) not in uids
+    assert str(queued_result.uid) not in uids
+    assert str(success_result.uid) in uids
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,11 @@
+from contextlib import contextmanager
+from types import SimpleNamespace
+
 import httpx
 from celery.exceptions import SoftTimeLimitExceeded
 
+import services.tasks.base as base
+from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.tasks.base import classify_error
 
 REQUEST = httpx.Request("GET", "https://example.test")
@@ -38,3 +43,35 @@ def test_soft_time_limit_is_retryable():
     """A Celery soft time limit hit classifies as retryable."""
     err = classify_error(SoftTimeLimitExceeded(), source="openrouter")
     assert err.retryable
+
+
+def _fake_get_sync_db(generation):
+    @contextmanager
+    def _ctx():
+        yield SimpleNamespace(get=lambda model, id_: generation, add=lambda obj: None)
+
+    return _ctx
+
+
+def test_mark_generation_failed_sets_status(monkeypatch):
+    """A non-success generation is flipped to failed once retries are exhausted."""
+    generation = SimpleNamespace(status=GenerationStatuses.processing)
+    monkeypatch.setattr(base, "get_sync_db", _fake_get_sync_db(generation))
+    base._mark_generation_failed(1)
+    assert generation.status == GenerationStatuses.failed
+
+
+def test_mark_generation_failed_does_not_downgrade_success(monkeypatch):
+    """A generation that already succeeded is never overwritten as failed."""
+    generation = SimpleNamespace(status=GenerationStatuses.success)
+    monkeypatch.setattr(base, "get_sync_db", _fake_get_sync_db(generation))
+    base._mark_generation_failed(1)
+    assert generation.status == GenerationStatuses.success
+
+
+def test_mark_generation_failed_swallows_errors(monkeypatch):
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(base, "get_sync_db", boom)
+    base._mark_generation_failed(1)  # must not raise

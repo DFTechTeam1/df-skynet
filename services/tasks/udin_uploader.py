@@ -17,6 +17,8 @@ from services.mysql.model import (
     DfEngineGenerationResults,
     DfEngineGenerationUploads,
     DfEngineGenerations,
+    ProjectTasks,
+    Users,
 )
 from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
@@ -86,6 +88,12 @@ def udin_uploader(
         generation_uid = str(generation.uid)
         task_id = generation.task_id
         project_id = generation.project_id
+        task_uid = None
+        if task_id is not None:
+            task_row = db.query(ProjectTasks.uid).filter_by(id=task_id).first()
+            task_uid = str(task_row[0]) if task_row else None
+        user_row = db.query(Users.uid).filter_by(id=user_id).first()
+        user_uid = str(user_row[0]) if user_row else None
         images = [] if generation.kind == GenerationKinds.video else list(json.loads(generation.response).values())
         job = json.loads(generation.response) if generation.kind == GenerationKinds.video else None
         uploaded_versions = {result.version for result in existing_results}
@@ -285,8 +293,8 @@ def udin_uploader(
                     if family_task_id is not None:
                         delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(family_task_id))
 
-            if task_id is not None:
-                broadcast_generation_status(project_id, task_id, user_id, generation_uid, "success")
+            if task_uid is not None and user_uid is not None:
+                broadcast_generation_status(project_uid, task_uid, user_uid, generation_uid, "success")
             return {"generation_id": generation_id, "status": "success", "result_ids": result_ids}
         except Exception:
             logging.exception(f"udin_uploader local commit failed attempt={attempt} generation_id={generation_id}")

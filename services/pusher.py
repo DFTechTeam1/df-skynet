@@ -17,13 +17,13 @@ def get_pusher() -> Pusher:
 
 
 def broadcast_generation_status(
-    project_id: int, task_id: int, user_id: int, gid: str, status: str, error: Optional[str] = None
+    project_uid: str, task_uid: str, user_uid: str, gid: str, status: str, error: Optional[str] = None
 ) -> None:
     try:
         get_pusher().trigger(
-            f"private-user-generation-project-{project_id}-task-{task_id}-user-{user_id}",
+            f"private-user-generation-project-{project_uid}-task-{task_uid}-user-{user_uid}",
             "generation-status",
             {"s": status, "e": error, "gid": gid},
         )
     except Exception:
-        logging.exception(f"pusher broadcast failed user_id={user_id} gid={gid} status={status}")
+        logging.exception(f"pusher broadcast failed user_uid={user_uid} gid={gid} status={status}")

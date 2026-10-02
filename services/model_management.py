@@ -43,7 +43,7 @@ class ModelManagement:
             conditions.append(func.json_length(DfEngineModelOptions.supported_durations) >= 1)  # type: ignore
             conditions.append(func.json_length(DfEngineModelOptions.supported_frame_images) >= 1)  # type: ignore
         if search:
-            conditions.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
+            conditions.append(DfEngineModelOptions.name.ilike(f"%{search}%"))  # type: ignore
         if is_enabled is not None:
             conditions.append(DfEngineModelOptions.is_enabled.is_(is_enabled))  # type: ignore
         return conditions

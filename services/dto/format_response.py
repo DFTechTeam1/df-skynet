@@ -112,6 +112,42 @@ class GenerationResultRecord(BaseModel):
             action=GenerationAction.from_result(result, is_owner),
         )
 
+    @classmethod
+    def pending(cls, generation: dict[str, Any]) -> "GenerationResultRecord":
+        """A queued/processing generation with no result yet — same shape as `from_result`,
+        but every file-specific field is empty and every action is False since there's
+        nothing yet to download, archive, favorite, or set as main."""
+        kind = generation.get("kind")
+        model_option = generation.get("model_option")
+        return cls(
+            flag_created_at=generation.get("created_at"),
+            kind=kind,
+            generation_uid=generation.get("uid"),
+            is_main=False,
+            created_at=format_datetime(generation.get("created_at")),
+            icon=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("icon"),  # type: ignore
+            color=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("color"),  # type: ignore
+            status=generation.get("status"),
+            creator=format_user_employees(generation.get("created_by_user")),
+            cost_usd=format_usd(generation.get("cost")),
+            cost_idr=format_idr(generation.get("cost"), USD_TO_IDR_RATE),
+            model=(model_option or {}).get("name"),
+            prompt=generation.get("prompt"),
+            full_prompt=generation.get("full_prompt"),
+            parameter=generation.get("parameter"),
+            action=GenerationAction(
+                can_archieve=False,
+                can_unarchieve=False,
+                can_set_main=False,
+                can_favorited=False,
+                can_unfavorited=False,
+                can_download=False,
+                can_fetch_detail=False,
+                can_use_as_reference=False,
+                can_use_as_edit=False,
+            ),
+        )
+
 
 class GenerationReferenceRecord(BaseModel):
     type: str = "generated"

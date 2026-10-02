@@ -14,7 +14,7 @@ from services.mysql.model import (
     DfEngineFeatures,
     DfEnginePromptTemplates,
 )
-from services.redis import get_json, set_json, CacheKeys
+from services.redis import get_json, set_json, delete_pattern, CacheKeys
 from services.feature_management import FeatureManagementService
 from log import logging
 from error import ServiceError, BaseError, DataConflictError, DataNotFoundError, DataValidationError
@@ -85,7 +85,7 @@ class FeatureManagementController(CoreDependencies):
                 db=self.db,
                 table=DfEngineFeatures,
                 options=feature_management_service.options(),
-                filters=(DfEngineFeatures.name.ilike(f"{name}%"),) if name else None,  # type: ignore
+                filters=(DfEngineFeatures.name.ilike(f"%{name}%"),) if name else None,  # type: ignore
                 order_by=(DfEngineFeatures.created_at.desc(),),  # type: ignore
             )
             records = [feature_management_service.format(record) for record in serialize(results)]
@@ -364,6 +364,7 @@ class FeatureManagementController(CoreDependencies):
                 f"templates_linked={linked_count} templates_unlinked={unlinked_count}"
             )
 
+            await delete_pattern(self.redis, cache_key.get_menu_pattern())
             self.db.expire(feature)
             updated_feature = feature_management_service.format(
                 serialize(
@@ -449,6 +450,7 @@ class FeatureManagementController(CoreDependencies):
 
             logging.info(f"user={self.user['user_id']} deleted feature uid={feature.uid} name={feature.name!r}")
 
+            await delete_pattern(self.redis, cache_key.get_menu_pattern())
             await self.redis.delete(cache_key.feature_management_detail(uid))
 
             list_cache_key = cache_key.feature_managements()
