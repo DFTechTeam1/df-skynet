@@ -62,18 +62,20 @@ async def test_newest_first_ordering(authed_client, user_id):
 
 
 @pytest.mark.asyncio
-async def test_name_search_is_a_prefix_match(authed_client, user_id):
-    """200 OK; `name` filter matches only menus whose name starts with it, not mid-string occurrences."""
+async def test_name_search_is_a_substring_match(authed_client, user_id):
+    """200 OK; `name` filter matches anywhere in the name, not just a starts-with prefix."""
     prefix = f"Search{uuid4().hex[:8]}"
     matching = DfEngineMenusFactory.create(
         name=f"{prefix}-one", created_by=int(user_id), df_engine_menu_feature_mapping=None
     )
-    DfEngineMenusFactory.create(name=f"other-{prefix}", created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    mid_string = DfEngineMenusFactory.create(
+        name=f"other-{prefix}", created_by=int(user_id), df_engine_menu_feature_mapping=None
+    )
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
     found = response_names(resp.json())
     assert matching.name in found
-    assert f"other-{prefix}" not in found
+    assert mid_string.name in found
 
 
 @pytest.mark.asyncio

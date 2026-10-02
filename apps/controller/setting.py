@@ -66,7 +66,7 @@ class SettingController(CoreDependencies):
                 response.data = PaginationResponse(paginated=cached["logs"], totalData=cached["total_data"])
                 return response
 
-            filters = (DfEngineSettingLogs.user_name.ilike(f"{search}%"),) if search else None  # type: ignore
+            filters = (DfEngineSettingLogs.user_name.ilike(f"%{search}%"),) if search else None  # type: ignore
 
             total_data = (
                 await query(

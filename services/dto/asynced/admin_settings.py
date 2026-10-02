@@ -52,7 +52,7 @@ async def get_menu(
     if menu_uid is not None:
         filters.append(DfEngineMenus.uid == str(menu_uid))  # type: ignore
     if search:
-        filters.append(DfEngineMenus.name.ilike(f"{search}%"))  # type: ignore
+        filters.append(DfEngineMenus.name.ilike(f"%{search}%"))  # type: ignore
 
     menu_feature_mappings = DfEngineMenus.df_engine_menu_feature_mappings  # type: ignore
     if feature_uid is not None:

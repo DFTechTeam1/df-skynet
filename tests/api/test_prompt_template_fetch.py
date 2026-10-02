@@ -61,17 +61,18 @@ async def test_newest_first_ordering(authed_client, user_id):
 
 
 @pytest.mark.asyncio
-async def test_name_search_is_a_prefix_match(authed_client, user_id):
-    """200 OK; `name` filter matches only templates whose name starts with it, not mid-string occurrences."""
+async def test_name_search_is_a_substring_match(authed_client, user_id):
+    """200 OK; `name` filter matches anywhere in the name, not just a starts-with prefix."""
     prefix = f"Search{uuid4().hex[:8]}"
     matching = DfEnginePromptTemplatesFactory.create(name=f"{prefix}-one", prompt="a prompt", created_by=int(user_id))
-    # prefix appears mid-string, shouldn't match
-    DfEnginePromptTemplatesFactory.create(name=f"other-{prefix}", prompt="a prompt", created_by=int(user_id))
+    mid_string = DfEnginePromptTemplatesFactory.create(
+        name=f"other-{prefix}", prompt="a prompt", created_by=int(user_id)
+    )
 
     resp = await authed_client.call("GET", URL, params={"name": prefix})
     found = response_names(resp.json())
     assert matching.name in found
-    assert f"other-{prefix}" not in found
+    assert mid_string.name in found
 
 
 @pytest.mark.asyncio

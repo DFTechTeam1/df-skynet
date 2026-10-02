@@ -13,17 +13,23 @@ from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
 from services.mysql.model.df_engine_settings import DfEngineSettings
+from services.mysql.model.employees import Employees
 from services.redis import CacheKeys, client as redis_client, delete_pattern
 
 URL = "/api/generations"
 
-# Hardcoded in apps/controller/generations.py as `pic_id = 3  # Rudhi as example` —
-# the only PIC the endpoint currently looks up an API key for.
-PIC_EMPLOYEE_ID = 3
-
 
 def _url(task_uid):
     return f"{URL}/{task_uid}"
+
+
+@pytest_asyncio.fixture
+async def pic_employee_id(db_session, user_id) -> int:
+    """The authenticated user's boss — the endpoint looks up its API key via
+    `employee_boss["id"]`, resolved from the real staging `employees` row."""
+    employee = (await db_session.execute(select(Employees).where(Employees.user_id == int(user_id)))).scalars().first()
+    assert employee is not None and employee.boss_id is not None, "staging employee/boss_id missing for user_id"
+    return employee.boss_id
 
 
 @pytest_asyncio.fixture
@@ -68,25 +74,25 @@ async def video_model():
 
 
 @pytest_asyncio.fixture
-async def pic_api_key(db_session, user_id):
-    """A main, non-expired API key for the hardcoded PIC employee (id 3). Any
+async def pic_api_key(db_session, user_id, pic_employee_id):
+    """A main, non-expired API key for the authenticated user's boss employee. Any
     pre-existing key(s) on that employee are snapshotted and restored, matching
     the save/restore idiom `active_employee_uid` already uses for the same reason:
     this touches a real employee row on the shared staging DB."""
     preexisting = (
-        (await db_session.execute(select(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == PIC_EMPLOYEE_ID)))
+        (await db_session.execute(select(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == pic_employee_id)))
         .scalars()
         .all()
     )
     preexisting_data = [row.model_dump() for row in preexisting]
-    await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == PIC_EMPLOYEE_ID))
+    await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == pic_employee_id))
     await db_session.commit()
 
-    key = DfEngineApiKeysFactory.create(employee_id=PIC_EMPLOYEE_ID, is_main=True, created_by=int(user_id))
+    key = DfEngineApiKeysFactory.create(employee_id=pic_employee_id, is_main=True, created_by=int(user_id))
     try:
         yield key
     finally:
-        await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == PIC_EMPLOYEE_ID))
+        await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == pic_employee_id))
         for data in preexisting_data:  # pragma: no cover - only hit if this employee already had a key on the shared DB
             db_session.add(DfEngineApiKeys(**data))
         await db_session.commit()

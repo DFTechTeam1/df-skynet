@@ -344,6 +344,9 @@ class CacheKeys:
             f":search={(search or '').strip().lower() or 'all'}"
         )
 
+    def get_menu_pattern(self) -> str:
+        return "menus:features:*"
+
     # --- generation_files ---
     def generation_files_main_list(
         self, task_id: int, user_id: Optional[int] = None, search: Optional[str] = None

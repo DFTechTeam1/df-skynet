@@ -46,20 +46,20 @@ async def test_fetch_filter_by_type(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_fetch_search_is_a_prefix_match(authed_client):
-    """200 OK; `search` matches names starting with it, not mid-string occurrences."""
+async def test_fetch_search_is_a_substring_match(authed_client):
+    """200 OK; `search` matches anywhere in the name, not just a starts-with prefix."""
     prefix = f"Search{uuid4().hex[:8]}"
     matching = DfEngineModelOptionsFactory.create(
         name=f"{prefix}-one", type="text", is_available=True, is_enabled=False, is_main=False
     )
-    DfEngineModelOptionsFactory.create(
+    mid_string = DfEngineModelOptionsFactory.create(
         name=f"other-{prefix}", type="text", is_available=True, is_enabled=False, is_main=False
     )
 
     resp = await authed_client.call("GET", URL, params={"search": prefix})
     names = [item["name"] for item in resp.json()["data"]["paginated"]]
     assert matching.name in names
-    assert f"other-{prefix}" not in names
+    assert mid_string.name in names
 
 
 @pytest.mark.asyncio

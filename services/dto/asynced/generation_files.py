@@ -15,7 +15,7 @@ from services.mysql.model import (
     Projects,
     ProjectTasks,
 )
-from services.mysql.model.df_engine_generations import GenerationKinds
+from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from log import logging
 from error import DataNotFoundError, DataValidationError
 from services.mysql import query
@@ -57,6 +57,18 @@ def _drop(data: dict[str, Any], *keys: str) -> dict[str, Any]:
     return data
 
 
+_MAIN_FILE_INTERNAL_KEYS = (
+    "flag_created_at",
+    "flag_favourited_at",
+    "flag_archieved_at",
+    "is_main",
+    "version",
+    "updated_at",
+    "full_prompt",
+    "parameter",
+)
+
+
 async def get_generation_main_files(
     ctx: ConnectionContext, user_id: int, task_id: int, owner_id: Optional[int] = None, search: Optional[str] = None
 ) -> list[dict[str, Any]]:
@@ -70,7 +82,7 @@ async def get_generation_main_files(
 
     filters = [
         DfEngineGenerations.task_id == task_id,
-        DfEngineGenerations.results.any(DfEngineGenerationResults.is_main.is_(True)),  # type: ignore
+        DfEngineGenerations.status.in_([GenerationStatuses.success, GenerationStatuses.processing]),  # type: ignore
     ]
     if search:
         term = f"{search.strip()}%"
@@ -84,11 +96,7 @@ async def get_generation_main_files(
             )
         )
     if owner_id:
-        filters.append(
-            DfEngineGenerations.results.any(  # type: ignore
-                and_(DfEngineGenerationResults.is_main.is_(True), DfEngineGenerationResults.created_by == owner_id)  # type: ignore
-            )
-        )
+        filters.append(DfEngineGenerations.created_by == owner_id)  # type: ignore
 
     generations = await query(
         ctx.db,
@@ -102,26 +110,32 @@ async def get_generation_main_files(
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
             selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+            selectinload(DfEngineGenerations.created_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
         ),
         filters=tuple(filters),
         order_by=(DfEngineGenerations.created_at.desc(),),  # type: ignore
     )
 
-    generation_main_files = [
-        _drop(
-            GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(mode="json"),
-            "flag_created_at",
-            "flag_favourited_at",
-            "flag_archieved_at",
-            "is_main",
-            "version",
-            "updated_at",
-            "full_prompt",
-            "parameter",
-        )
-        for record in serialize(generations)
-        for result in record["results"]
-    ]
+    generation_main_files = []
+    for record in serialize(generations):
+        results = record["results"]
+        if results:
+            for result in results:
+                generation_main_files.append(
+                    _drop(
+                        GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(
+                            mode="json"
+                        ),
+                        *_MAIN_FILE_INTERNAL_KEYS,
+                    )
+                )
+        else:
+            generation_main_files.append(
+                _drop(GenerationResultRecord.pending(record).model_dump(mode="json"), *_MAIN_FILE_INTERNAL_KEYS)
+            )
 
     await set_json(ctx.redis, generation_main_key, generation_main_files)
     logging.info(
@@ -348,7 +362,7 @@ async def get_upload_references(
     if project_id:
         filters.append(DfEngineUploadFiles.project_id == project_id)  # type: ignore
     if search:
-        term = f"{search.strip()}%"
+        term = f"%{search.strip()}%"
         filters.append(
             or_(
                 DfEngineUploadFiles.name.ilike(term),  # type: ignore

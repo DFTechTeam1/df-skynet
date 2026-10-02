@@ -8,7 +8,7 @@ from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.prompt_template import PromptTemplatePayload
 from services.mysql.model import DfEnginePromptTemplates
-from services.redis import get_json, set_json, CacheKeys
+from services.redis import get_json, set_json, delete_pattern, CacheKeys
 from services.mysql import query
 from log import logging
 from utils import local_time
@@ -129,7 +129,7 @@ class PromptTemplateController(CoreDependencies):
                 db=self.db,
                 table=DfEnginePromptTemplates,
                 options=prompt_template_service.options(),
-                filters=(DfEnginePromptTemplates.name.ilike(f"{name}%"),) if name else None,  # type: ignore
+                filters=(DfEnginePromptTemplates.name.ilike(f"%{name}%"),) if name else None,  # type: ignore
                 order_by=(DfEnginePromptTemplates.created_at.desc(),),  # type: ignore
             )
 
@@ -270,6 +270,7 @@ class PromptTemplateController(CoreDependencies):
                 f"name={template.name!r} is_active={template.is_active}"
             )
 
+            await delete_pattern(self.redis, cache_key.get_menu_pattern())
             self.db.expire(template)
             updated_template = prompt_template_service.format(
                 serialize(
