@@ -8,4 +8,5 @@ class AuthMessage:
             "no_permissions_found": "Akun Anda belum memiliki hak akses yang diberikan. Silakan hubungi administrator untuk mendapatkan akses.",
             "no_roles_found": "Akun Anda belum memiliki peran apa pun. Silakan hubungi administrator untuk pengaturan akses.",
             "role_not_authorized": "Peran Anda saat ini tidak memiliki akses ke fitur ini. Silakan hubungi administrator jika Anda merasa ini adalah kesalahan.",
+            "channel_access_denied": "Anda tidak diizinkan untuk berlangganan channel ini.",
         }

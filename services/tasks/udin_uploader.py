@@ -19,6 +19,7 @@ from services.mysql.model import (
 )
 from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
+from services.pusher import broadcast_generation_status
 from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_json_sync, sync_client
 from error import DataNotFoundError
 from utils import local_time
@@ -226,6 +227,8 @@ def udin_uploader(
                     if family_task_id is not None:
                         delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(family_task_id))
 
+            if task_id is not None:
+                broadcast_generation_status(project_id, task_id, user_id, generation_uid, "success")
             return {"generation_id": generation_id, "status": "success", "result_ids": result_ids}
         except Exception:
             logging.exception(f"udin_uploader local commit failed attempt={attempt} generation_id={generation_id}")

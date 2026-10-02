@@ -8,8 +8,9 @@ from celery.utils.time import get_exponential_backoff_interval
 from log import logging
 from services.celery_app import celery_app
 from services.mysql import get_sync_db
-from services.mysql.model import DfEngineQueues
+from services.mysql.model import DfEngineGenerations, DfEngineQueues
 from services.mysql.model.df_engine_queues import QueueEventTypes
+from services.pusher import broadcast_generation_status
 
 
 class GenerationStageError(Exception):
@@ -88,15 +89,46 @@ def log_queue(
         logging.exception(f"failed to write df_engine_queues event={event_type}")
 
 
+def _generation_broadcast_context(generation_id: int) -> Optional[tuple[str, int, int]]:
+    """Returns (uid, project_id, task_id) for the pusher channel, or None if any is missing."""
+    try:
+        with get_sync_db() as db:
+            row = (
+                db.query(DfEngineGenerations.uid, DfEngineGenerations.project_id, DfEngineGenerations.task_id)
+                .filter_by(id=generation_id)
+                .first()
+            )
+        if row is None or row.project_id is None or row.task_id is None:
+            return None
+        return str(row.uid), row.project_id, row.task_id
+    except Exception:
+        logging.exception(f"failed to resolve generation broadcast context generation_id={generation_id}")
+        return None
+
+
+STAGE_STATUSES = {
+    "df_engine.image_generation": "generating",
+    "df_engine.udin_uploader": "uploading",
+}
+
+
 class GenerationTask(celery_app.Task):
     def before_start(self, task_id: str, args: tuple, kwargs: dict[str, Any]) -> None:
+        generation_id = args[0] if args else kwargs["generation_id"]
         log_queue(
-            generation_id=args[0] if args else kwargs["generation_id"],
+            generation_id=generation_id,
             queue_name=self.name,
             event_type=QueueEventTypes.started,
             attempt=self.request.retries + 1,
             task_id=task_id,
         )
+        user_id = args[1] if len(args) > 1 else kwargs["user_id"]
+        context = _generation_broadcast_context(generation_id)
+        if context:
+            uid, project_id, gen_task_id = context
+            broadcast_generation_status(
+                project_id, gen_task_id, user_id, uid, STAGE_STATUSES.get(self.name, "processing")
+            )
 
     def on_retry(self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: ExceptionInfo) -> None:
         detail = (
@@ -104,14 +136,20 @@ class GenerationTask(celery_app.Task):
             if isinstance(exc, GenerationStageError)
             else {"message": str(exc)}
         )
+        generation_id = args[0] if args else kwargs["generation_id"]
         log_queue(
-            generation_id=args[0] if args else kwargs["generation_id"],
+            generation_id=generation_id,
             queue_name=self.name,
             event_type=QueueEventTypes.retried,
             attempt=self.request.retries + 1,
             task_id=task_id,
             detail=detail,
         )
+        user_id = args[1] if len(args) > 1 else kwargs["user_id"]
+        context = _generation_broadcast_context(generation_id)
+        if context:
+            uid, project_id, gen_task_id = context
+            broadcast_generation_status(project_id, gen_task_id, user_id, uid, "retry", error=str(exc))
 
     def on_success(self, retval: Any, task_id: str, args: tuple, kwargs: dict) -> None:
         log_queue(
@@ -137,11 +175,17 @@ class GenerationTask(celery_app.Task):
             if isinstance(exc, GenerationStageError)
             else {"message": str(exc)}
         )
+        generation_id = args[0] if args else kwargs["generation_id"]
         log_queue(
-            generation_id=args[0] if args else kwargs["generation_id"],
+            generation_id=generation_id,
             queue_name=self.name,
             event_type=QueueEventTypes.failed,
             attempt=self.request.retries + 1,
             task_id=task_id,
             detail=detail,
         )
+        user_id = args[1] if len(args) > 1 else kwargs["user_id"]
+        context = _generation_broadcast_context(generation_id)
+        if context:
+            uid, project_id, gen_task_id = context
+            broadcast_generation_status(project_id, gen_task_id, user_id, uid, "failed", error=str(exc))
