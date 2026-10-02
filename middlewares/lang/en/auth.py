@@ -8,4 +8,5 @@ class AuthMessage:
             "no_permissions_found": "Your account doesn't have any permissions assigned yet. Please contact your administrator for access.",
             "no_roles_found": "Your account doesn't have any roles assigned yet. Please contact your administrator to set up your access.",
             "role_not_authorized": "Your current role doesn't have access to this feature. Please contact your administrator if you believe this is a mistake.",
+            "channel_access_denied": "You're not allowed to subscribe to this channel.",
         }

@@ -70,3 +70,14 @@ class AuthenticationError(BaseError):
         context: dict[str, Any] | None = None,
     ):
         super().__init__(status_code, message, error, context)
+
+
+class AuthorizationError(BaseError):
+    def __init__(
+        self,
+        status_code: int = status.HTTP_403_FORBIDDEN,
+        message: str = "permission_denied",
+        error: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ):
+        super().__init__(status_code, message, error, context)
