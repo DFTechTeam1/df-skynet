@@ -7,6 +7,9 @@ from services.mysql.factory.df_engine_generation_results import DfEngineGenerati
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.factory.df_engine_generation_references import DfEngineGenerationReferencesFactory
+from services.mysql.factory.df_engine_upload_file_references import DfEngineUploadFileReferencesFactory
+from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
 
 EDIT_RESULTS_URL = "/api/generation-edit-results"
 MAIN_RESULTS_URL = "/api/generation-main-results"
@@ -97,6 +100,26 @@ async def test_shares_base_fields_with_main_results_but_adds_more(authed_client,
     assert "full_prompt" not in main_data
     assert edit_data["is_main"] is True
     assert edit_data["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_references_include_linked_generation_and_upload_files(
+    authed_client, project_task, user_id, generation_fks
+):
+    """references[] is populated from this generation's linked generation_references
+    and upload_file_references, not left empty."""
+    ref_generation = _make_generation(project_task, user_id, generation_fks)
+    ref_result = _make_result(ref_generation, user_id, is_main=True, version=1)
+    upload_file = DfEngineUploadFilesFactory.create(project_id=project_task.project_id, created_by=int(user_id))
+
+    generation = _make_generation(project_task, user_id, generation_fks)
+    _make_result(generation, user_id, is_main=True, version=1)
+    DfEngineGenerationReferencesFactory.create(generation_id=generation.id, result_id=ref_result.id)
+    DfEngineUploadFileReferencesFactory.create(generation_id=generation.id, file_id=upload_file.id)
+
+    resp = await authed_client.call("GET", _url(generation.uid))
+    references = resp.json()["data"]["references"]
+    assert {r["uid"] for r in references} == {str(ref_result.uid), str(upload_file.uid)}
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from services.mysql.model import (
     DfEngineGenerationReferences,
     DfEngineGenerationResults,
     DfEngineUploadFileReferences,
+    DfEngineUploadFiles,
     Employees,
     Users,
     DfEngineApiKeys,
@@ -951,6 +952,28 @@ class GenerationsController(CoreDependencies):
                         )
                         .selectinload(DfEngineGenerations.model_option)  # type: ignore
                         .load_only(DfEngineModelOptions.name),  # type: ignore
+                        selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                        .selectinload(DfEngineGenerations.generation_references)  # type: ignore
+                        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+                        .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                        .selectinload(DfEngineGenerations.model_option),  # type: ignore
+                        selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                        .selectinload(DfEngineGenerations.generation_references)  # type: ignore
+                        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+                        .selectinload(DfEngineGenerationResults.created_by_user)  # type: ignore
+                        .load_only(Users.image)  # type: ignore
+                        .selectinload(Users.employees)  # type: ignore
+                        .load_only(Employees.nickname),  # type: ignore
+                        selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                        .selectinload(DfEngineGenerations.upload_file_references)  # type: ignore
+                        .selectinload(DfEngineUploadFileReferences.file),  # type: ignore
+                        selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                        .selectinload(DfEngineGenerations.upload_file_references)  # type: ignore
+                        .selectinload(DfEngineUploadFileReferences.file)  # type: ignore
+                        .selectinload(DfEngineUploadFiles.created_by_user)  # type: ignore
+                        .load_only(Users.image)  # type: ignore
+                        .selectinload(Users.employees)  # type: ignore
+                        .load_only(Employees.nickname),  # type: ignore
                     ),
                     filters=(DfEngineGenerationResults.generation_id == generation_id,),  # type: ignore
                     fetch_one=True,

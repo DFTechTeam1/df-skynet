@@ -12,6 +12,7 @@ from apps.controller.model_management import ModelManagementController  # noqa
 from apps.controller.setting import SettingController  # noqa
 from apps.controller.files import FilesController  # noqa
 from apps.controller.generations import GenerationsController  # noqa
+from apps.controller.pusher import PusherController  # noqa
 from apps.controller.core import CoreDependencies, PlainDependencies
 from config.openapi import scalar_config
 from error.register import register_exception_handlers
