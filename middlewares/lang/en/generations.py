@@ -11,6 +11,7 @@ class GenerationsMessage:
             "generation_parameter_not_in_enum": "This value isn't one of the allowed options.",
             "generation_parameter_must_be_boolean": "This value must be true or false.",
             "generation_parameter_required": "This parameter is required for the selected model.",
+            "generation_parameter_not_supported": "This parameter's value isn't supported by the selected model.",
             "references_invalid": "One or more references you provided are invalid.",
             "reference_diva_url_required": "This DiVA reference is missing its file URL.",
             "reference_file_uid_required": "This reference is missing its file.",

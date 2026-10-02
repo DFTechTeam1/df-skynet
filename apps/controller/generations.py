@@ -56,6 +56,7 @@ from validations.model import (
 from parser.openrouter import parse_openrouter_payload
 from services.redis import CacheKeys
 from services.tasks.image_generation import image_generation
+from services.tasks.video_generation import video_generation
 from services.dto.format_response import GenerationResultRecord
 from utils.formatter import format_datetime, format_user_employees
 
@@ -445,14 +446,14 @@ class GenerationsController(CoreDependencies):
             if ranking_model is None:
                 raise DataValidationError(message="ranking_model_not_configured")
 
-            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "generated"]
+            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "generated"]
             generated_file_uids.append(str(file_uid))
-            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "upload"]
+            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "upload"]
 
             uploaded_files = await get_uploaded_files(ctx, uploaded_file_uids)
             generated_files = await get_generation_files(ctx, file_uids=generated_file_uids)
 
-            diva_references = [str(ref.diva_url) for ref in schema.references if ref.source == "diva"]
+            diva_references = [str(ref.diva_url) for ref in schema.references if ref.type == "diva"]
             uploaded_file_references = [record["path"] for record in uploaded_files]
             generated_references = [record["path"] for record in generated_files]
             user_image_references = [*diva_references, *uploaded_file_references, *generated_references]
@@ -649,13 +650,13 @@ class GenerationsController(CoreDependencies):
                 raise DataValidationError(message="ranking_model_not_configured")
 
             """Image References"""
-            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "generated"]
-            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.source == "upload"]
+            generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "generated"]
+            uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "upload"]
 
             uploaded_files = await get_uploaded_files(ctx, uploaded_file_uids)
             generated_files = await get_generation_files(ctx, file_uids=generated_file_uids)
 
-            diva_references = [str(ref.diva_url) for ref in schema.references if ref.source == "diva"]
+            diva_references = [str(ref.diva_url) for ref in schema.references if ref.type == "diva"]
             uploaded_file_references = [record["path"] for record in uploaded_files]
             generated_references = [record["path"] for record in generated_files]
 
@@ -728,10 +729,10 @@ class GenerationsController(CoreDependencies):
                 case _:
                     """Video frame references"""
                     frame_image_generated_uids = [
-                        str(ref.file_uid) for ref in schema.frame_images if ref.source == "generated"
+                        str(ref.file_uid) for ref in schema.frame_images if ref.type == "generated"
                     ]
                     frame_image_uploaded_uids = [
-                        str(ref.file_uid) for ref in schema.frame_images if ref.source == "upload"
+                        str(ref.file_uid) for ref in schema.frame_images if ref.type == "upload"
                     ]
 
                     frame_image_uploaded_files = await get_uploaded_files(ctx, frame_image_uploaded_uids)
@@ -744,12 +745,12 @@ class GenerationsController(CoreDependencies):
 
                     unvalidated_frame_images = [
                         {
-                            "frame_type": ref.type,
+                            "frame_type": ref.frame_type,
                             "image": (
                                 str(ref.diva_url)
-                                if ref.source == "diva"
+                                if ref.type == "diva"
                                 else uploaded_path_by_uid[str(ref.file_uid)]
-                                if ref.source == "upload"
+                                if ref.type == "upload"
                                 else generated_path_by_uid[str(ref.file_uid)]
                             ),
                         }
@@ -774,6 +775,16 @@ class GenerationsController(CoreDependencies):
                         validated_image_references,
                         schema.type,
                         validated_frame_images,
+                    )
+
+                    await self.db.commit()
+                    video_generation.delay(  # type:ignore
+                        generation.id,
+                        user_id,
+                        headers={
+                            "Authorization": f"Bearer {OPENROUTER_API_KEY}"
+                        },  # Later will be changed from API key from boss_id
+                        payload=payload,
                     )
 
             """Invalidate cache related to is_main listings, same as set-main"""

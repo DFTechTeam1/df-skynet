@@ -7,11 +7,11 @@ from error import DataValidationError
 class GenerationReferences(BaseModel):
     file_uid: Optional[UUID] = Field(default=None, description="File UID either from generated or uploaded by user.")
     diva_url: Optional[HttpUrl] = Field(default=None, description="Streamed file from DiVA.")
-    source: Literal["diva", "upload", "generated"]
+    type: Literal["diva", "upload", "generated"]
 
 
 class FrameImageReferences(GenerationReferences):
-    type: Literal["first_frame", "last_frame"]
+    frame_type: Literal["first_frame", "last_frame"]
 
 
 class EditImageGenerationPayload(BaseModel):
@@ -34,8 +34,8 @@ class EditImageGenerationPayload(BaseModel):
     def dedupe_references(self):
         deduped: dict[tuple[str, str], GenerationReferences] = {}
         for ref in self.references:
-            uid = str(ref.diva_url) if ref.source == "diva" else str(ref.file_uid)
-            deduped[(ref.source, uid)] = ref
+            uid = str(ref.diva_url) if ref.type == "diva" else str(ref.file_uid)
+            deduped[(ref.type, uid)] = ref
         self.references = list(deduped.values())
         return self
 
@@ -43,9 +43,9 @@ class EditImageGenerationPayload(BaseModel):
     def check_references(self):
         errors: dict[str, list[str]] = {}
         for idx, ref in enumerate(self.references):
-            if ref.source == "diva" and ref.diva_url is None:
+            if ref.type == "diva" and ref.diva_url is None:
                 errors[f"references.{idx}"] = ["reference_diva_url_required"]
-            elif ref.source in ("upload", "generated") and ref.file_uid is None:
+            elif ref.type in ("upload", "generated") and ref.file_uid is None:
                 errors[f"references.{idx}"] = ["reference_file_uid_required"]
         if errors:
             raise DataValidationError(message="references_invalid", error=errors)
@@ -87,8 +87,8 @@ class ImageVideoGenerationPayload(BaseModel):
     def dedupe_references(self):
         deduped: dict[tuple[str, str], GenerationReferences] = {}
         for ref in self.references:
-            uid = str(ref.diva_url) if ref.source == "diva" else str(ref.file_uid)
-            deduped[(ref.source, uid)] = ref
+            uid = str(ref.diva_url) if ref.type == "diva" else str(ref.file_uid)
+            deduped[(ref.type, uid)] = ref
         self.references = list(deduped.values())
         return self
 
@@ -96,9 +96,9 @@ class ImageVideoGenerationPayload(BaseModel):
     def check_references(self):
         errors: dict[str, list[str]] = {}
         for idx, ref in enumerate(self.references):
-            if ref.source == "diva" and ref.diva_url is None:
+            if ref.type == "diva" and ref.diva_url is None:
                 errors[f"references.{idx}"] = ["reference_diva_url_required"]
-            elif ref.source in ("upload", "generated") and ref.file_uid is None:
+            elif ref.type in ("upload", "generated") and ref.file_uid is None:
                 errors[f"references.{idx}"] = ["reference_file_uid_required"]
         if errors:
             raise DataValidationError(message="references_invalid", error=errors)
@@ -121,9 +121,9 @@ class ImageVideoGenerationPayload(BaseModel):
 
         errors: dict[str, list[str]] = {}
         for idx, ref in enumerate(self.frame_images):
-            if ref.source == "diva" and ref.diva_url is None:
+            if ref.type == "diva" and ref.diva_url is None:
                 errors[f"frame_images.{idx}"] = ["reference_diva_url_required"]
-            elif ref.source in ("upload", "generated") and ref.file_uid is None:
+            elif ref.type in ("upload", "generated") and ref.file_uid is None:
                 errors[f"frame_images.{idx}"] = ["reference_file_uid_required"]
         if errors:
             raise DataValidationError(message="references_invalid", error=errors)

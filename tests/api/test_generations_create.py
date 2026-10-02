@@ -51,10 +51,19 @@ async def image_model():
 
 @pytest_asyncio.fixture
 async def video_model():
-    """An enabled/available video model — `get_model`'s supported_parameters filter
-    only applies to image/image_edit, and `validate_model_params` skips video entirely."""
+    """An enabled/available video model with the non-empty `supported_*` JSON arrays
+    `get_model`'s video-specific filters require (`json_length(...) >= 1` on each of
+    supported_resolutions/aspect_ratios/sizes/durations/frame_images)."""
     return DfEngineModelOptionsFactory.create(
-        type=ModelUsageTypes.video, is_enabled=True, is_available=True, deleted_at=None
+        type=ModelUsageTypes.video,
+        is_enabled=True,
+        is_available=True,
+        deleted_at=None,
+        supported_resolutions=["720p"],
+        supported_aspect_ratios=["16:9"],
+        supported_sizes=["1280x720"],
+        supported_durations=[5],
+        supported_frame_images=["first_frame"],
     )
 
 
@@ -183,21 +192,22 @@ async def generation_project_settings(db_session, project_task):
 
 @pytest_asyncio.fixture
 def fake_generation_backends(monkeypatch):
-    """Fakes the two external side effects the create endpoint triggers: OpenRouter
-    prompt ranking and the Celery image-generation dispatch. Returns the list of
-    `.delay(...)` calls the fake task recorded."""
+    """Fakes the external side effects the create endpoint triggers: OpenRouter
+    prompt ranking and the Celery image/video-generation dispatch. Returns the list
+    of `.delay(...)` calls either fake task recorded."""
 
     async def _fake_rank_prompt(*args, **kwargs):
         return None
 
     delay_calls = []
 
-    class _FakeImageGenerationTask:
+    class _FakeGenerationTask:
         def delay(self, *args, **kwargs):
             delay_calls.append((args, kwargs))
 
     monkeypatch.setattr("apps.controller.generations.rank_prompt", _fake_rank_prompt)
-    monkeypatch.setattr("apps.controller.generations.image_generation", _FakeImageGenerationTask())
+    monkeypatch.setattr("apps.controller.generations.image_generation", _FakeGenerationTask())
+    monkeypatch.setattr("apps.controller.generations.video_generation", _FakeGenerationTask())
     return delay_calls
 
 
@@ -262,8 +272,19 @@ async def test_response_is_the_new_generation_not_a_prior_one(
     assert second.json()["data"]["generation_uid"] != first_uid
 
 
+def _video_payload(menu, feature, model, **overrides):
+    return _payload(
+        menu,
+        feature,
+        model,
+        type="video",
+        parameter={"resolution": "720p", "aspect_ratio": "16:9", "duration": 5},
+        **overrides,
+    )
+
+
 @pytest.mark.asyncio
-async def test_video_type_returns_early_with_no_data(
+async def test_video_generation_happy_path_dispatches_task_and_returns_galleries(
     authed_client,
     project_task,
     generation_menu_feature,
@@ -273,14 +294,38 @@ async def test_video_type_returns_early_with_no_data(
     generation_project_settings,
     fake_generation_backends,
 ):
-    """200 OK; `type="video"` hits the `match`'s catch-all arm and returns immediately
-    with no data and no task dispatch — video generation isn't implemented yet."""
+    """200 OK; a valid video request creates the generation, dispatches the fake
+    Celery video task exactly once, and returns the newly created record."""
     menu, feature = generation_menu_feature
-    resp = await authed_client.call(
-        "POST", _url(project_task.uid), json=_payload(menu, feature, video_model, type="video")
-    )
+    resp = await authed_client.call("POST", _url(project_task.uid), json=_video_payload(menu, feature, video_model))
     assert resp.status_code == 200
-    assert resp.json()["data"] is None
+    assert len(fake_generation_backends) == 1
+
+    body = resp.json()["data"]
+    assert isinstance(body, dict)
+    assert body["type"] == "video"
+    assert body["is_main"] is None
+    assert "variants" not in body
+
+
+@pytest.mark.asyncio
+async def test_video_generation_invalid_parameter_is_422(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    video_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+):
+    """422 generation_parameters_invalid; a video request missing required
+    parameters (resolution/aspect_ratio/duration) never reaches task dispatch."""
+    menu, feature = generation_menu_feature
+    payload = _payload(menu, feature, video_model, type="video")
+    resp = await authed_client.call("POST", _url(project_task.uid), json=payload, raise_for_status=False)
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message("generation_parameters_invalid", "en")
     assert len(fake_generation_backends) == 0
 
 

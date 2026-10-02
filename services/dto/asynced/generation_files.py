@@ -496,6 +496,7 @@ async def get_generation_main_file_detail(
                 DfEngineGenerations.prompt,  # type: ignore
                 DfEngineGenerations.full_prompt,  # type: ignore
                 DfEngineGenerations.parameter,  # type: ignore
+                DfEngineGenerations.cost,  # type: ignore
             )
             .selectinload(DfEngineGenerations.model_option)  # type: ignore
             .load_only(DfEngineModelOptions.name),  # type: ignore
@@ -595,6 +596,7 @@ async def get_generation_main_variants(
                 DfEngineGenerations.prompt,  # type: ignore
                 DfEngineGenerations.full_prompt,  # type: ignore
                 DfEngineGenerations.parameter,  # type: ignore
+                DfEngineGenerations.cost,  # type: ignore
             )
             .selectinload(DfEngineGenerations.model_option)  # type: ignore
             .load_only(DfEngineModelOptions.name),  # type: ignore

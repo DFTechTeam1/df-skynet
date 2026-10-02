@@ -4,7 +4,7 @@ from typing import Any
 from celery.exceptions import SoftTimeLimitExceeded
 from httpx import HTTPStatusError, NetworkError, TimeoutException
 from sqlalchemy import or_
-from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
+from apps.secret import OPENROUTER_API_KEY, UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
 from services.api_caller import APICaller
 from services.celery_app import celery_app
@@ -12,6 +12,7 @@ from services.dto import SyncedConnectionContext
 from services.dto.synced.projects import get_project
 from services.mysql import get_sync_db
 from services.mysql.model import (
+    DfEngineGenerationReconciliationIssues,
     DfEngineGenerationReferences,
     DfEngineGenerationResults,
     DfEngineGenerationUploads,
@@ -43,8 +44,8 @@ LOCAL_COMMIT_BACKOFF_SECONDS = 1
     retry_backoff_max=20,
     retry_jitter=True,
     max_retries=5,
-    soft_time_limit=45,
-    time_limit=60,
+    soft_time_limit=150,
+    time_limit=180,
     rate_limit="10/s",
 )
 def udin_uploader(
@@ -85,7 +86,8 @@ def udin_uploader(
         generation_uid = str(generation.uid)
         task_id = generation.task_id
         project_id = generation.project_id
-        images = list(json.loads(generation.response).values())
+        images = [] if generation.kind == GenerationKinds.video else list(json.loads(generation.response).values())
+        job = json.loads(generation.response) if generation.kind == GenerationKinds.video else None
         uploaded_versions = {result.version for result in existing_results}
         parent = next((result for result in existing_results if result.parent_id is None), None)
         parent_id = parent.id if parent else None
@@ -116,62 +118,109 @@ def udin_uploader(
                 version_start = max((result.version for result in family), default=0)
                 parent_id = root_id
 
-    caller = APICaller(base_url=UDIN_BASE_URL, headers={"X-API-Key": UDIN_API_KEY}, timeout=30)
+    caller = APICaller(base_url=UDIN_BASE_URL, headers={"X-API-Key": UDIN_API_KEY}, timeout=120)
     demoted_family = False
     try:
-        for idx, b64_json in enumerate(images):
-            version = version_start + idx + 1
-            if version in uploaded_versions:
-                continue  # already uploaded on a prior attempt of this task
+        if generation.kind == GenerationKinds.video:
+            if 1 not in uploaded_versions:
+                try:
+                    response = caller.udin_sync(
+                        "POST",
+                        f"/engine/storage/upload-generated-video/{project_uid}",
+                        user_id=user_id,
+                        json={"polling_url": job["polling_url"], "openrouter_api_key": OPENROUTER_API_KEY},  # type: ignore
+                    )
+                except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
+                    stage_error = classify_error(exc, source="udin")
+                    can_retry = stage_error.retryable and self.request.retries < self.max_retries
+                    _bump_sweep_attempts(generation_id, final=not can_retry, detail=str(stage_error))
+                    if can_retry:
+                        raise self.retry(exc=stage_error, countdown=retry_countdown(self))
+                    raise stage_error
 
-            try:
-                response = caller.udin_sync(
-                    "POST",
-                    f"/engine/storage/upload-generated-image/{project_uid}",
-                    user_id=user_id,
-                    json={"b64_json": b64_json, "media_type": "image/png"},
-                )
-            except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
-                _bump_sweep_attempts(generation_id)
-                stage_error = classify_error(exc, source="udin")
-                if stage_error.retryable and self.request.retries < self.max_retries:
-                    raise self.retry(exc=stage_error, countdown=retry_countdown(self))
-                raise stage_error
+                if response.is_error:
+                    stage_error = classify_error(
+                        HTTPStatusError(response_error_message(response), request=response.request, response=response),
+                        source="udin",
+                    )
+                    can_retry = stage_error.retryable and self.request.retries < self.max_retries
+                    _bump_sweep_attempts(generation_id, final=not can_retry, detail=str(stage_error))
+                    if can_retry:
+                        raise self.retry(exc=stage_error, countdown=retry_countdown(self))
+                    raise stage_error
 
-            if response.is_error:
-                _bump_sweep_attempts(generation_id)
-                stage_error = classify_error(
-                    HTTPStatusError(response_error_message(response), request=response.request, response=response),
-                    source="udin",
-                )
-                if stage_error.retryable and self.request.retries < self.max_retries:
-                    raise self.retry(exc=stage_error, countdown=retry_countdown(self))
-                raise stage_error
+                uploaded = response.json().get("data") or {}
+                with get_sync_db() as db:
+                    db.add(
+                        DfEngineGenerationResults(
+                            generation_id=generation_id,
+                            name=uploaded.get("name", ""),
+                            path=uploaded.get("path", ""),
+                            size=uploaded.get("size", 0),
+                            md5=uploaded.get("md5"),
+                            version=1,
+                            is_main=True,
+                            parent_id=None,
+                            created_by=user_id,
+                        )
+                    )
+                    db.flush()
+        else:
+            for idx, b64_json in enumerate(images):
+                version = version_start + idx + 1
+                if version in uploaded_versions:
+                    continue  # already uploaded on a prior attempt of this task
 
-            uploaded = response.json().get("data") or {}
-            with get_sync_db() as db:
-                if family_ids and not demoted_family:
-                    db.query(DfEngineGenerationResults).filter(
-                        DfEngineGenerationResults.id.in_(family_ids)  # type: ignore
-                    ).update({DfEngineGenerationResults.is_main: False}, synchronize_session=False)  # type: ignore
-                    demoted_family = True
+                try:
+                    response = caller.udin_sync(
+                        "POST",
+                        f"/engine/storage/upload-generated-image/{project_uid}",
+                        user_id=user_id,
+                        json={"b64_json": b64_json, "media_type": "image/png"},
+                    )
+                except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
+                    stage_error = classify_error(exc, source="udin")
+                    can_retry = stage_error.retryable and self.request.retries < self.max_retries
+                    _bump_sweep_attempts(generation_id, final=not can_retry, detail=str(stage_error))
+                    if can_retry:
+                        raise self.retry(exc=stage_error, countdown=retry_countdown(self))
+                    raise stage_error
 
-                result = DfEngineGenerationResults(
-                    generation_id=generation_id,
-                    name=uploaded.get("name", ""),
-                    path=uploaded.get("path", ""),
-                    size=uploaded.get("size", 0),
-                    md5=uploaded.get("md5"),
-                    version=version,
-                    is_main=idx == 0,
-                    parent_id=parent_id,
-                    created_by=user_id,
-                )
-                db.add(result)
-                db.flush()
-                db.refresh(result)
-                if not family_ids and idx == 0:
-                    parent_id = result.id
+                if response.is_error:
+                    stage_error = classify_error(
+                        HTTPStatusError(response_error_message(response), request=response.request, response=response),
+                        source="udin",
+                    )
+                    can_retry = stage_error.retryable and self.request.retries < self.max_retries
+                    _bump_sweep_attempts(generation_id, final=not can_retry, detail=str(stage_error))
+                    if can_retry:
+                        raise self.retry(exc=stage_error, countdown=retry_countdown(self))
+                    raise stage_error
+
+                uploaded = response.json().get("data") or {}
+                with get_sync_db() as db:
+                    if family_ids and not demoted_family:
+                        db.query(DfEngineGenerationResults).filter(
+                            DfEngineGenerationResults.id.in_(family_ids)  # type: ignore
+                        ).update({DfEngineGenerationResults.is_main: False}, synchronize_session=False)  # type: ignore
+                        demoted_family = True
+
+                    result = DfEngineGenerationResults(
+                        generation_id=generation_id,
+                        name=uploaded.get("name", ""),
+                        path=uploaded.get("path", ""),
+                        size=uploaded.get("size", 0),
+                        md5=uploaded.get("md5"),
+                        version=version,
+                        is_main=idx == 0,
+                        parent_id=parent_id,
+                        created_by=user_id,
+                    )
+                    db.add(result)
+                    db.flush()
+                    db.refresh(result)
+                    if not family_ids and idx == 0:
+                        parent_id = result.id
     finally:
         caller.sync_client.close()
 
@@ -183,6 +232,15 @@ def udin_uploader(
                     upload = DfEngineGenerationUploads(generation_id=generation_id)
                 upload.upload_status = UploadStatuses.success
                 upload.uploaded_at = local_time()
+                if upload.needs_reconciliation:
+                    upload.needs_reconciliation = False
+                    upload.reconciled_at = local_time()
+                    db.query(DfEngineGenerationReconciliationIssues).filter(
+                        DfEngineGenerationReconciliationIssues.generation_id == generation_id,
+                        DfEngineGenerationReconciliationIssues.resolved_at.is_(None),  # type: ignore
+                    ).update(
+                        {DfEngineGenerationReconciliationIssues.resolved_at: local_time()}, synchronize_session=False
+                    )  # type: ignore
                 db.add(upload)
 
                 generation = db.get(DfEngineGenerations, generation_id)
@@ -235,6 +293,9 @@ def udin_uploader(
             if attempt < LOCAL_COMMIT_ATTEMPTS:
                 time.sleep(LOCAL_COMMIT_BACKOFF_SECONDS)
 
+    _bump_sweep_attempts(
+        generation_id, final=True, detail=f"local commit failed after {LOCAL_COMMIT_ATTEMPTS} attempts"
+    )
     raise GenerationStageError(
         f"local commit failed after {LOCAL_COMMIT_ATTEMPTS} attempts, upload already succeeded on Udin",
         source="udin",
@@ -242,10 +303,23 @@ def udin_uploader(
     )
 
 
-def _bump_sweep_attempts(generation_id: int) -> None:
+def _bump_sweep_attempts(generation_id: int, final: bool = False, detail: str = "") -> None:
     with get_sync_db() as db:
         upload = db.query(DfEngineGenerationUploads).filter_by(generation_id=generation_id).first()
         if upload is None:
             upload = DfEngineGenerationUploads(generation_id=generation_id)
         upload.sweep_attempts += 1
+        newly_flagged = final and not upload.needs_reconciliation
+        if final:
+            upload.needs_reconciliation = True
         db.add(upload)
+        db.flush()
+        if newly_flagged:
+            db.add(
+                DfEngineGenerationReconciliationIssues(
+                    generation_id=generation_id,
+                    upload_id=upload.id,
+                    issue_type="udin_upload_failed",
+                    detail=detail[:2000],
+                )
+            )

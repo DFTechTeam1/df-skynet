@@ -108,6 +108,7 @@ def _generation_broadcast_context(generation_id: int) -> Optional[tuple[str, int
 
 STAGE_STATUSES = {
     "df_engine.image_generation": "generating",
+    "df_engine.video_generation": "generating",
     "df_engine.udin_uploader": "uploading",
 }
 
@@ -122,6 +123,9 @@ class GenerationTask(celery_app.Task):
             attempt=self.request.retries + 1,
             task_id=task_id,
         )
+        if kwargs.get("is_poll"):
+            return  # re-queued poll tick, not a stage change - skip the Pusher spam
+
         user_id = args[1] if len(args) > 1 else kwargs["user_id"]
         context = _generation_broadcast_context(generation_id)
         if context:
