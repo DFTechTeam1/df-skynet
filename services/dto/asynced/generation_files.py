@@ -271,7 +271,9 @@ async def get_generation_files(
         found_uids = {file["file_uid"] for file in generation_files}
         for idx, file_uid in enumerate(file_uids):
             if file_uid not in found_uids:
-                raise DataNotFoundError(message="file_not_found", error={f"file_uids.{idx}": ["file_not_found"]})
+                raise DataNotFoundError(
+                    message="file_not_found", error={f"references.{idx}.generated": ["file_not_found"]}
+                )
 
     await set_json(ctx.redis, user_generation_files_key, generation_files)
     logging.info(
@@ -494,6 +496,7 @@ async def get_generation_main_file_detail(
                 DfEngineGenerations.prompt,  # type: ignore
                 DfEngineGenerations.full_prompt,  # type: ignore
                 DfEngineGenerations.parameter,  # type: ignore
+                DfEngineGenerations.cost,  # type: ignore
             )
             .selectinload(DfEngineGenerations.model_option)  # type: ignore
             .load_only(DfEngineModelOptions.name),  # type: ignore
@@ -593,6 +596,7 @@ async def get_generation_main_variants(
                 DfEngineGenerations.prompt,  # type: ignore
                 DfEngineGenerations.full_prompt,  # type: ignore
                 DfEngineGenerations.parameter,  # type: ignore
+                DfEngineGenerations.cost,  # type: ignore
             )
             .selectinload(DfEngineGenerations.model_option)  # type: ignore
             .load_only(DfEngineModelOptions.name),  # type: ignore

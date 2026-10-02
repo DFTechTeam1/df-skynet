@@ -36,6 +36,12 @@ class ModelManagement:
             conditions.append(func.json_length(DfEngineModelOptions.supported_parameters) >= 1)  # type: ignore
         if type == "text":
             conditions.append(func.json_length(DfEngineModelOptions.default_parameters) >= 1)  # type: ignore
+        if type == "video":
+            conditions.append(func.json_length(DfEngineModelOptions.supported_resolutions) >= 1)  # type: ignore
+            conditions.append(func.json_length(DfEngineModelOptions.supported_aspect_ratios) >= 1)  # type: ignore
+            conditions.append(func.json_length(DfEngineModelOptions.supported_sizes) >= 1)  # type: ignore
+            conditions.append(func.json_length(DfEngineModelOptions.supported_durations) >= 1)  # type: ignore
+            conditions.append(func.json_length(DfEngineModelOptions.supported_frame_images) >= 1)  # type: ignore
         if search:
             conditions.append(DfEngineModelOptions.name.ilike(f"{search}%"))  # type: ignore
         if is_enabled is not None:

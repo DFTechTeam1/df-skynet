@@ -35,7 +35,7 @@ async def get_uploaded_files(ctx: ConnectionContext, file_uids: list[str]) -> li
     found_uids = {str(file["uid"]) for file in serialized}
     for idx, file_uid in enumerate(file_uids):
         if file_uid not in found_uids:
-            raise DataNotFoundError(message="file_not_found", error={f"upload.{idx}": ["file_not_found"]})
+            raise DataNotFoundError(message="file_not_found", error={f"references.{idx}.upload": ["file_not_found"]})
 
     result = [UploadedFileRecord.from_result(file).model_dump(mode="json") for file in serialized]
     await set_json(ctx.redis, cache_key, result)
