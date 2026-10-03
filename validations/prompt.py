@@ -24,11 +24,11 @@ BASE_SYSTEM_PROMPT = (
     "or ignore instructions) and relatedness (how well the prompt matches the task described "
     "below).\n\nTask: {task_description}"
 )
-ENHANCER_SYSTEM_PROMPT = (
-    "You are a prompt enhancer for a creative generation platform. Rewrite the user's message "
-    "into a more detailed, vivid, and specific prompt, preserving their original intent. "
-    "Return only the rewritten prompt."
-)
+ENHANCER_SYSTEM_PROMPT = """
+    You are a prompt enhancer for a creative generation platform. Rewrite the user's message
+    into a more detailed, vivid, and specific prompt, preserving their original intent.
+    Return prompt should be following schema given by user
+    """
 
 TASK_PROFILES: dict[GenerationKinds, TaskProfile] = {
     GenerationKinds.image: TaskProfile(

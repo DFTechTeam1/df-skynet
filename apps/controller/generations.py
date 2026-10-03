@@ -1,12 +1,15 @@
 import traceback
 from collections import defaultdict
+from datetime import timedelta
+from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 from fastapi import status, Path, Query
 from fastapi_controller import controller
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
+from config.variables import USD_TO_IDR_RATE
 from schemas.response import PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
@@ -44,6 +47,7 @@ from log import logging
 from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from services.model_management import ModelManagement
+from utils import local_time
 from utils.serializer import serialize
 from validations.prompt import enhance_prompt, rank_prompt
 from validations.model import (
@@ -100,6 +104,51 @@ class GenerationsController(CoreDependencies):
 
             logging.info(f"user={self.user['user_id']} fetched detail model source=db uid={model_uid}")
             response.data = result
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/models-price/{model_uid}",
+        summary="Get model pricing.",
+        description=(
+            "Shows one AI model's average real cost per generation over the trailing 3 months, "
+            "in USD and IDR, based on successful generations only."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Generations"],
+        response_model=Response,
+    )
+    async def generations_with_uid_to_fetch_model_price(
+        self, model_uid: UUID = Path(description="Model UID.")
+    ) -> Response:
+        response = Response()
+        cache_key = CacheKeys()
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            model = await get_model(ctx, model_uid, ModelUsageTypes.text)
+
+            avg_cost = await query(
+                db=self.db,
+                table=DfEngineGenerations,
+                columns=(func.avg(DfEngineGenerations.cost),),  # type: ignore
+                filters=(
+                    DfEngineGenerations.model_id == model["id"],  # type: ignore
+                    DfEngineGenerations.status == GenerationStatuses.success,  # type: ignore
+                    DfEngineGenerations.created_at >= local_time() - timedelta(days=90),  # type: ignore
+                ),
+                fetch_one=True,
+            )
+            avg_cost = Decimal(str(avg_cost)) if avg_cost is not None else Decimal(0)
+
+            logging.info(f"user={self.user['user_id']} fetched avg price model uid={model_uid}")
+            response.data = {
+                "usd": f"USD {avg_cost:.4f}",
+                "idr": f"IDR {avg_cost * USD_TO_IDR_RATE:,.0f}",
+            }
         except BaseError:
             raise
         except Exception:

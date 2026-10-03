@@ -10,7 +10,7 @@ from services.dto import SyncedConnectionContext
 from services.mysql import get_sync_db
 from services.mysql.model import DfEngineGenerations
 from services.mysql.model.df_engine_generations import GenerationStatuses
-from services.redis import CacheKeys, get_json_sync, set_json_sync, sync_client
+from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_json_sync, sync_client
 from services.tasks.base import (
     GenerationStageError,
     GenerationTask,
@@ -21,7 +21,7 @@ from services.tasks.base import (
 from services.tasks.udin_uploader import udin_uploader
 from utils.formatter import format_idr, format_usd
 
-POLL_INTERVAL_SECONDS = 10
+POLL_INTERVAL_SECONDS = 30
 
 
 @celery_app.task(
@@ -59,6 +59,8 @@ def video_generation(
         if generation.status == GenerationStatuses.queued:
             generation.status = GenerationStatuses.processing
             ctx.db.add(generation)
+            if generation.task_id is not None:
+                delete_pattern_sync(ctx.redis, ctx.key.generation_files_main_list_pattern(generation.task_id))
         generation_detail_key = ctx.key.generation_detail(user_id, str(generation.uid))
         cached_generation_detail = get_json_sync(ctx.redis, generation_detail_key)
         if cached_generation_detail is not None:
