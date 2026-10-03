@@ -9,7 +9,6 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.model.df_engine_generations import GenerationStatuses
-from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from utils import local_time
 
 URL = "/api/models-price"
@@ -17,18 +16,6 @@ URL = "/api/models-price"
 
 def _url(model_uid):
     return f"{URL}/{model_uid}"
-
-
-def _text_model(**overrides):
-    """`get_model(..., ModelUsageTypes.text)` requires type=text, is_enabled,
-    is_available, and a non-empty `default_parameters` (its json_length filter)."""
-    return DfEngineModelOptionsFactory.create(
-        type=ModelUsageTypes.text,
-        is_enabled=True,
-        is_available=True,
-        default_parameters={"temperature": 1},
-        **overrides,
-    )
 
 
 @pytest_asyncio.fixture
@@ -42,7 +29,7 @@ async def generation_fks(user_id) -> dict:
 @pytest.mark.asyncio
 async def test_averages_only_recent_successful_generations(authed_client, user_id, generation_fks):
     """Avg should include only in-window `success` rows, excluding `failed` and stale rows."""
-    model = _text_model()
+    model = DfEngineModelOptionsFactory.create()
     common = dict(model_id=model.id, created_by=int(user_id), sourceable_id=1, **generation_fks)
 
     DfEngineGenerationsFactory.create(**common, status=GenerationStatuses.success, cost="0.10")
@@ -65,7 +52,7 @@ async def test_averages_only_recent_successful_generations(authed_client, user_i
 @pytest.mark.asyncio
 async def test_no_matching_generations_returns_zero(authed_client):
     """A model with no success generations in-window reports a zero average, not an error."""
-    model = _text_model()
+    model = DfEngineModelOptionsFactory.create()
 
     resp = await authed_client.call("GET", _url(model.uid))
     assert resp.status_code == 200
