@@ -151,7 +151,7 @@ class GenerationsController(CoreDependencies):
 
             logging.info(f"user={self.user['user_id']} fetched avg price model uid={model_uid}")
             response.data = {
-                "usd": f"USD {avg_cost:.4f}",
+                "usd": "USD 0" if avg_cost == 0 else f"USD {avg_cost:.2f}",
                 "idr": f"IDR {avg_cost * USD_TO_IDR_RATE:,.0f}",
             }
         except BaseError:

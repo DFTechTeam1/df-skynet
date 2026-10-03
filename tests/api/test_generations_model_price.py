@@ -45,7 +45,7 @@ async def test_averages_only_recent_successful_generations(authed_client, user_i
     resp = await authed_client.call("GET", _url(model.uid))
     assert resp.status_code == 200
     body = resp.json()["data"]
-    assert body["usd"] == "USD 0.2000"
+    assert body["usd"] == "USD 0.20"
     assert body["idr"] == f"IDR {0.2 * float(USD_TO_IDR_RATE):,.0f}"
 
 
@@ -56,7 +56,7 @@ async def test_no_matching_generations_returns_zero(authed_client):
 
     resp = await authed_client.call("GET", _url(model.uid))
     assert resp.status_code == 200
-    assert resp.json()["data"] == {"usd": "USD 0.0000", "idr": "IDR 0"}
+    assert resp.json()["data"] == {"usd": "USD 0", "idr": "IDR 0"}
 
 
 @pytest.mark.asyncio
