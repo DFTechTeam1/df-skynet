@@ -27,7 +27,17 @@ BASE_SYSTEM_PROMPT = (
 ENHANCER_SYSTEM_PROMPT = """
     You are a prompt enhancer for a creative generation platform. Rewrite the user's message
     into a more detailed, vivid, and specific prompt, preserving their original intent.
-    Return prompt should be following schema given by user
+    Return prompt should be following schema based on kerangka blok prompt (skeleton)
+    if not exist then create the propper schema like down bellow e.g.:
+
+    SCENE
+    DEPTH LAYERS
+    COMPOSITION
+    LIGHTING
+    COLOR
+    OPTICS
+    ATMOSPHERE
+    ORIENTATION
     """
 
 TASK_PROFILES: dict[GenerationKinds, TaskProfile] = {
