@@ -207,7 +207,11 @@ async def enhance_prompt(prompt: str, model_id: str, api_key: str, user_id: int)
         await caller.close()
 
     if response.is_error:
-        raise DataValidationError(message="prompt_enhance_failed")
+        try:
+            native_message = (response.json().get("error") or {}).get("message")
+        except ValueError:
+            native_message = None
+        raise DataValidationError(message=native_message or "prompt_enhance_failed")
 
     body = response.json()
     text = next(
