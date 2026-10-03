@@ -126,17 +126,22 @@ class GenerationsController(CoreDependencies):
         self, model_uid: UUID = Path(description="Model UID.")
     ) -> Response:
         response = Response()
-        cache_key = CacheKeys()
-        ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            model = await get_model(ctx, model_uid, ModelUsageTypes.text)
+            model = await query(
+                db=self.db,
+                table=DfEngineModelOptions,
+                filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
+                fetch_one=True,
+            )
+            if not model:
+                raise DataNotFoundError(message="model_option_not_found")
 
             avg_cost = await query(
                 db=self.db,
                 table=DfEngineGenerations,
                 columns=(func.avg(DfEngineGenerations.cost),),  # type: ignore
                 filters=(
-                    DfEngineGenerations.model_id == model["id"],  # type: ignore
+                    DfEngineGenerations.model_id == model.id,  # type: ignore
                     DfEngineGenerations.status == GenerationStatuses.success,  # type: ignore
                     DfEngineGenerations.created_at >= local_time() - timedelta(days=90),  # type: ignore
                 ),
