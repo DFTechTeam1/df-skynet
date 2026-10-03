@@ -14,6 +14,7 @@ from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
 from services.mysql.model.df_engine_settings import DfEngineSettings
 from services.mysql.model.employees import Employees
+from services.mysql.model.project_person_in_charges import ProjectPersonInCharges
 from services.redis import CacheKeys, client as redis_client, delete_pattern
 
 URL = "/api/generations"
@@ -25,8 +26,9 @@ def _url(task_uid):
 
 @pytest_asyncio.fixture
 async def pic_employee_id(db_session, user_id) -> int:
-    """The authenticated user's boss — the endpoint looks up its API key via
-    `employee_boss["id"]`, resolved from the real staging `employees` row."""
+    """The authenticated user's boss, resolved from the real staging `employees` row.
+    `get_employee_api_key` only charges this boss's key when they're registered as a
+    PIC on the task's project — see the `pic_membership` fixture below."""
     employee = (await db_session.execute(select(Employees).where(Employees.user_id == int(user_id)))).scalars().first()
     assert employee is not None and employee.boss_id is not None, "staging employee/boss_id missing for user_id"
     return employee.boss_id
@@ -74,7 +76,41 @@ async def video_model():
 
 
 @pytest_asyncio.fixture
-async def pic_api_key(db_session, user_id, pic_employee_id):
+async def pic_membership(db_session, project_task, pic_employee_id):
+    """Registers the boss employee as a PIC on the fixture task's real project.
+    `get_employee_api_key` only resolves the boss's key when they're actually a
+    registered `project_person_in_charges` PIC, which isn't guaranteed by `project_task`
+    alone — so this ensures it deterministically. Only inserts if not already present;
+    only the row this fixture creates is removed on teardown."""
+    project_id = project_task.project_id
+    existing = (
+        (
+            await db_session.execute(
+                select(ProjectPersonInCharges).where(
+                    ProjectPersonInCharges.project_id == project_id,
+                    ProjectPersonInCharges.pic_id == pic_employee_id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing:  # pragma: no cover - only hit if the boss is already a PIC on this shared-DB project
+        yield
+        return
+
+    row = ProjectPersonInCharges(project_id=project_id, pic_id=pic_employee_id, is_lead=False)
+    db_session.add(row)
+    await db_session.commit()
+    try:
+        yield
+    finally:
+        await db_session.execute(delete(ProjectPersonInCharges).where(ProjectPersonInCharges.id == row.id))
+        await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def pic_api_key(db_session, user_id, pic_employee_id, pic_membership):
     """A main, non-expired API key for the authenticated user's boss employee. Any
     pre-existing key(s) on that employee are snapshotted and restored, matching
     the save/restore idiom `active_employee_uid` already uses for the same reason:

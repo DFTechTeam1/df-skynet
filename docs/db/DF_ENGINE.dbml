@@ -155,6 +155,10 @@ Table project_tasks {
     project_id integer [not null]
 }
 
+Table project_song_lists {
+    id bigint [pk, increment]
+}
+
 
 // ============================================================
 // SETTINGS / ACCESS CONTROL
@@ -413,6 +417,7 @@ Table df_engine_upload_files {
     size bigint [not null]
     project_id bigint [not null]
     task_id bigint [default: null]
+    song_id bigint [default: null]
     created_by bigint [default: null]
     updated_by bigint [default: null]
 }
@@ -434,6 +439,7 @@ Table df_engine_generations {
     sourceable_type varchar(255) [not null, note: "Polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
     project_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
     task_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
+    song_id bigint [default: null, note: "Set instead of task_id when this generation was made against an entertainment song (project_song_lists) rather than a project_tasks row — mutually exclusive with task_id, enforced at the app level"]
     prompt text [not null]
     full_prompt text [default: null, note: "prompt merged with feature prompt templates"]
     parameter json [default: null, note: "Raw request parameters as submitted by the user, for display back to the user."]
@@ -726,8 +732,10 @@ Ref: projects.id < project_tasks.project_id
 Ref: projects.id < df_engine_project_settings.project_id
 Ref: projects.id < df_engine_upload_files.project_id
 Ref: project_tasks.id < df_engine_upload_files.task_id
+Ref: project_song_lists.id < df_engine_upload_files.song_id
 Ref: projects.id < df_engine_generations.project_id
 Ref: project_tasks.id < df_engine_generations.task_id
+Ref: project_song_lists.id < df_engine_generations.song_id
 
 // menus / features
 Ref: df_engine_features.id < df_engine_feature_prompt_mappings.feature_id

@@ -71,6 +71,9 @@ class DfEngineGenerations(SQLModel, table=True):
     task_id: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id"), nullable=True)
     )
+    song_id: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_song_lists.id"), nullable=True)
+    )
     prompt: str = Field(sa_column=Column(Text, nullable=False))
     full_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     parameter: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON(none_as_null=True), nullable=True))

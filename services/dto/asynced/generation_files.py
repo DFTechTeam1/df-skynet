@@ -83,9 +83,10 @@ async def get_generation_main_files(
     filters = [
         DfEngineGenerations.task_id == task_id,
         DfEngineGenerations.status.in_([GenerationStatuses.success, GenerationStatuses.processing]),  # type: ignore
+        DfEngineGenerations.kind.in_(["image", "image_edit", "video"]),  # type: ignore
     ]
     if search:
-        term = f"{search.strip()}%"
+        term = f"%{search.strip()}%"
         filters.append(
             or_(
                 DfEngineGenerations.prompt.ilike(term),  # type: ignore

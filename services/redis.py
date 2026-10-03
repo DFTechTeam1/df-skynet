@@ -322,11 +322,16 @@ class CacheKeys:
     def get_project(self, project_uid: Optional[UUID] = None, project_id: Optional[int] = None) -> str:
         return f"projects:uid={project_uid}:id={project_id}"
 
-    def get_project_task(self, task_uid: Optional[UUID] = None, task_id: Optional[int] = None) -> str:
-        return f"projects:tasks:uid={task_uid}:id={task_id}"
+    def get_project_task(
+        self, task_uid: Optional[UUID] = None, task_id: Optional[int] = None, song_id: Optional[int] = None
+    ) -> str:
+        return f"projects:tasks:uid={task_uid}:id={task_id}:song_id={song_id}"
 
     def get_user_tasks(self, task_id: int, employee_id: int) -> str:
         return f"projects:tasks:pics:task_id={task_id}:employee_id={employee_id}"
+
+    def get_project_pics(self, project_id: int) -> str:
+        return f"projects:pics:project_id={project_id}"
 
     # --- employees ---
     def active_employee(self, user_id: Optional[int] = None, employee_id: Optional[int] = None) -> str:

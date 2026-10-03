@@ -39,6 +39,9 @@ class DfEngineUploadFiles(SQLModel, table=True):
     task_id: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id"), nullable=True)
     )
+    song_id: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_song_lists.id"), nullable=True)
+    )
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
     )

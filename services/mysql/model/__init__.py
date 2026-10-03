@@ -28,11 +28,15 @@ from services.mysql.model.df_engine_upload_file_references import DfEngineUpload
 from services.mysql.model.df_engine_upload_files import DfEngineUploadFiles
 from services.mysql.model.df_engine_video_generation_details import DfEngineVideoGenerationDetails
 from services.mysql.model.employees import Employees
+from services.mysql.model.entertainment_task_songs import EntertainmentTaskSongs
 from services.mysql.model.position_backups import PositionBackups
 from services.mysql.model.project_classes import ProjectClasses
+from services.mysql.model.project_person_in_charges import ProjectPersonInCharges
+from services.mysql.model.project_song_lists import ProjectSongLists
 from services.mysql.model.project_task_pics import ProjectTaskPics
 from services.mysql.model.project_tasks import ProjectTasks
 from services.mysql.model.projects import Projects
+from services.mysql.model.transfer_team_members import TransferTeamMembers
 from services.mysql.model.users import Users
 
 __all__ = [
@@ -66,10 +70,14 @@ __all__ = [
     "DfEngineUploadFiles",
     "DfEngineVideoGenerationDetails",
     "Employees",
+    "EntertainmentTaskSongs",
     "PositionBackups",
     "ProjectClasses",
+    "ProjectPersonInCharges",
+    "ProjectSongLists",
     "ProjectTaskPics",
     "ProjectTasks",
     "Projects",
+    "TransferTeamMembers",
     "Users",
 ]

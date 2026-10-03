@@ -29,6 +29,8 @@ class GenerationsMessage:
             "ranking_model_not_configured": "No text model is configured to verify prompts. Please contact an administrator.",
             "enhancer_model_not_configured": "No text model is configured to enhance prompts. Please contact an administrator.",
             "api_key_token_usage_limit_exceeded": "This API key has reached its usage limit and can no longer be used to generate.",
+            "employee_api_key_not_resolved": "We couldn't determine which API key to use for this request. Make sure you or your PIC is assigned to this project.",
+            "song_task_already_completed": "This song's content has already been completed and can no longer be modified.",
             "prompt_injection_detected": "This prompt looks like an attempt to manipulate the system (score: {score}). Please rephrase it as a plain description of the image or video you want.",
             "prompt_not_generation_related": "This prompt doesn't look related to {type_label} (score: {score}). Please describe what you'd like the {type_label} to look like.",
             "generation_file_not_found": "This generated file could not be found.",

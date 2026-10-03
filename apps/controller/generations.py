@@ -41,7 +41,7 @@ from services.dto.asynced.generation_files import (
 )
 from services.dto.asynced.generation_files import _build_references
 from services.dto.asynced.uploaded_files import get_uploaded_files
-from services.dto.asynced.api_keys import get_api_key, validate_api_key_limitation
+from services.dto.asynced.api_keys import get_employee_api_key, validate_api_key_limitation
 from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting, get_model, get_menu
 from log import logging
 from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
@@ -326,12 +326,14 @@ class GenerationsController(CoreDependencies):
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
 
-        # TASK_STATUS_ONPROCESS = 1
         # PROJECT_STATUS_ONGOING = 1
 
         try:
             task = await get_project_task(ctx, task_uid)
-            # if task['status'] != TASK_STATUS_ONPROCESS:
+            # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
+            #     raise DataValidationError(message="song_task_already_completed")
+
+            # if not task.get("is_song") and task["status"] != TASK_STATUS_ONPROCESS:
             #     raise DataValidationError(message="project_task_not_onprocess")
 
             project = await get_project(ctx, project_id=task["project_id"])
@@ -339,7 +341,6 @@ class GenerationsController(CoreDependencies):
             #     raise DataValidationError(message="project_not_ongoing")
 
             employee_user = await get_employee(ctx, user_id=user_id)
-            employee_boss = await get_employee(ctx, employee_id=employee_user["boss_id"])
 
             admin_setting = await get_admin_settings(ctx)
             project_setting = await get_project_setting(ctx, project_uid=project["uid"])
@@ -361,7 +362,7 @@ class GenerationsController(CoreDependencies):
             if enhancer_model is None:
                 raise DataValidationError(message="enhancer_model_not_configured")
 
-            api_key = await get_api_key(ctx, employee_boss["id"])
+            api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             enhanced = await enhance_prompt(merged_prompt, enhancer_model["model_id"], api_key["key"], user_id)
 
@@ -373,7 +374,8 @@ class GenerationsController(CoreDependencies):
                 sourceable_id=api_key["id"],
                 sourceable_type=DfEngineApiKeys.__name__,
                 project_id=project["id"],
-                task_id=task["id"],
+                task_id=None if task.get("is_song") else task["id"],
+                song_id=task["id"] if task.get("is_song") else None,
                 prompt=schema.prompt,
                 full_prompt=merged_prompt,
                 response=enhanced["text"],
@@ -425,25 +427,26 @@ class GenerationsController(CoreDependencies):
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
 
-        TASK_STATUS_ONPROCESS = 1
         PROJECT_STATUS_ONGOING = 1
 
         try:
             generated_files = await get_generation_files(ctx, user_id=user_id, file_uids=[str(file_uid)])
             source_file = generated_files[0]
             edit_parent_id = source_file["parent_id"] or source_file["id"]
-            task_id = serialize(
+            prior = serialize(
                 await query(
                     db=self.db,
-                    columns=(DfEngineGenerations.task_id,),
+                    columns=(DfEngineGenerations.task_id, DfEngineGenerations.song_id),
                     table=DfEngineGenerations,
                     filters=(DfEngineGenerations.uid == generated_files[0]["generation_uid"],),
                     fetch_one=True,
                 )
             )
 
-            task = await get_project_task(ctx, task_id=task_id)
-            # if task['status'] != TASK_STATUS_ONPROCESS:
+            task = await get_project_task(ctx, task_id=prior["task_id"], song_id=prior["song_id"])
+            # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
+            #     raise DataValidationError(message="song_task_already_completed")
+            # if not task.get("is_song") and task["status"] != TASK_STATUS_ONPROCESS:
             #     raise DataValidationError(message="project_task_not_onprocess")
 
             project = await get_project(ctx, project_id=task["project_id"])
@@ -451,7 +454,6 @@ class GenerationsController(CoreDependencies):
             #     raise DataValidationError(message="project_not_ongoing")
 
             employee_user = await get_employee(ctx, user_id=user_id)
-            employee_boss = await get_employee(ctx, employee_id=employee_user["boss_id"])
 
             admin_setting = await get_admin_settings(ctx)
             project_setting = await get_project_setting(ctx, project_uid=project["uid"])
@@ -514,7 +516,7 @@ class GenerationsController(CoreDependencies):
             validate_total_image_references(user_image_references, input_references_parameter)
             all_references = await validate_image_availability(user_image_references)
 
-            api_key = await get_api_key(ctx, employee_boss["id"])
+            api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             await rank_prompt(
                 resolved_prompt,
@@ -532,7 +534,8 @@ class GenerationsController(CoreDependencies):
                 sourceable_id=api_key["id"],
                 sourceable_type=DfEngineApiKeys.__name__,
                 project_id=project["id"],
-                task_id=task["id"],
+                task_id=None if task.get("is_song") else task["id"],
+                song_id=task["id"] if task.get("is_song") else None,
                 prompt=resolved_prompt,
                 full_prompt=merged_prompt,
                 parameter=schema.parameter,
@@ -643,12 +646,13 @@ class GenerationsController(CoreDependencies):
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
 
-        # TASK_STATUS_ONPROCESS = 1
         # PROJECT_STATUS_ONGOING = 1
 
         try:
             task = await get_project_task(ctx, task_uid)
-            # if task['status'] != TASK_STATUS_ONPROCESS:
+            # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
+            #     raise DataValidationError(message="song_task_already_completed")
+            # if not task.get("is_song") and task["status"] != TASK_STATUS_ONPROCESS:
             #     raise DataValidationError(message="project_task_not_onprocess")
 
             project = await get_project(ctx, project_id=task["project_id"])
@@ -656,7 +660,6 @@ class GenerationsController(CoreDependencies):
             #     raise DataValidationError(message="project_not_ongoing")
 
             employee_user = await get_employee(ctx, user_id=user_id)
-            employee_boss = await get_employee(ctx, employee_id=employee_user["boss_id"])
 
             admin_setting = await get_admin_settings(ctx)
             project_setting = await get_project_setting(ctx, project_uid=project["uid"])
@@ -716,7 +719,7 @@ class GenerationsController(CoreDependencies):
             validate_total_image_references(user_image_references, input_references_parameter)
             validated_image_references = await validate_image_availability(user_image_references)
 
-            api_key = await get_api_key(ctx, employee_boss["id"])
+            api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
             await rank_prompt(
@@ -735,7 +738,8 @@ class GenerationsController(CoreDependencies):
                 sourceable_id=api_key["id"],
                 sourceable_type=DfEngineApiKeys.__name__,
                 project_id=project["id"],
-                task_id=task["id"],
+                task_id=None if task.get("is_song") else task["id"],
+                song_id=task["id"] if task.get("is_song") else None,
                 prompt=resolved_prompt,
                 full_prompt=merged_prompt,
                 parameter=schema.parameter,
