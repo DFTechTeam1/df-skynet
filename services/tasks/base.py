@@ -12,6 +12,7 @@ from services.mysql.model import DfEngineGenerations, DfEngineQueues, ProjectTas
 from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.mysql.model.df_engine_queues import QueueEventTypes
 from services.pusher import broadcast_generation_status
+from services.redis import CacheKeys, delete_pattern_sync, sync_client
 
 
 class GenerationStageError(Exception):
@@ -116,9 +117,13 @@ def _mark_generation_failed(generation_id: int) -> None:
     try:
         with get_sync_db() as db:
             generation = db.get(DfEngineGenerations, generation_id)
-            if generation is not None and generation.status != GenerationStatuses.success:
-                generation.status = GenerationStatuses.failed
-                db.add(generation)
+            if generation is None or generation.status == GenerationStatuses.success:
+                return
+            generation.status = GenerationStatuses.failed
+            db.add(generation)
+            task_id = generation.task_id
+        if task_id is not None:
+            delete_pattern_sync(sync_client(), CacheKeys().generation_files_main_list_pattern(task_id))
     except Exception:
         logging.exception(f"failed to mark generation failed generation_id={generation_id}")
 
