@@ -59,13 +59,13 @@ async def test_archive_is_noop_for_main_result_then_favorite_does_not_bust_stale
 
     # 1. freshly created main result: live, shows up in Image Generations
     picker = await authed_client.call("GET", picker_url)
-    assert result.uid in [f["uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
+    assert result.uid in [f["file_uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
 
     # 2. archiving the current main "succeeds" (200, reported as archived) via the real files API,
     # but the row is_main=True so the underlying UPDATE excludes it - a silent no-op
     archive_resp = await authed_client.call(
         "PATCH",
-        f"{FILES_URL}/{project_task.project.uid}/archieve",
+        f"{FILES_URL}/{project_task.uid}/archieve",
         json={"file_uids": [str(result.uid)]},
     )
     assert archive_resp.status_code == 200
@@ -76,11 +76,11 @@ async def test_archive_is_noop_for_main_result_then_favorite_does_not_bust_stale
 
     # 3. still live in the picker - the no-op archive never touched the row
     picker = await authed_client.call("GET", picker_url)
-    assert result.uid in [f["uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
+    assert result.uid in [f["file_uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
 
     # 4. favorite it via the real files API - no is_main restriction, this write actually lands
     favorite_resp = await authed_client.call(
-        "PATCH", f"{FILES_URL}/{project_task.project.uid}/favorite", json={"file_uids": [str(result.uid)]}
+        "PATCH", f"{FILES_URL}/{project_task.uid}/favorite", json={"file_uids": [str(result.uid)]}
     )
     assert favorite_resp.status_code == 200
     assert result.uid in [f["file_uid"] for f in favorite_resp.json()["data"]]
@@ -92,5 +92,5 @@ async def test_archive_is_noop_for_main_result_then_favorite_does_not_bust_stale
     # invalidates it, so it still shows the pre-favorite state - a stale-cache gap, not correctness
     picker = await authed_client.call("GET", picker_url)
     body = picker.json()
-    assert result.uid in [f["uid"] for f in _picker_section(body, "Image Generations")["files"]]
-    assert result.uid not in [f["uid"] for f in _picker_section(body, "Favorites")["files"]]
+    file = next(f for f in _picker_section(body, "Image Generations")["files"] if f["file_uid"] == result.uid)
+    assert file["favourited_at"] is None

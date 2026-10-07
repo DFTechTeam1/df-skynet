@@ -236,9 +236,6 @@ class SettingController(CoreDependencies):
                 "assistant_model": resolved_model["assistant_model"],
                 "project_class_limitations": [
                     {
-                        # defaults first so every class always carries the full
-                        # field set (incl. token_limit_threshold=0.8) even if an
-                        # older saved row is missing a key
                         **ProjectClassLimitations(id=pc.id).model_dump(mode="json"),
                         **(saved_limits.get(pc.id) or {}),
                         **requested_limits.get(pc.id, {}),

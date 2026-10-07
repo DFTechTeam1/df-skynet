@@ -55,8 +55,10 @@ def _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.ima
 
 
 @pytest.mark.asyncio
-async def test_returns_uploads_and_generations_in_their_sections(authed_client, project_task, user_id, generation_fks):
-    """200 OK; a live image upload, video upload and image generation result each land in their own section with correct counts and fields."""
+async def test_returns_flat_sections_with_uploads_and_generations(authed_client, project_task, user_id, generation_fks):
+    """200 OK; only Image Uploads / Image Generations / Elements sections are returned; a live image upload and an
+    image generation result land in their own section, video uploads are not offered, and the generation file uses
+    the `GenerationResultRecord` shape without cost/prompt fields."""
     image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
     video_upload = _make_upload(project_task, user_id, UploadFileTypes.video)
     generation_result = _make_result(project_task, user_id, generation_fks)
@@ -65,20 +67,21 @@ async def test_returns_uploads_and_generations_in_their_sections(authed_client, 
     resp = await authed_client.call("GET", url, params=params)
     assert resp.status_code == 200
     body = resp.json()
+    assert [s["type"] for s in body["data"]] == ["Image Uploads", "Image Generations", "Elements"]
 
     # Note: this project's uploads/generations accumulate across test runs on the
     # real shared staging DB, so section totals aren't exact — only membership is checked.
     image_section = _section(body, "Image Uploads")
-    assert image_section["total_data"] >= 1
+    assert image_section["total_data"] == len(image_section["files"]) >= 1
     assert image_upload.uid in [f["uid"] for f in image_section["files"]]
-
-    video_section = _section(body, "Video Uploads")
-    assert video_section["total_data"] >= 1
-    assert video_upload.uid in [f["uid"] for f in video_section["files"]]
+    assert video_upload.uid not in [f["uid"] for f in image_section["files"]]
 
     generation_section = _section(body, "Image Generations")
     assert generation_section["total_data"] >= 1
-    assert generation_result.uid in [f["uid"] for f in generation_section["files"]]
+    file = next(f for f in generation_section["files"] if f["file_uid"] == generation_result.uid)
+    assert file["kind"] == GenerationKinds.image
+    assert file["favourited_at"] is None
+    assert {"cost_usd", "cost_idr", "prompt", "is_main", "uid"}.isdisjoint(file)
 
 
 @pytest.mark.asyncio
@@ -120,21 +123,39 @@ async def test_non_main_result_excluded_archived_still_listed(authed_client, pro
 
     url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params)
-    section_uids = [f["uid"] for f in _section(resp.json(), "Image Generations")["files"]]
+    section_uids = [f["file_uid"] for f in _section(resp.json(), "Image Generations")["files"]]
     assert archived.uid in section_uids
     assert revision.uid not in section_uids
 
 
 @pytest.mark.asyncio
-async def test_favourite_result_appears_in_favorites_section(authed_client, project_task, user_id, generation_fks):
-    """200 OK; a live, favourited result appears in both its own kind section and Favorites."""
+async def test_favourited_result_exposes_favourited_at(authed_client, project_task, user_id, generation_fks):
+    """200 OK; a favourited result stays in Image Generations and carries a formatted `favourited_at`; there is no
+    separate Favorites section."""
     result = _make_result(project_task, user_id, generation_fks, favourited_at="2024-01-01 00:00:00")
 
     url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params)
     body = resp.json()
-    assert result.uid in [f["uid"] for f in _section(body, "Image Generations")["files"]]
-    assert result.uid in [f["uid"] for f in _section(body, "Favorites")["files"]]
+    assert "Favorites" not in [s["type"] for s in body["data"]]
+    file = next(f for f in _section(body, "Image Generations")["files"] if f["file_uid"] == result.uid)
+    assert file["favourited_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_element_generation_lands_in_elements_and_video_is_dropped(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; an element-kind result is listed under Elements, a video-kind result is not offered anywhere."""
+    element = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.element)
+    video = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.video)
+
+    url, params = _url(project_task.project.uid)
+    resp = await authed_client.call("GET", url, params=params)
+    body = resp.json()
+    assert element.uid in [f["file_uid"] for f in _section(body, "Elements")["files"]]
+    all_uids = [f.get("file_uid") or f.get("uid") for s in body["data"] for f in s["files"]]
+    assert video.uid not in all_uids
 
 
 @pytest.mark.asyncio
@@ -146,7 +167,7 @@ async def test_response_is_cached_on_second_call(authed_client, project_task, us
     first = await authed_client.call("GET", url, params=params)
     second = await authed_client.call("GET", url, params=params)
     assert first.status_code == second.status_code == 200
-    assert result.uid in [f["uid"] for f in _section(second.json(), "Image Generations")["files"]]
+    assert result.uid in [f["file_uid"] for f in _section(second.json(), "Image Generations")["files"]]
 
 
 @pytest.mark.asyncio
@@ -174,38 +195,35 @@ def _global_section(body, type_name):
 
 
 def _flat_files(section):
-    return [f for p in section["projects"] for t in p["tasks"] for f in t["files"]]
+    return section["files"]
 
 
 @pytest.mark.asyncio
-async def test_global_picker_groups_by_project_and_task(authed_client, project_task, user_id, generation_fks):
-    """200 OK; global picker (no project_uid) groups uploads/generations by project then task."""
+async def test_global_picker_returns_flat_sections(authed_client, project_task, user_id, generation_fks):
+    """200 OK; global picker (no project_uid) returns the same flat Image Uploads / Image Generations / Elements
+    sections, with no project/task grouping."""
     image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
     generation_result = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call("GET", GLOBAL_URL, params={})
     assert resp.status_code == 200
     body = resp.json()
+    assert [s["type"] for s in body["data"]] == ["Image Uploads", "Image Generations", "Elements"]
+    assert all("projects" not in s for s in body["data"])
     assert image_upload.uid in [f["uid"] for f in _flat_files(_global_section(body, "Image Uploads"))]
-    assert generation_result.uid in [f["uid"] for f in _flat_files(_global_section(body, "Image Generations"))]
+    assert generation_result.uid in [f["file_uid"] for f in _flat_files(_global_section(body, "Image Generations"))]
 
 
 @pytest.mark.asyncio
-async def test_global_picker_groups_video_generations_by_project_and_task(
-    authed_client, project_task, user_id, generation_fks
-):
-    """200 OK; a video-kind generation result lands in the Video Generations section, grouped by project/task."""
+async def test_global_picker_drops_video_generations(authed_client, project_task, user_id, generation_fks):
+    """200 OK; a video-kind generation result is not offered in the global picker."""
     video_result = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.video)
 
     resp = await authed_client.call("GET", GLOBAL_URL, params={})
     assert resp.status_code == 200
     body = resp.json()
-    section = _global_section(body, "Video Generations")
-    assert video_result.uid in [f["uid"] for f in _flat_files(section)]
-    task = next(
-        t for p in section["projects"] for t in p["tasks"] if any(f["uid"] == video_result.uid for f in t["files"])
-    )
-    assert task["id"] == project_task.id
+    assert "Video Generations" not in [s["type"] for s in body["data"]]
+    assert video_result.uid not in [f.get("file_uid") for s in body["data"] for f in s["files"]]
 
 
 @pytest.mark.asyncio
@@ -261,3 +279,43 @@ async def test_global_picker_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", GLOBAL_URL, params={}, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_project_picker_passes_domain_errors_through_and_masks_unexpected_ones(
+    authed_client, project_task, monkeypatch
+):
+    """500 when loading the rows raises something other than a BaseError (an unknown project stays a 404, covered above)."""
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("apps.controller.generations.get_upload_references", boom)
+    url, params = _url(project_task.project.uid)
+    resp = await authed_client.call("GET", url, params=params, raise_for_status=False)
+    assert resp.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_global_picker_unexpected_error_is_500(authed_client, monkeypatch):
+    """500 when the global picker's loader raises a non-BaseError."""
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("apps.controller.generations.get_generation_references", boom)
+    resp = await authed_client.call("GET", GLOBAL_URL, params={}, raise_for_status=False)
+    assert resp.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_global_picker_passes_base_errors_through(authed_client, monkeypatch):
+    """A BaseError raised while loading is returned as-is, not rewritten to 500."""
+    from error import DataNotFoundError
+
+    async def not_found(*args, **kwargs):
+        raise DataNotFoundError(message="project_not_found")
+
+    monkeypatch.setattr("apps.controller.generations.get_upload_references", not_found)
+    resp = await authed_client.call("GET", GLOBAL_URL, params={}, raise_for_status=False)
+    assert resp.status_code == 404

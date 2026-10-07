@@ -464,7 +464,13 @@ async def get_generation_references(
             "task_name": record["task"]["name"] if record["task"] else None,
             "kind": record["kind"],
             "favourited": result["favourited_at"] is not None and result["created_by"] == user_id,
-            "file": GenerationReferenceRecord.from_result(_with_generation(result, record)).model_dump(mode="json"),
+            "file": _drop(
+                GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(mode="json"),
+                *_MAIN_FILE_INTERNAL_KEYS,
+                "cost_usd",
+                "cost_idr",
+                "prompt",
+            ),
         }
         for record in serialize(generations)
         for result in record["results"]

@@ -57,9 +57,7 @@ async def test_favorite_file_appears_in_favourited_list(authed_client, project_t
     """200 OK; default body (is_favorited=true) returns the updated favourited list, and the file shows there."""
     result = _make_result(project_task, user_id, generation_fks)
 
-    resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid)]}
-    )
+    resp = await authed_client.call("PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid)]})
     assert resp.status_code == 200
     assert _find_flat(resp.json()["data"], result.uid) is not None
 
@@ -71,7 +69,7 @@ async def test_favorite_multiple_files_at_once(authed_client, project_task, user
     second = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(first.uid), str(second.uid)]}
+        "PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(first.uid), str(second.uid)]}
     )
     assert resp.status_code == 200
     assert _find_flat(resp.json()["data"], first.uid) is not None
@@ -84,7 +82,7 @@ async def test_favorite_files_dedupes_repeated_uid(authed_client, project_task, 
     result = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid), str(result.uid)]}
+        "PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid), str(result.uid)]}
     )
     assert resp.status_code == 200
     assert _find_flat(resp.json()["data"], result.uid) is not None
@@ -95,15 +93,13 @@ async def test_favorite_archived_file_is_200(authed_client, project_task, user_i
     """200 OK; archive/favorite are decoupled, so an archived item can be favorited directly and stays archived."""
     result = _make_result(project_task, user_id, generation_fks, archieved_at=datetime.now())
 
-    resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid)]}
-    )
+    resp = await authed_client.call("PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid)]})
     assert resp.status_code == 200
 
-    archived_resp = await authed_client.call("GET", _archived_url(project_task.project.uid))
+    archived_resp = await authed_client.call("GET", _archived_url(project_task.uid))
     assert _find_flat(archived_resp.json()["data"], result.uid) is not None
 
-    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.project.uid))
+    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.uid))
     assert _find_flat(favourited_resp.json()["data"], result.uid) is not None
 
 
@@ -114,7 +110,7 @@ async def test_favorite_files_partial_match_is_404_all_or_nothing(authed_client,
 
     resp = await authed_client.call(
         "PATCH",
-        _favorite_url(project_task.project.uid),
+        _favorite_url(project_task.uid),
         json={"file_uids": [str(result.uid), str(uuid4())]},
         raise_for_status=False,
     )
@@ -128,11 +124,11 @@ async def test_unfavorite_file_removes_it_from_favourited(authed_client, project
     result = _make_result(project_task, user_id, generation_fks, favourited_at=datetime.now())
 
     resp = await authed_client.call(
-        "PATCH", _favorite_url(project_task.project.uid), json={"file_uids": [str(result.uid)], "is_favorited": False}
+        "PATCH", _favorite_url(project_task.uid), json={"file_uids": [str(result.uid)], "is_favorited": False}
     )
     assert resp.status_code == 200
 
-    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.project.uid))
+    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.uid))
     assert _find_flat(favourited_resp.json()["data"], result.uid) is None
 
 
@@ -143,7 +139,7 @@ async def test_unfavorite_file_not_favourited_is_404(authed_client, project_task
 
     resp = await authed_client.call(
         "PATCH",
-        _favorite_url(project_task.project.uid),
+        _favorite_url(project_task.uid),
         json={"file_uids": [str(result.uid)], "is_favorited": False},
         raise_for_status=False,
     )

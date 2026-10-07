@@ -1,13 +1,14 @@
 import mimetypes
 import traceback
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 from urllib.parse import quote
 from uuid import UUID
-from fastapi import Path, status
+from fastapi import Path, Request, status, Query
+from httpx import Timeout, TimeoutException
 from fastapi.responses import StreamingResponse
 from fastapi_controller import controller
 from apps.controller.core import CoreDependencies
-from apps.secret import UDIN_API_KEY
+from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from error import BaseError, ServiceError
 from services.dto import ConnectionContext
 from log import logging
@@ -18,9 +19,13 @@ from schemas.response import Response
 from services.api_caller import APICaller
 from services.redis import CacheKeys, delete_pattern, get_json, set_json
 from services.mysql import query
-from services.mysql.model import DfEngineGenerationResults, DfEngineGenerations
+from services.mysql.model import DfEngineGenerationResults, DfEngineGenerations, DfEngineUploadFiles
+from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from error import DataNotFoundError, DataValidationError
-from services.dto.asynced.projects import get_project
+from services.files import build_file_tree, find_folder
+from services.dto.asynced.projects import get_project_task
+from services.dto.asynced.files import get_user_uploaded_file
+from services.dto.format_response import FileAction, TreeFile
 from services.dto.asynced.generation_files import (
     get_archieved_files,
     get_favourited_files,
@@ -32,102 +37,99 @@ from utils import local_time
 from utils.formatter import format_datetime
 
 cache_key = CacheKeys()
+UPLOAD_TIMEOUT = Timeout(connect=10, read=600, write=120, pool=10)
 
 
 class FilesController(CoreDependencies):
     @controller.get(
-        "/files/{project_uid}/archieved",
+        "/files/{task_uid}/archieved",
         summary="View archived files.",
         description="Shows files that have been archived.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_uid_to_fetch_archived_files(
-        self, project_uid: UUID = Path(..., description="Project UID.")
+    async def files_with_task_uid_to_fetch_archived_files(
+        self, task_uid: UUID = Path(..., description="Task UID (project task or song).")
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            project = await get_project(ctx, project_uid)
+            project_task = await get_project_task(ctx, task_uid)
             logging.info(
-                f"[get-archived-files] user={user_id} project_uid={project_uid} resolved project_id={project['id']}"
+                f"[get-archived-files] user={user_id} task_uid={task_uid} resolved project_id={project_task['project_id']}"
             )
 
-            archieved_files = await get_archieved_files(ctx, project["id"], user_id)
+            archieved_files = await get_archieved_files(ctx, project_task["project_id"], user_id)
             logging.info(
-                f"[get-archived-files] user={user_id} project_uid={project_uid} fetched {len(archieved_files)} archived files"
+                f"[get-archived-files] user={user_id} task_uid={task_uid} fetched {len(archieved_files)} archived files"
             )
 
             response.data = archieved_files
         except BaseError:
             raise
         except Exception:
-            logging.error(
-                f"[get-archived-files] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}"
-            )
+            logging.error(f"[get-archived-files] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.get(
-        "/files/{project_uid}/favourited",
+        "/files/{task_uid}/favourited",
         summary="Get favorited files.",
         description="Shows files you've marked as favorites.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_uid_to_fetch_favourited_files(
+    async def files_with_task_uid_to_fetch_favourited_files(
         self,
-        project_uid: UUID = Path(..., description="Project UID."),
+        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            project = await get_project(ctx, project_uid)
+            project_task = await get_project_task(ctx, task_uid)
             logging.info(
-                f"[get-favourited-files] user={user_id} project_uid={project_uid} resolved project_id={project['id']}"
+                f"[get-favourited-files] user={user_id} task_uid={task_uid} resolved project_id={project_task['project_id']}"
             )
 
-            favourited_files = await get_favourited_files(ctx, project["id"], user_id)
+            favourited_files = await get_favourited_files(ctx, project_task["project_id"], user_id)
             logging.info(
-                f"[get-favourited-files] user={user_id} project_uid={project_uid} fetched {len(favourited_files)} favourited files"
+                f"[get-favourited-files] user={user_id} task_uid={task_uid} fetched {len(favourited_files)} favourited files"
             )
 
             response.data = favourited_files
         except BaseError:
             raise
         except Exception:
-            logging.error(
-                f"[get-favourited-files] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}"
-            )
+            logging.error(f"[get-favourited-files] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.patch(
-        "/files/{project_uid}/archieve",
+        "/files/{task_uid}/archieve",
         summary="Set archieve files.",
         description="Hides the selected files from the main view, or brings them back.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_uid_to_set_archieve_files(
-        self, schema: SetArchivedPayload, project_uid: UUID = Path(..., description="Project UID.")
+    async def files_with_task_uid_to_set_archieve_files(
+        self, schema: SetArchivedPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
     ) -> Response:
         response = Response()
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         user_id = int(self.user["user_id"])
 
         try:
-            project = await get_project(ctx, project_uid)
+            project_task = await get_project_task(ctx, task_uid)
             logging.info(
-                f"[set-archive-files] user={user_id} project_uid={project_uid} resolved project_id={project['id']}"
+                f"[set-archive-files] user={user_id} task_uid={task_uid} resolved project_id={project_task['project_id']}"
             )
 
-            project_id = project["id"]
+            project_id = project_task["project_id"]
             requested_file_uids = [str(uid) for uid in schema.file_uids]
             archieved_files = []
             archivable_files = []
@@ -137,13 +139,13 @@ class FilesController(CoreDependencies):
                 archivable_files = [record for record in generation_files if record["archieved_at"] is None]
                 validated_file_uids = {record["file_uid"] for record in archivable_files}
                 logging.info(
-                    f"[set-archive-files] user={user_id} project_uid={project_uid} loaded {len(archivable_files)} archivable files"
+                    f"[set-archive-files] user={user_id} task_uid={task_uid} loaded {len(archivable_files)} archivable files"
                 )
             else:
                 archieved_files = await get_generation_files(ctx, user_id, project_id=project_id)
                 validated_file_uids = {record["file_uid"] for record in archieved_files}
                 logging.info(
-                    f"[set-archive-files] user={user_id} project_uid={project_uid} loaded {len(archieved_files)} archived files"
+                    f"[set-archive-files] user={user_id} task_uid={task_uid} loaded {len(archieved_files)} archived files"
                 )
 
             errors = {
@@ -152,9 +154,7 @@ class FilesController(CoreDependencies):
                 if uid not in validated_file_uids
             }
             if errors:
-                logging.warning(
-                    f"[set-archive-files] user={user_id} project_uid={project_uid} invalid file_uids={errors}"
-                )
+                logging.warning(f"[set-archive-files] user={user_id} task_uid={task_uid} invalid file_uids={errors}")
                 raise DataNotFoundError(message="file_not_found", error=errors)
 
             archived_at = local_time()
@@ -171,7 +171,7 @@ class FilesController(CoreDependencies):
                 self.db.add(row)
             await self.db.flush()
             logging.info(
-                f"[set-archive-files] user={user_id} project_uid={project_uid} "
+                f"[set-archive-files] user={user_id} task_uid={task_uid} "
                 f"updated {len(rows)} rows file_uids={requested_file_uids} is_archieved={schema.is_archieved}"
             )
 
@@ -188,11 +188,11 @@ class FilesController(CoreDependencies):
                     record["action"]["can_unarchieve"] = value is not None
                 await set_json(self.redis, user_generation_files_key, cached_generation_files)
                 logging.info(
-                    f"[set-archive-files] user={user_id} project_uid={project_uid} cache patched key={user_generation_files_key} file_uids={requested_file_uids}"
+                    f"[set-archive-files] user={user_id} task_uid={task_uid} cache patched key={user_generation_files_key} file_uids={requested_file_uids}"
                 )
             else:
                 logging.info(
-                    f"[set-archive-files] user={user_id} project_uid={project_uid} cache miss key={user_generation_files_key}, skipped patch"
+                    f"[set-archive-files] user={user_id} task_uid={task_uid} cache miss key={user_generation_files_key}, skipped patch"
                 )
 
             archived_generations_key = cache_key.generation_files_archived_list(user_id, project_id)
@@ -219,16 +219,14 @@ class FilesController(CoreDependencies):
 
             await set_json(self.redis, archived_generations_key, archieved_files)
             logging.info(
-                f"[set-archive-files] user={user_id} project_uid={project_uid} cache updated key={archived_generations_key} count={len(archieved_files)}"
+                f"[set-archive-files] user={user_id} task_uid={task_uid} cache updated key={archived_generations_key} count={len(archieved_files)}"
             )
 
             response.data = archieved_files
         except BaseError:
             raise
         except Exception:
-            logging.error(
-                f"[set-archive-files] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}"
-            )
+            logging.error(f"[set-archive-files] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
@@ -238,7 +236,7 @@ class FilesController(CoreDependencies):
         description="Downloads one of your files to your device.",
         tags=["Files"],
     )
-    async def files_with_uid_to_download_generated_file(
+    async def files_with_file_uid_to_download_generated_file(
         self, file_uid: UUID = Path(..., description="File UID.")
     ) -> StreamingResponse:
         ctx = ConnectionContext(self.db, self.redis, cache_key)
@@ -268,26 +266,26 @@ class FilesController(CoreDependencies):
             raise ServiceError()
 
     @controller.patch(
-        "/files/{project_uid}/favorite",
+        "/files/{task_uid}/favorite",
         summary="Set favourite files.",
         description="Marks the selected files as favorites, or removes them from favorites.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_uid_to_set_favorite_file(
-        self, schema: SetFavoritedPayload, project_uid: UUID = Path(..., description="Project UID.")
+    async def files_with_task_uid_to_set_favorite_file(
+        self, schema: SetFavoritedPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
     ) -> Response:
         response = Response()
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         user_id = int(self.user["user_id"])
         try:
-            project = await get_project(ctx, project_uid)
+            project_task = await get_project_task(ctx, task_uid)
             logging.info(
-                f"[set-favourite-files] user={user_id} project_uid={project_uid} resolved project_id={project['id']}"
+                f"[set-favourite-files] user={user_id} task_uid={task_uid} resolved project_id={project_task['project_id']}"
             )
 
-            project_id = project["id"]
+            project_id = project_task["project_id"]
             requested_file_uids = [str(uid) for uid in schema.file_uids]
             favourited_files = []
             favouritable_files = []
@@ -297,13 +295,13 @@ class FilesController(CoreDependencies):
                 favouritable_files = [record for record in generation_files if record["favourited_at"] is None]
                 validated_file_uids = {record["file_uid"] for record in favouritable_files}
                 logging.info(
-                    f"[set-favourite-files] user={user_id} project_uid={project_uid} loaded {len(favouritable_files)} favouritable files"
+                    f"[set-favourite-files] user={user_id} task_uid={task_uid} loaded {len(favouritable_files)} favouritable files"
                 )
             else:
                 favourited_files = await get_favourited_files(ctx, project_id, user_id)
                 validated_file_uids = {record["file_uid"] for record in favourited_files}
                 logging.info(
-                    f"[set-favourite-files] user={user_id} project_uid={project_uid} loaded {len(favourited_files)} favourited files"
+                    f"[set-favourite-files] user={user_id} task_uid={task_uid} loaded {len(favourited_files)} favourited files"
                 )
 
             errors = {
@@ -312,9 +310,7 @@ class FilesController(CoreDependencies):
                 if uid not in validated_file_uids
             }
             if errors:
-                logging.warning(
-                    f"[set-favourite-files] user={user_id} project_uid={project_uid} invalid file_uids={errors}"
-                )
+                logging.warning(f"[set-favourite-files] user={user_id} task_uid={task_uid} invalid file_uids={errors}")
                 raise DataNotFoundError(message="file_not_found", error=errors)
 
             favourited_at = local_time()
@@ -328,7 +324,7 @@ class FilesController(CoreDependencies):
                 self.db.add(row)
             await self.db.flush()
             logging.info(
-                f"[set-favourite-files] user={user_id} project_uid={project_uid} "
+                f"[set-favourite-files] user={user_id} task_uid={task_uid} "
                 f"updated {len(rows)} rows file_uids={requested_file_uids} is_favorited={schema.is_favorited}"
             )
 
@@ -345,11 +341,11 @@ class FilesController(CoreDependencies):
                     record["action"]["can_unfavorited"] = value is not None
                 await set_json(self.redis, user_generation_files_key, cached_generation_files)
                 logging.info(
-                    f"[set-favourite-files] user={user_id} project_uid={project_uid} cache patched key={user_generation_files_key} file_uids={requested_file_uids}"
+                    f"[set-favourite-files] user={user_id} task_uid={task_uid} cache patched key={user_generation_files_key} file_uids={requested_file_uids}"
                 )
             else:
                 logging.info(
-                    f"[set-favourite-files] user={user_id} project_uid={project_uid} cache miss key={user_generation_files_key}, skipped patch"
+                    f"[set-favourite-files] user={user_id} task_uid={task_uid} cache miss key={user_generation_files_key}, skipped patch"
                 )
 
             favourited_generations_key = cache_key.generation_files_favourited_list(user_id, project_id)
@@ -376,28 +372,26 @@ class FilesController(CoreDependencies):
 
             await set_json(self.redis, favourited_generations_key, favourited_files)
             logging.info(
-                f"[set-favourite-files] user={user_id} project_uid={project_uid} cache updated key={favourited_generations_key} count={len(favourited_files)}"
+                f"[set-favourite-files] user={user_id} task_uid={task_uid} cache updated key={favourited_generations_key} count={len(favourited_files)}"
             )
 
             response.data = favourited_files
         except BaseError:
             raise
         except Exception:
-            logging.error(
-                f"[set-favourite-files] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}"
-            )
+            logging.error(f"[set-favourite-files] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.patch(
         "/files/set-main/{file_uid}",
-        summary="Set a file as the main version.",
+        summary="Set generated file as the main version.",
         description="Makes this file the featured version among its related versions.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_uid_to_set_main_generation_file(
+    async def files_with_file_uid_to_set_main_generation_file(
         self,
         file_uid: UUID = Path(..., description="Generation result UID to set as main."),
     ) -> Response:
@@ -445,5 +439,228 @@ class FilesController(CoreDependencies):
             raise
         except Exception:
             logging.error(f"[set-main-generation] user={user_id} file_uid={file_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.post(
+        "/files/{task_uid}/uploads",
+        summary="Upload to Udin.",
+        description="Upload your photos or videos to a task or song. Photos can be JPG, JPEG or PNG, and videos can be MP4.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_task_uid_to_upload_files(
+        self,
+        request: Request,
+        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            project_task = await get_project_task(ctx, task_uid)
+            project_uid = project_task["project"]["uid"]
+            is_song = project_task["is_song"]
+            logging.info(
+                f"[upload-files] user={user_id} task_uid={task_uid} start is_song={is_song} "
+                f"project_id={project_task['project_id']}"
+            )
+
+            try:
+                async with APICaller(
+                    base_url=UDIN_BASE_URL,
+                    headers={
+                        "X-API-Key": UDIN_API_KEY,
+                        "Content-Type": request.headers.get("content-type", ""),
+                        **(
+                            {"Content-Length": request.headers["content-length"]}
+                            if "content-length" in request.headers
+                            else {}
+                        ),
+                    },
+                    timeout=UPLOAD_TIMEOUT,  # type: ignore
+                ) as caller:
+                    upstream = await caller.udin(
+                        "POST",
+                        f"/engine/storage/upload-files/{project_uid}",
+                        user_id=user_id,
+                        content=request.stream(),
+                    )
+            except TimeoutException:
+                logging.error(f"[upload-files] user={user_id} task_uid={task_uid} udin timed out")
+                raise BaseError(status_code=status.HTTP_504_GATEWAY_TIMEOUT, message="upload_timeout")
+
+            logging.info(
+                f"[upload-files] user={user_id} task_uid={task_uid} udin replied status={upstream.status_code}"
+            )
+            try:
+                body: dict[str, Any] = upstream.json() if upstream.content else {}
+            except ValueError:
+                body = {}
+
+            if upstream.is_error:
+                logging.warning(
+                    f"[upload-files] user={user_id} task_uid={task_uid} udin rejected "
+                    f"status={upstream.status_code} error={body.get('error')}"
+                )
+                raise BaseError(
+                    status_code=upstream.status_code,
+                    message="upload_failed",
+                    error=body.get("error"),
+                )
+
+            uploaded: list[dict[str, Any]] = body.get("data") or []
+            for item in uploaded:
+                self.db.add(
+                    DfEngineUploadFiles(
+                        name=item["name"],
+                        type=UploadFileTypes.video if "/videos/" in item["path"] else UploadFileTypes.image,
+                        path=item["path"],
+                        md5=item.get("md5"),
+                        size=item["size"],
+                        project_id=project_task["project_id"],
+                        task_id=None if is_song else project_task["id"],
+                        song_id=project_task["id"] if is_song else None,
+                        created_by=user_id,
+                    )
+                )
+            await self.db.flush()
+            await delete_pattern(
+                self.redis,
+                cache_key.user_files_pattern(
+                    task_id=None if is_song else project_task["id"],
+                    song_id=project_task["id"] if is_song else None,
+                ),
+            )
+            logging.info(
+                f"[upload-files] user={user_id} task_uid={task_uid} saved={len(uploaded)} rows, cache invalidated"
+            )
+
+            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.message = "Files successfully uploaded."
+            logging.info(f"[upload-files] user={user_id} task_uid={task_uid} done uploaded={len(uploaded)}")
+        except BaseError as e:
+            logging.warning(
+                f"[upload-files] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            )
+            raise
+        except Exception:
+            logging.error(f"[upload-files] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/files/{task_uid}",
+        summary="Get file trees.",
+        description="Retrieve the file tree of a task or song, including its folders and uploaded files. Set `my_task` to true to return only the files that belong to the current user.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_task_uid_to_get_user_files(
+        self,
+        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+        my_task: bool = False,
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            project_task = await get_project_task(ctx, task_uid)
+            response.data = await build_file_tree(ctx, project_task, user_id, my_task)
+            logging.info(
+                f"[get-files] user={user_id} task_uid={task_uid} my_task={my_task} root={response.data.get('path')}"
+            )
+        except BaseError as e:
+            logging.warning(f"[get-files] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}")
+            raise
+        except Exception:
+            logging.error(f"[get-files] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/files/{task_uid}/folders",
+        summary="Get folder details.",
+        description="Retrieve a single folder from the file tree of a task or song, matched by `path`. Returns 404 if the folder does not exist.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_task_uid_to_get_user_folder_details(
+        self,
+        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+        path: str = Query(
+            ...,
+            description="Full folder path, matching a `path` value from the file tree (e.g. storage/DF-Engine/<name>/upload/images).",
+        ),
+        my_task: bool = Query(
+            False, description="If true, only include uploaded files that belong to the current user."
+        ),
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            project_task = await get_project_task(ctx, task_uid)
+            file_tree = await build_file_tree(ctx, project_task, user_id, my_task)
+            folder_details = find_folder(file_tree, path.strip("/"))
+            if not folder_details:
+                logging.warning(
+                    f"[get-folder] user={user_id} task_uid={task_uid} path={path!r} my_task={my_task} not found root={file_tree.get('path')}"
+                )
+                raise DataNotFoundError(message="folder_not_found")
+            logging.info(
+                f"[get-folder] user={user_id} task_uid={task_uid} path={path!r} my_task={my_task} "
+                f"files={len(folder_details.get('files') or [])} children={len(folder_details.get('children') or [])}"
+            )
+            response.data = folder_details
+
+        except BaseError as e:
+            logging.warning(f"[get-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}")
+            raise
+        except Exception:
+            logging.error(f"[get-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/uploaded-files/{file_uid}",
+        summary="Get uploaded file details.",
+        description="Retrieve a single uploaded file by its UID. Returns 404 if the file does not exist.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_file_uid_to_get_uploaded_file_details(
+        self,
+        file_uid: UUID = Path(..., description="Uploaded file UID."),
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            file = await get_user_uploaded_file(ctx, file_uid)
+            is_owner = (file.get("creator") or {}).get("user_id") == user_id
+            response.data = TreeFile(
+                file_uid=file["file_uid"],
+                name=file["name"],
+                path=file["path"],
+                url=file["url"],
+                kind=file["type"],
+                icon=file["icon"],
+                color=file["color"],
+                size=file["size"],
+                created_at=file["created_at"],
+                creator=file["creator"],
+                action=FileAction(can_rename=is_owner, can_delete=is_owner, can_choose_to_move=is_owner),
+            ).model_dump(mode="json")
+            logging.info(f"[get-file] user={user_id} file_uid={file_uid} owner={is_owner}")
+        except BaseError as e:
+            logging.warning(f"[get-file] user={user_id} file_uid={file_uid} rejected ({e.status_code}): {e.message}")
+            raise
+        except Exception:
+            logging.error(f"[get-file] user={user_id} file_uid={file_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response

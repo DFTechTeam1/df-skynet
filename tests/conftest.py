@@ -334,6 +334,10 @@ class _FakeUdinResponse:
         self.headers: dict[str, str] = {}
         self.request = _FakeUdinRequest(url)
 
+    @property
+    def is_error(self) -> bool:
+        return self.status_code >= 400
+
     def json(self) -> dict[str, Any]:
         return self._payload or {}
 
@@ -380,6 +384,7 @@ class _FakeUdinCaller:
     responses: dict[str, tuple[int, Optional[dict[str, Any]]]] = {}
     stream_responses: dict[str, tuple[int, bytes]] = {}
     calls: list[tuple[str, str, Optional[dict[str, Any]]]] = []
+    raise_on_udin: Optional[BaseException] = None
 
     def __init__(self, *args: Any, base_url: str = "", **kwargs: Any) -> None:
         self.base_url = base_url
@@ -408,6 +413,12 @@ class _FakeUdinCaller:
                 return _FakeUdinResponse(status_code, payload, url=url)
         return _FakeUdinResponse(200, {"data": []}, url=url)
 
+    async def udin(self, method: str, path: str, user_id: Optional[int] = None, **kwargs: Any) -> _FakeUdinResponse:
+        """Same as `call` — mirrors `APICaller.udin()`, which the upload endpoint uses."""
+        if isinstance(self.raise_on_udin, BaseException):
+            raise self.raise_on_udin
+        return await self.call(method, path, **{k: v for k, v in kwargs.items() if k == "json"})
+
     def stream(self, method: str, path: str, **kwargs: Any) -> _FakeUdinStreamCtx:
         type(self).calls.append((method, path, None))
         for keyword, (status_code, content) in type(self).stream_responses.items():
@@ -427,6 +438,7 @@ def mock_udin(monkeypatch):
     _FakeUdinCaller.responses = {}
     _FakeUdinCaller.stream_responses = {}
     _FakeUdinCaller.calls = []
+    _FakeUdinCaller.raise_on_udin = None
     monkeypatch.setattr("apps.controller.files.APICaller", _FakeUdinCaller)
     return SimpleNamespace(
         set=lambda keyword, status_code, payload=None: _FakeUdinCaller.responses.__setitem__(
@@ -436,6 +448,7 @@ def mock_udin(monkeypatch):
             keyword, (status_code, content)
         ),
         calls=_FakeUdinCaller.calls,
+        raise_on_udin=lambda exc: setattr(_FakeUdinCaller, "raise_on_udin", exc),
     )
 
 

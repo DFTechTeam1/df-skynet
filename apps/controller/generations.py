@@ -1,5 +1,4 @@
 import traceback
-from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Optional
@@ -46,6 +45,7 @@ from services.dto.asynced.admin_settings import get_admin_settings, get_project_
 from log import logging
 from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
+from services.generations import reference_sections
 from services.model_management import ModelManagement
 from utils import local_time
 from utils.serializer import serialize
@@ -165,8 +165,8 @@ class GenerationsController(CoreDependencies):
         "/references-picker/{project_uid}",
         summary="Browse a project's files for picking references.",
         description=(
-            "Shows your uploaded and generated files for one project, sorted into images, videos, "
-            "and favorites, so you can pick one to reuse. You can search by file name."
+            "Shows your uploaded and generated files for one project, sorted into image uploads, image generations, "
+            "and elements, so you can pick one to reuse. You can search by file name."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
@@ -189,33 +189,7 @@ class GenerationsController(CoreDependencies):
             upload_rows = await get_upload_references(ctx, user_id, project_id=project_id, search=search)
             generation_rows = await get_generation_references(ctx, user_id, project_id=project_id, search=search)
 
-            buckets: dict[str, list[dict[str, Any]]] = {
-                "Image Uploads": [],
-                "Video Uploads": [],
-                "Image Generations": [],
-                "Video Generations": [],
-                "Favorites": [],
-                "Elements": [],
-            }
-            for row in upload_rows:
-                label = "Image Uploads" if row["kind"] == UploadFileTypes.image else "Video Uploads"
-                buckets[label].append(row["file"])
-
-            generation_kind_labels = {
-                GenerationKinds.image: "Image Generations",
-                GenerationKinds.video: "Video Generations",
-                GenerationKinds.element: "Elements",
-            }
-            for row in generation_rows:
-                labels = [generation_kind_labels[row["kind"]]] if row["kind"] in generation_kind_labels else []
-                if row["favourited"]:
-                    labels.append("Favorites")
-                for label in labels:
-                    buckets[label].append(row["file"])
-
-            response.data = [
-                {"type": label, "total_data": len(files), "files": files} for label, files in buckets.items()
-            ]
+            response.data = reference_sections(upload_rows, generation_rows)
             section_counts = {section["type"]: section["total_data"] for section in response.data}
             logging.info(
                 f"user={user_id} listed reference picker project_id={project_id} search={search} "
@@ -250,51 +224,7 @@ class GenerationsController(CoreDependencies):
             upload_rows = await get_upload_references(ctx, user_id, search=search)
             generation_rows = await get_generation_references(ctx, user_id, search=search)
 
-            buckets = {
-                "Image Uploads": defaultdict(lambda: {"tasks": defaultdict(list)}),
-                "Video Uploads": defaultdict(lambda: {"tasks": defaultdict(list)}),
-                "Image Generations": defaultdict(lambda: {"tasks": defaultdict(list)}),
-                "Video Generations": defaultdict(lambda: {"tasks": defaultdict(list)}),
-                "Favorites": defaultdict(lambda: {"tasks": defaultdict(list)}),
-                "Elements": defaultdict(lambda: {"tasks": defaultdict(list)}),
-            }
-            for row in upload_rows:
-                label = "Image Uploads" if row["kind"] == UploadFileTypes.image else "Video Uploads"
-                project = buckets[label][row["project_id"]]
-                project["id"] = row["project_id"]
-                project["name"] = row["project_name"]
-                project["tasks"][row["task_id"]].append(row["file"])
-
-            generation_kind_labels = {
-                GenerationKinds.image: "Image Generations",
-                GenerationKinds.video: "Video Generations",
-                GenerationKinds.element: "Elements",
-            }
-            for row in generation_rows:
-                labels = [generation_kind_labels[row["kind"]]] if row["kind"] in generation_kind_labels else []
-                if row["favourited"]:
-                    labels.append("Favorites")
-                for label in labels:
-                    project = buckets[label][row["project_id"]]
-                    project["id"] = row["project_id"]
-                    project["name"] = row["project_name"]
-                    project["tasks"][row["task_id"]].append(row["file"])
-
-            response.data = [
-                {
-                    "type": label,
-                    "total_data": sum(len(files) for p in bucket.values() for files in p["tasks"].values()),
-                    "projects": [
-                        {
-                            "id": p["id"],
-                            "name": p["name"],
-                            "tasks": [{"id": tid, "files": files} for tid, files in p["tasks"].items()],
-                        }
-                        for p in bucket.values()
-                    ],
-                }
-                for label, bucket in buckets.items()
-            ]
+            response.data = reference_sections(upload_rows, generation_rows)
             section_counts = {section["type"]: section["total_data"] for section in response.data}
             logging.info(
                 f"user={user_id} listed global reference picker search={search} "

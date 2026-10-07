@@ -95,17 +95,17 @@ async def pic_membership(db_session, project_task, pic_employee_id):
         .scalars()
         .first()
     )
-    if existing:  # pragma: no cover - only hit if the boss is already a PIC on this shared-DB project
-        yield
-        return
-
-    row = ProjectPersonInCharges(project_id=project_id, pic_id=pic_employee_id, is_lead=False)
-    db_session.add(row)
+    # No branching on shared-DB state: `rows` is empty when the boss is already a PIC, so the same lines run
+    # either way (and teardown only ever deletes a row this fixture created).
+    rows = [] if existing else [ProjectPersonInCharges(project_id=project_id, pic_id=pic_employee_id, is_lead=False)]
+    db_session.add_all(rows)
     await db_session.commit()
     try:
         yield
     finally:
-        await db_session.execute(delete(ProjectPersonInCharges).where(ProjectPersonInCharges.id == row.id))
+        await db_session.execute(
+            delete(ProjectPersonInCharges).where(ProjectPersonInCharges.id.in_([row.id for row in rows]))  # type: ignore
+        )
         await db_session.commit()
 
 

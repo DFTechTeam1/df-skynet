@@ -258,8 +258,17 @@ class CacheKeys:
         return "api_logs:*"
 
     # --- files (uploads) ---
-    def user_files_pattern(self, user_id: int, task_id: int) -> str:
-        return f"user_files:task_id={task_id}:user_id={user_id}*"
+    def user_files_pattern(self, task_id: Optional[int] = None, song_id: Optional[int] = None) -> str:
+        """Every cached file list (all `my_task` variants) for one task or song."""
+        return f"user_files:task_id={task_id}:song_id={song_id}:*"
+
+    def user_files(
+        self, task_id: Optional[int] = None, song_id: Optional[int] = None, user_id: Optional[int] = None
+    ) -> str:
+        return f"user_files:task_id={task_id}:song_id={song_id}:user_id={user_id}"
+
+    def user_file_detail(self, file_uid: str) -> str:
+        return f"user_files:detail:file_uid={file_uid}"
 
     def uploaded_files(self, file_uids: list[str]) -> str:
         return f"uploaded_files:list:file_uids={file_uids}"

@@ -2,7 +2,6 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, Any
 from urllib.parse import quote
-
 from apps.secret import UDIN_BASE_URL
 
 

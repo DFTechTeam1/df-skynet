@@ -50,7 +50,7 @@ async def test_set_main_moves_the_listed_entry_from_root_to_child(authed_client,
     # 2. favorite the child via the real files API - favourited_at isn't filtered by this list,
     # so it stays absent regardless
     favorite_resp = await authed_client.call(
-        "PATCH", f"{FILES_URL}/{project_task.project.uid}/favorite", json={"file_uids": [str(child_result.uid)]}
+        "PATCH", f"{FILES_URL}/{project_task.uid}/favorite", json={"file_uids": [str(child_result.uid)]}
     )
     assert favorite_resp.status_code == 200
     galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")

@@ -2,7 +2,7 @@ import json
 import time
 from typing import Any
 from celery.exceptions import SoftTimeLimitExceeded
-from httpx import HTTPStatusError, NetworkError, TimeoutException
+from httpx import HTTPStatusError, NetworkError, Timeout, TimeoutException
 from sqlalchemy import or_
 from apps.secret import OPENROUTER_API_KEY, UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
@@ -46,8 +46,8 @@ LOCAL_COMMIT_BACKOFF_SECONDS = 1
     retry_backoff_max=20,
     retry_jitter=True,
     max_retries=5,
-    soft_time_limit=150,
-    time_limit=180,
+    soft_time_limit=330,
+    time_limit=360,
     rate_limit="10/s",
 )
 def udin_uploader(
@@ -126,7 +126,13 @@ def udin_uploader(
                 version_start = max((result.version for result in family), default=0)
                 parent_id = root_id
 
-    caller = APICaller(base_url=UDIN_BASE_URL, headers={"X-API-Key": UDIN_API_KEY}, timeout=120)
+    # Udin replies only after it has fetched/saved/hashed the file (videos are downloaded from OpenRouter
+    # first), so the read timeout must stay below soft_time_limit but well above 120s.
+    caller = APICaller(
+        base_url=UDIN_BASE_URL,
+        headers={"X-API-Key": UDIN_API_KEY},
+        timeout=Timeout(connect=10, read=300, write=60, pool=10),  # type: ignore[arg-type]
+    )
     demoted_family = False
     try:
         if generation.kind == GenerationKinds.video:
@@ -273,7 +279,7 @@ def udin_uploader(
                 delete_pattern_sync(redis, cache_key.user_galleries_pattern(user_id))
                 delete_pattern_sync(redis, cache_key.references_picker_pattern(user_id))
                 delete_pattern_sync(redis, cache_key.global_references_picker_pattern(user_id))
-                delete_pattern_sync(redis, cache_key.user_files_pattern(user_id, task_id))
+                delete_pattern_sync(redis, cache_key.user_files_pattern(task_id=task_id))
                 delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(task_id))
                 redis.delete(cache_key.generation_files_result_list(user_id, project_id))
                 delete_pattern_sync(redis, cache_key.generation_files_references_picker_pattern(user_id))

@@ -69,13 +69,11 @@ async def test_archive_file_appears_in_archived_list(authed_client, project_task
     """200 OK; default body (is_archieved=true) returns the updated archived list, and the file shows there."""
     result = _make_result(project_task, user_id, generation_fks)
 
-    resp = await authed_client.call(
-        "PATCH", _archive_url(project_task.project.uid), json={"file_uids": [str(result.uid)]}
-    )
+    resp = await authed_client.call("PATCH", _archive_url(project_task.uid), json={"file_uids": [str(result.uid)]})
     assert resp.status_code == 200
     assert _find_flat(resp.json()["data"], result.uid) is not None
 
-    archived_resp = await authed_client.call("GET", _archived_url(project_task.project.uid))
+    archived_resp = await authed_client.call("GET", _archived_url(project_task.uid))
     assert _find_flat(archived_resp.json()["data"], result.uid) is not None
 
 
@@ -86,11 +84,11 @@ async def test_archive_multiple_files_at_once(authed_client, project_task, user_
     second = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call(
-        "PATCH", _archive_url(project_task.project.uid), json={"file_uids": [str(first.uid), str(second.uid)]}
+        "PATCH", _archive_url(project_task.uid), json={"file_uids": [str(first.uid), str(second.uid)]}
     )
     assert resp.status_code == 200
 
-    archived_resp = await authed_client.call("GET", _archived_url(project_task.project.uid))
+    archived_resp = await authed_client.call("GET", _archived_url(project_task.uid))
     archived_uids = {f["file_uid"] for f in archived_resp.json()["data"]}
     assert {str(first.uid), str(second.uid)} <= archived_uids
 
@@ -101,7 +99,7 @@ async def test_archive_files_dedupes_repeated_uid(authed_client, project_task, u
     result = _make_result(project_task, user_id, generation_fks)
 
     resp = await authed_client.call(
-        "PATCH", _archive_url(project_task.project.uid), json={"file_uids": [str(result.uid), str(result.uid)]}
+        "PATCH", _archive_url(project_task.uid), json={"file_uids": [str(result.uid), str(result.uid)]}
     )
     assert resp.status_code == 200
     assert _find_flat(resp.json()["data"], result.uid) is not None
@@ -113,7 +111,7 @@ async def test_archive_file_already_archived_is_404(authed_client, project_task,
     result = _make_result(project_task, user_id, generation_fks, archieved_at=datetime.now())
 
     resp = await authed_client.call(
-        "PATCH", _archive_url(project_task.project.uid), json={"file_uids": [str(result.uid)]}, raise_for_status=False
+        "PATCH", _archive_url(project_task.uid), json={"file_uids": [str(result.uid)]}, raise_for_status=False
     )
     assert resp.status_code == 404
     assert resp.json()["message"] == resolve_message("file_not_found", "en")
@@ -125,15 +123,13 @@ async def test_archive_favourited_file_is_200(authed_client, project_task, user_
     """200 OK; archive/favorite are decoupled, so a favourited item can be archived directly and stays favourited."""
     result = _make_result(project_task, user_id, generation_fks, favourited_at=datetime.now())
 
-    resp = await authed_client.call(
-        "PATCH", _archive_url(project_task.project.uid), json={"file_uids": [str(result.uid)]}
-    )
+    resp = await authed_client.call("PATCH", _archive_url(project_task.uid), json={"file_uids": [str(result.uid)]})
     assert resp.status_code == 200
 
-    archived_resp = await authed_client.call("GET", _archived_url(project_task.project.uid))
+    archived_resp = await authed_client.call("GET", _archived_url(project_task.uid))
     assert _find_flat(archived_resp.json()["data"], result.uid) is not None
 
-    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.project.uid))
+    favourited_resp = await authed_client.call("GET", _favourited_url(project_task.uid))
     assert _find_flat(favourited_resp.json()["data"], result.uid) is not None
 
 
@@ -144,14 +140,14 @@ async def test_archive_files_partial_match_is_404_all_or_nothing(authed_client, 
 
     resp = await authed_client.call(
         "PATCH",
-        _archive_url(project_task.project.uid),
+        _archive_url(project_task.uid),
         json={"file_uids": [str(result.uid), str(uuid4())]},
         raise_for_status=False,
     )
     assert resp.status_code == 404
     assert resp.json()["error"] == {"file_uids.1": [resolve_message("file_not_found", "en")]}
 
-    archived_resp = await authed_client.call("GET", _archived_url(project_task.project.uid))
+    archived_resp = await authed_client.call("GET", _archived_url(project_task.uid))
     assert _find_flat(archived_resp.json()["data"], result.uid) is None
 
 
@@ -161,11 +157,11 @@ async def test_unarchive_file_moves_it_from_archived_to_live(authed_client, proj
     result = _make_result(project_task, user_id, generation_fks, archieved_at=datetime.now())
 
     resp = await authed_client.call(
-        "PATCH", _archive_url(project_task.project.uid), json={"file_uids": [str(result.uid)], "is_archieved": False}
+        "PATCH", _archive_url(project_task.uid), json={"file_uids": [str(result.uid)], "is_archieved": False}
     )
     assert resp.status_code == 200
 
-    archived_resp = await authed_client.call("GET", _archived_url(project_task.project.uid))
+    archived_resp = await authed_client.call("GET", _archived_url(project_task.uid))
     assert _find_flat(archived_resp.json()["data"], result.uid) is None
 
 
@@ -174,7 +170,7 @@ async def test_unarchive_file_unknown_uid_is_404(authed_client, project_task):
     """404 file_not_found; uid matches no generation result at all."""
     resp = await authed_client.call(
         "PATCH",
-        _archive_url(project_task.project.uid),
+        _archive_url(project_task.uid),
         json={"file_uids": [str(uuid4())], "is_archieved": False},
         raise_for_status=False,
     )

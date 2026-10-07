@@ -1,7 +1,7 @@
-from typing import Any, Optional
+from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR
-from services.mysql.model.df_engine_upload_files import UPLOAD_TYPE_ICON_COLOR
+from services.mysql.model.df_engine_upload_files import UPLOAD_TYPE_ICON_COLOR, UploadFileTypes
 from config.variables import USD_TO_IDR_RATE
 from utils.formatter import format_size, format_datetime, format_udin_url, format_user_employees, format_idr, format_usd
 
@@ -20,6 +20,8 @@ class GenerationAction(BaseModel):
     can_fetch_detail: bool
     can_use_as_reference: bool
     can_use_as_edit: bool
+    can_rename: bool = False
+    can_choose_to_move: bool = False
 
     @classmethod
     def from_result(cls, result: dict[str, Any], is_owner: bool) -> "GenerationAction":
@@ -33,6 +35,8 @@ class GenerationAction(BaseModel):
             can_fetch_detail=True,
             can_use_as_reference=_is_image(result["path"]),
             can_use_as_edit=_is_image(result["path"]) and is_owner,
+            can_rename=is_owner,
+            can_choose_to_move=is_owner and result["archieved_at"] is None,
         )
 
 
@@ -145,6 +149,8 @@ class GenerationResultRecord(BaseModel):
                 can_fetch_detail=False,
                 can_use_as_reference=False,
                 can_use_as_edit=False,
+                can_rename=False,
+                can_choose_to_move=False,
             ),
         )
 
@@ -323,3 +329,43 @@ class MenuRecord(BaseNamedRecord):
         cls, result: dict[str, Any], features: list[FeatureRecord], action: Optional[FeatureableAction] = None
     ) -> "MenuRecord":
         return cls(**cls._base_fields(result, action), id=result.get("id"), features=features)
+
+
+class FolderAction(BaseModel):
+    can_rename: bool = False
+    can_create_subfolder: bool = False
+    can_delete: bool = False
+    can_choose_to_move: bool = False
+    can_receive_move: bool = False
+
+
+class FileAction(BaseModel):
+    can_rename: bool = False
+    can_delete: bool = False
+    can_choose_to_move: bool = False
+    can_use_as_reference: bool = True
+
+
+class TreeFile(BaseModel):
+    file_uid: Optional[Any] = None
+    name: str
+    path: str
+    url: str
+    kind: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    size: Optional[str] = None
+    created_at: Optional[str] = None
+    creator: Optional[dict[str, Any]] = None
+    action: Union[GenerationAction, FileAction]
+
+
+class TreeFolder(BaseModel):
+    name: str
+    path: str
+    kind: Literal["folder"] = "folder"
+    icon: str = UPLOAD_TYPE_ICON_COLOR[UploadFileTypes.folder]["icon"]
+    color: str = UPLOAD_TYPE_ICON_COLOR[UploadFileTypes.folder]["color"]
+    action: FolderAction
+    files: list[TreeFile] = []
+    children: list["TreeFolder"] = []

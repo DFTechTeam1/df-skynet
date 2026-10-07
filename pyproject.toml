@@ -31,6 +31,7 @@ dependencies = [
     "pytz>=2026.3.post1",
     "redis>=8.1.0",
     "scalar-fastapi>=1.8.2",
+    "sqlalchemy[asyncio]>=2.0.54",
     "sqlmodel>=0.0.39",
     "uvicorn>=0.52.1",
 ]

@@ -51,7 +51,7 @@ async def test_get_archived_files_only_returns_archived_generations(
     )
     live = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=None)
 
-    resp = await authed_client.call("GET", _url(project_task.project.uid))
+    resp = await authed_client.call("GET", _url(project_task.uid))
     assert resp.status_code == 200
     assert isinstance(resp.json()["data"], list)
     assert _find_flat(resp.json()["data"], archived.uid) is not None
@@ -63,7 +63,7 @@ async def test_archived_action_flags(authed_client, project_task, user_id, gener
     """200 OK; an archived generation result allows unarchieve, favoriting is an independent lock."""
     result = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=datetime.now())
 
-    resp = await authed_client.call("GET", _url(project_task.project.uid))
+    resp = await authed_client.call("GET", _url(project_task.uid))
     file = _find_flat(resp.json()["data"], result.uid)
     assert file["action"]["can_archieve"] is False
     assert file["action"]["can_unarchieve"] is True
@@ -79,7 +79,7 @@ async def test_archived_entry_matches_generation_result_record_shape(
     fields (status/creator/cost/model/prompt) dropped, since they're redundant per-user context."""
     result = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=datetime.now())
 
-    resp = await authed_client.call("GET", _url(project_task.project.uid))
+    resp = await authed_client.call("GET", _url(project_task.uid))
     file = _find_flat(resp.json()["data"], result.uid)
     assert file.keys() == {
         "id",
