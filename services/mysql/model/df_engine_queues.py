@@ -28,4 +28,5 @@ class DfEngineQueues(SQLModel, table=True):
     queue_name: str = Field(sa_column=Column(String(255), nullable=False))
     event_type: QueueEventTypes = Field(sa_column=Column(Enum(QueueEventTypes), nullable=False))
     attempt: int = Field(default=1, sa_column=Column(Integer, nullable=False))
+    duration_ms: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     detail: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON(none_as_null=True), nullable=True))

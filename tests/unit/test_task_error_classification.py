@@ -89,3 +89,52 @@ def test_mark_generation_failed_swallows_errors(monkeypatch):
 
     monkeypatch.setattr(base, "get_sync_db", boom)
     base._mark_generation_failed(1)  # must not raise
+
+
+def _task(request):
+    task = base.GenerationTask.__new__(base.GenerationTask)
+    task.request_stack = SimpleNamespace(top=request)
+    return task
+
+
+def test_attempt_duration_is_none_before_the_attempt_starts():
+    """No `before_start` yet (or it failed) means there is nothing to time."""
+    task = _task(SimpleNamespace())
+    assert task._attempt_duration_ms() is None
+
+
+def test_attempt_duration_measures_milliseconds_since_start(monkeypatch):
+    """The elapsed time since `attempt_started_at` is returned as whole milliseconds."""
+    monkeypatch.setattr(base.time, "perf_counter", lambda: 12.5)
+    task = _task(SimpleNamespace(attempt_started_at=10.0))
+    assert task._attempt_duration_ms() == 2500
+
+
+def test_log_queue_stores_the_duration(monkeypatch):
+    """`log_queue` writes the given duration on the queue row."""
+    added = []
+
+    @contextmanager
+    def _ctx():
+        yield SimpleNamespace(add=added.append)
+
+    monkeypatch.setattr(base, "get_sync_db", _ctx)
+    base.log_queue(7, "q", base.QueueEventTypes.succeeded, 1, "tid", duration_ms=1234)
+    assert added[0].duration_ms == 1234 and added[0].generation_id == 7
+
+
+def _retry_task(retries, jitter=True, maximum=20):
+    return SimpleNamespace(request=SimpleNamespace(retries=retries), retry_backoff_max=maximum, retry_jitter=jitter)
+
+
+def test_retry_countdown_without_jitter_doubles_up_to_the_cap():
+    """With jitter off the delay is exactly 1, 2, 4, 8, 16 and then stays at the cap."""
+    delays = [base.retry_countdown(_retry_task(r, jitter=False)) for r in range(7)]
+    assert delays == [1, 2, 4, 8, 16, 20, 20]
+
+
+def test_retry_countdown_with_jitter_never_drops_below_half_the_backoff():
+    """Half-jitter keeps every delay in [backoff/2, backoff], so a retry is never sent instantly."""
+    for retries, backoff in enumerate([1, 2, 4, 8, 16, 20]):
+        samples = {base.retry_countdown(_retry_task(retries)) for _ in range(200)}
+        assert min(samples) >= backoff // 2 and max(samples) <= backoff

@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 from celery.exceptions import SoftTimeLimitExceeded
-from httpx import HTTPStatusError, NetworkError, TimeoutException
+from httpx import HTTPStatusError, NetworkError, Timeout, TimeoutException
 from apps.secret import OPENROUTER_BASE_URL
 from services.api_caller import APICaller
 from services.celery_app import celery_app
@@ -16,6 +16,9 @@ from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_js
 from services.tasks.base import GenerationTask, classify_error, response_error_message, retry_countdown
 from services.tasks.udin_uploader import udin_uploader
 from utils.formatter import format_idr, format_usd
+
+
+OPENROUTER_IMAGE_TIMEOUT = Timeout(connect=10, read=60, write=30, pool=10)
 
 
 @celery_app.task(
@@ -60,7 +63,9 @@ def image_generation(
 
     caller = APICaller(base_url=OPENROUTER_BASE_URL, headers=headers or {})
     try:
-        response = caller.openrouter_sync("POST", "/images", user_id=user_id, json=payload or {})
+        response = caller.openrouter_sync(
+            "POST", "/images", user_id=user_id, json=payload or {}, timeout=OPENROUTER_IMAGE_TIMEOUT
+        )
     except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
         stage_error = classify_error(exc, source="openrouter")
         if stage_error.retryable and self.request.retries < self.max_retries:

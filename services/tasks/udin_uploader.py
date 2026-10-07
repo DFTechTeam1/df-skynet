@@ -34,6 +34,7 @@ from services.tasks.base import (
     retry_countdown,
 )
 
+IMAGE_UPLOAD_TIMEOUT = Timeout(connect=5, read=15, write=15, pool=10)
 LOCAL_COMMIT_ATTEMPTS = 3
 LOCAL_COMMIT_BACKOFF_SECONDS = 1
 
@@ -191,6 +192,7 @@ def udin_uploader(
                         f"/engine/storage/upload-generated-image/{project_uid}",
                         user_id=user_id,
                         json={"b64_json": b64_json, "media_type": "image/png"},
+                        timeout=IMAGE_UPLOAD_TIMEOUT,
                     )
                 except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
                     stage_error = classify_error(exc, source="udin")

@@ -1,3 +1,5 @@
+import random
+import time
 import httpx
 from typing import Literal
 from typing import Any, Optional
@@ -34,15 +36,24 @@ class GenerationStageError(Exception):
         return (self.__class__, (str(self), self.source, self.status_code, self.retryable, self.final))
 
 
+def _plain_error_text(response: httpx.Response) -> str:
+    """A non-JSON error body is usually a proxy's HTML error page (e.g. Cloudflare's 524, ~6 KB), which would be
+    stored in full on every retry row. Keep only a one-line summary for those."""
+    text = response.text or ""
+    if text.lstrip()[:1] == "<":
+        return f"HTTP {response.status_code} (non-JSON error page from {response.request.url.host})"
+    return text or f"HTTP {response.status_code}"
+
+
 def response_error_message(response: httpx.Response) -> str:
     try:
         body = response.json()
     except ValueError:
-        return response.text or f"HTTP {response.status_code}"
+        return _plain_error_text(response)
     error = body.get("error")
     if isinstance(error, dict):
         return error.get("message") or str(error)
-    return error or body.get("message") or response.text or f"HTTP {response.status_code}"
+    return error or body.get("message") or _plain_error_text(response)
 
 
 def classify_error(exc: Exception, source: Literal["udin", "openrouter"]) -> GenerationStageError:
@@ -60,12 +71,16 @@ def classify_error(exc: Exception, source: Literal["udin", "openrouter"]) -> Gen
 
 
 def retry_countdown(task) -> int:
-    return get_exponential_backoff_interval(
+    """Exponential backoff (1, 2, 4, 8... capped at `retry_backoff_max`) with half-jitter when `retry_jitter` is on:
+    a random delay in [backoff/2, backoff]. Celery's own full jitter picks anywhere in [0, backoff], which often
+    returned 0-1s and re-sent the request straight into the same stuck connection."""
+    backoff = get_exponential_backoff_interval(
         factor=1,
         retries=task.request.retries,
         maximum=task.retry_backoff_max,
-        full_jitter=task.retry_jitter,
+        full_jitter=False,
     )
+    return random.randint(backoff // 2, backoff) if task.retry_jitter else backoff
 
 
 def log_queue(
@@ -75,6 +90,7 @@ def log_queue(
     attempt: int,
     task_id: str,
     detail: Optional[dict[str, Any]] = None,
+    duration_ms: Optional[int] = None,
 ) -> None:
     try:
         with get_sync_db() as db:
@@ -84,6 +100,7 @@ def log_queue(
                     queue_name=queue_name,
                     event_type=event_type,
                     attempt=attempt,
+                    duration_ms=duration_ms,
                     detail={"celery_task_id": task_id, **(detail or {})},
                 )
             )
@@ -136,7 +153,14 @@ STAGE_STATUSES = {
 
 
 class GenerationTask(celery_app.Task):
+    def _attempt_duration_ms(self) -> Optional[int]:
+        """Milliseconds since this attempt's `before_start`, or None if it never ran. The start time lives on
+        `self.request`, which Celery creates per execution, so concurrent tasks and retries never share it."""
+        started_at = getattr(self.request, "attempt_started_at", None)
+        return None if started_at is None else int((time.perf_counter() - started_at) * 1000)
+
     def before_start(self, task_id: str, args: tuple, kwargs: dict[str, Any]) -> None:
+        self.request.attempt_started_at = time.perf_counter()
         generation_id = args[0] if args else kwargs["generation_id"]
         log_queue(
             generation_id=generation_id,
@@ -169,6 +193,7 @@ class GenerationTask(celery_app.Task):
             event_type=QueueEventTypes.retried,
             attempt=self.request.retries + 1,
             task_id=task_id,
+            duration_ms=self._attempt_duration_ms(),
             detail=detail,
         )
         user_id = args[1] if len(args) > 1 else kwargs["user_id"]
@@ -184,6 +209,7 @@ class GenerationTask(celery_app.Task):
             event_type=QueueEventTypes.succeeded,
             attempt=self.request.retries + 1,
             task_id=task_id,
+            duration_ms=self._attempt_duration_ms(),
             detail={k: v for k, v in retval.items() if k != "generation_id"} if isinstance(retval, dict) else None,
         )
 
@@ -209,6 +235,7 @@ class GenerationTask(celery_app.Task):
             event_type=QueueEventTypes.failed,
             attempt=self.request.retries + 1,
             task_id=task_id,
+            duration_ms=self._attempt_duration_ms(),
             detail=detail,
         )
         user_id = args[1] if len(args) > 1 else kwargs["user_id"]
