@@ -190,3 +190,68 @@ def test_tree_folder_defaults_identify_it_as_a_folder():
     """Every TreeFolder carries kind=folder plus the shared folder icon and colour."""
     folder = TreeFolder(name="x", path="a/x", action=FolderAction()).model_dump(mode="json")
     assert (folder["kind"], folder["icon"], folder["color"]) == ("folder", "mdi-folder", "amber")
+
+
+class TestGlobalReferenceSections:
+    @staticmethod
+    def _row(kind, project_id, task_id, file, project_name="P", task_name="T"):
+        return {
+            "kind": kind,
+            "project_id": project_id,
+            "project_name": f"{project_name}{project_id}",
+            "task_id": task_id,
+            "task_name": f"{task_name}{task_id}",
+            "file": file,
+        }
+
+    def test_always_returns_the_three_sections_with_no_projects(self):
+        """With no rows each section is still listed, empty, with total 0."""
+        from services.generations import global_reference_sections
+
+        assert global_reference_sections([], []) == [
+            {"type": "Image Uploads", "total_data": 0, "projects": []},
+            {"type": "Image Generations", "total_data": 0, "projects": []},
+            {"type": "Elements", "total_data": 0, "projects": []},
+        ]
+
+    def test_groups_files_by_project_then_task_in_first_seen_order(self):
+        """Files land under their project and task; both keep the order they first appear in, and totals count files."""
+        from services.generations import global_reference_sections
+
+        image = UploadFileTypes.image
+        sections = global_reference_sections(
+            [
+                self._row(image, 2, 20, "a"),
+                self._row(image, 1, 10, "b"),
+                self._row(image, 2, 21, "c"),
+                self._row(image, 2, 20, "d"),
+            ],
+            [],
+        )
+        uploads = sections[0]
+        assert uploads["total_data"] == 4
+        assert [p["id"] for p in uploads["projects"]] == [2, 1]
+        project2 = uploads["projects"][0]
+        assert project2["name"] == "P2"
+        assert [t["id"] for t in project2["tasks"]] == [20, 21]
+        assert project2["tasks"][0] == {"id": 20, "name": "T20", "files": ["a", "d"]}
+
+    def test_routes_kinds_and_drops_unsupported_ones(self):
+        """Image uploads, image and element generations are kept; video uploads and other kinds are dropped."""
+        from services.generations import global_reference_sections
+
+        sections = {
+            s["type"]: s
+            for s in global_reference_sections(
+                [self._row(UploadFileTypes.video, 1, 1, "u-vid"), self._row(UploadFileTypes.image, 1, 1, "u-img")],
+                [
+                    self._row(GenerationKinds.image, 1, 1, "g-img"),
+                    self._row(GenerationKinds.element, 3, 4, "g-el"),
+                    self._row(GenerationKinds.video, 1, 1, "g-vid"),
+                    self._row(GenerationKinds.image_edit, 1, 1, "g-edit"),
+                ],
+            )
+        }
+        assert sections["Image Uploads"]["projects"][0]["tasks"][0]["files"] == ["u-img"]
+        assert sections["Image Generations"]["total_data"] == 1
+        assert sections["Elements"]["projects"][0]["tasks"][0]["id"] == 4

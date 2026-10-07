@@ -45,7 +45,7 @@ from services.dto.asynced.admin_settings import get_admin_settings, get_project_
 from log import logging
 from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
-from services.generations import reference_sections
+from services.generations import global_reference_sections, reference_sections
 from services.model_management import ModelManagement
 from utils import local_time
 from utils.serializer import serialize
@@ -206,8 +206,9 @@ class GenerationsController(CoreDependencies):
         "/references-picker",
         summary="Browse every project's files for picking references.",
         description=(
-            "Shows your uploaded and generated files across all your projects, grouped by project "
-            "and task, so you can pick one to reuse. You can search by project or file name."
+            "Shows your uploaded and generated files across all your projects, in the same image uploads, "
+            "image generations and elements sections, each grouped by project then task, so you can pick one "
+            "to reuse. You can search by project or file name."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
@@ -224,7 +225,7 @@ class GenerationsController(CoreDependencies):
             upload_rows = await get_upload_references(ctx, user_id, search=search)
             generation_rows = await get_generation_references(ctx, user_id, search=search)
 
-            response.data = reference_sections(upload_rows, generation_rows)
+            response.data = global_reference_sections(upload_rows, generation_rows)
             section_counts = {section["type"]: section["total_data"] for section in response.data}
             logging.info(
                 f"user={user_id} listed global reference picker search={search} "

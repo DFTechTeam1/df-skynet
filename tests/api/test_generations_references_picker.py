@@ -195,13 +195,13 @@ def _global_section(body, type_name):
 
 
 def _flat_files(section):
-    return section["files"]
+    """Every file in a global-picker section, whichever project/task it is grouped under."""
+    return [f for project in section["projects"] for task in project["tasks"] for f in task["files"]]
 
 
 @pytest.mark.asyncio
-async def test_global_picker_returns_flat_sections(authed_client, project_task, user_id, generation_fks):
-    """200 OK; global picker (no project_uid) returns the same flat Image Uploads / Image Generations / Elements
-    sections, with no project/task grouping."""
+async def test_global_picker_groups_sections_by_project_and_task(authed_client, project_task, user_id, generation_fks):
+    """200 OK; global picker (no project_uid) returns the same three sections, each grouped projects -> tasks -> files."""
     image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
     generation_result = _make_result(project_task, user_id, generation_fks)
 
@@ -209,7 +209,13 @@ async def test_global_picker_returns_flat_sections(authed_client, project_task, 
     assert resp.status_code == 200
     body = resp.json()
     assert [s["type"] for s in body["data"]] == ["Image Uploads", "Image Generations", "Elements"]
-    assert all("projects" not in s for s in body["data"])
+    assert all("files" not in s and "projects" in s for s in body["data"])
+    section = _global_section(body, "Image Uploads")
+    assert section["total_data"] == len(_flat_files(section))
+    project = next(p for p in section["projects"] if p["id"] == project_task.project_id)
+    task = next(t for t in project["tasks"] if t["id"] == project_task.id)
+    assert project["name"] == project_task.project.name
+    assert image_upload.uid in [f["uid"] for f in task["files"]]
     assert image_upload.uid in [f["uid"] for f in _flat_files(_global_section(body, "Image Uploads"))]
     assert generation_result.uid in [f["file_uid"] for f in _flat_files(_global_section(body, "Image Generations"))]
 
@@ -223,7 +229,7 @@ async def test_global_picker_drops_video_generations(authed_client, project_task
     assert resp.status_code == 200
     body = resp.json()
     assert "Video Generations" not in [s["type"] for s in body["data"]]
-    assert video_result.uid not in [f.get("file_uid") for s in body["data"] for f in s["files"]]
+    assert video_result.uid not in [f.get("file_uid") for s in body["data"] for f in _flat_files(s)]
 
 
 @pytest.mark.asyncio

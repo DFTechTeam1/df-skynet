@@ -533,6 +533,7 @@ class FilesController(CoreDependencies):
                     song_id=project_task["id"] if is_song else None,
                 ),
             )
+            await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
             logging.info(
                 f"[upload-files] user={user_id} task_uid={task_uid} saved={len(uploaded)} rows, cache invalidated"
             )

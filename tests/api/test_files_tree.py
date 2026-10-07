@@ -393,3 +393,38 @@ async def test_upload_requires_auth(client, project_task):
     """401 when the request carries no bearer token."""
     resp = await client.call("POST", _uploads_url(project_task.uid), raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upload_invalidates_the_references_picker_cache(authed_client, project_task, mock_udin):
+    """200 OK; a picker response cached before an upload is dropped, so both the project and the global picker list
+    the new image straight away instead of serving the pre-upload result until the cache expires."""
+    picker = f"/api/references-picker/{project_task.project.uid}"
+    global_picker = "/api/references-picker"
+    name = f"picker-{uuid4().hex[:8]}.jpg"
+
+    def uploads(resp):
+        section = next(s for s in resp.json()["data"] if s["type"] == "Image Uploads")
+        if "projects" in section:  # global picker: projects -> tasks -> files
+            return [f for p in section["projects"] for t in p["tasks"] for f in t["files"]]
+        return section["files"]
+
+    # warm (and cache) both pickers before the upload
+    assert name not in [f["name"] for f in uploads(await authed_client.call("GET", picker))]
+    assert name not in [f["name"] for f in uploads(await authed_client.call("GET", global_picker))]
+
+    mock_udin.set(
+        "upload-files",
+        200,
+        {"data": [{"name": name, "path": f"{_root(project_task)}/upload/images/{name}", "size": 5}]},
+    )
+    resp = await authed_client.call(
+        "POST",
+        _uploads_url(project_task.uid),
+        headers={"content-type": "multipart/form-data; boundary=x"},
+        content=b"x",
+    )
+    assert resp.status_code == 200
+
+    assert name in [f["name"] for f in uploads(await authed_client.call("GET", picker))]
+    assert name in [f["name"] for f in uploads(await authed_client.call("GET", global_picker))]
