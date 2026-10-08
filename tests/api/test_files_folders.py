@@ -255,7 +255,7 @@ async def test_move_folders_rewrites_prefixes_in_one_call(authed_client, project
 
 @pytest.mark.asyncio
 async def test_move_between_upload_and_generated_is_refused(authed_client, project_task, user_id, mock_udin):
-    """422 folders_move_failed with invalid_folder_scope on the source when upload and generated are mixed; Udin is never called."""
+    """422 folders_move_failed with invalid_folder_move_scope on the source when upload and generated are mixed; Udin is never called."""
     root = _root(project_task)
     src, dest = f"{root}/upload/images/s_{uuid4().hex[:5]}", f"{root}/generated/images/d_{uuid4().hex[:5]}"
     _upload(project_task, user_id, src, type=UploadFileTypes.folder, size=0)

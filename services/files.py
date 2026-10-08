@@ -176,7 +176,8 @@ async def call_udin_folder(
         error = data.get("error") or ({"path": [data["message"]]} if data.get("message") else None)
         if error and failed_message == "folders_move_failed":
             error = {k.replace("sources.", "folder_paths.", 1): v for k, v in error.items()}
-        raise BaseError(status_code=upstream.status_code, message=failed_message, error=error)
+        detail = next((v[0] for v in error.values() if v), None) if error else None
+        raise BaseError(status_code=upstream.status_code, message=detail or failed_message, error=error)
     return data.get("data")
 
 

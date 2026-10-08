@@ -1,6 +1,6 @@
 import mimetypes
 import traceback
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Optional, Literal
 from urllib.parse import quote
 from uuid import UUID
 from fastapi import Path, Request, status, Query
@@ -462,6 +462,11 @@ class FilesController(CoreDependencies):
         self,
         request: Request,
         task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+        path: Optional[str] = Query(
+            None,
+            description="Existing folder to upload into (a path from the file tree). Defaults to the type root: "
+            "`upload/images` or `upload/videos`.",
+        ),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
@@ -470,6 +475,8 @@ class FilesController(CoreDependencies):
             project_task = await get_project_task(ctx, task_uid)
             project_uid = project_task["project"]["uid"]
             is_song = project_task["is_song"]
+            if path and not find_folder(await build_file_tree(ctx, project_task, user_id), path):
+                raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
             logging.info(
                 f"[upload-files] user={user_id} task_uid={task_uid} start is_song={is_song} "
                 f"project_id={project_task['project_id']}"
@@ -493,6 +500,7 @@ class FilesController(CoreDependencies):
                         "POST",
                         f"/engine/storage/upload-files/{project_uid}",
                         user_id=user_id,
+                        params={"path": path} if path else None,
                         content=request.stream(),
                     )
             except TimeoutException:
@@ -779,7 +787,7 @@ class FilesController(CoreDependencies):
                 raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
             if not folder["action"]["can_rename"]:
                 raise DataValidationError(
-                    message="folder_action_not_permitted", error={"path": ["folder_action_not_permitted"]}
+                    message="folder_rename_not_permitted", error={"path": ["folder_rename_not_permitted"]}
                 )
 
             pairs = await call_udin_folder(
@@ -846,7 +854,7 @@ class FilesController(CoreDependencies):
                 raise DataNotFoundError(message="folder_not_found")
             if not folder["action"]["can_delete"]:
                 raise DataValidationError(
-                    message="folder_action_not_permitted", error={"path": ["folder_action_not_permitted"]}
+                    message="folder_delete_not_permitted", error={"path": ["folder_delete_not_permitted"]}
                 )
 
             pairs = await call_udin_folder(
@@ -907,7 +915,11 @@ class FilesController(CoreDependencies):
             if not destination:
                 errors["destination"] = ["folder_not_found"]
             elif not destination["action"]["can_receive_move"]:
-                key = "folder_depth_exceeded" if len(folder_scope(schema.destination)) == 2 else "invalid_folder_scope"
+                key = (
+                    "folder_depth_exceeded"
+                    if len(folder_scope(schema.destination)) == 2
+                    else "invalid_folder_move_scope"
+                )
                 errors["destination"] = [key]
 
             def height(node: dict[str, Any]) -> int:
@@ -920,18 +932,18 @@ class FilesController(CoreDependencies):
                 if not folder:
                     errors[field] = ["folder_not_found"]
                 elif not folder["action"]["can_choose_to_move"]:
-                    errors[field] = ["folder_action_not_permitted"]
+                    errors[field] = ["folder_move_not_permitted"]
                 elif destination and folder_scope(source) != folder_scope(schema.destination):
-                    errors[field] = ["invalid_folder_scope"]
+                    errors[field] = ["invalid_folder_move_scope"]
                 elif schema.destination == source or schema.destination.startswith(source + "/"):
-                    errors[field] = ["invalid_folder_scope"]
+                    errors[field] = ["invalid_folder_move_scope"]
                 elif source.rpartition("/")[0] == schema.destination:
-                    errors[field] = ["invalid_folder_scope"]
+                    errors[field] = ["invalid_folder_move_scope"]
                 elif destination and (len(schema.destination.split("/")) - 5) + 1 + height(folder) > depth_limit:
                     errors[field] = ["folder_depth_exceeded"]
             if errors:
                 logging.warning(f"[move-folders] user={user_id} task_uid={task_uid} invalid={errors}")
-                raise DataValidationError(message="folders_move_failed", error=errors)
+                raise DataValidationError(message=next(iter(errors.values()))[0], error=errors)
 
             # a source nested inside another source travels with it; Udin would fail on the second move
             sources = [
@@ -969,5 +981,79 @@ class FilesController(CoreDependencies):
             raise
         except Exception:
             logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/{source}/{file_uid}",
+        summary="Rename file.",
+        description="Rename generated or uploaded file. Returns the refreshed file tree. <change into propper description>",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_source_and_file_uid_to_rename_file(
+        self, source: Literal["generated", "upload"] = Path(), file_uid: UUID = Path()
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            pass
+        except BaseError as e:
+            # logging.warning(
+            #     f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            # )
+            raise
+        except Exception:
+            # logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/{source}",
+        summary="Move files.",
+        description="Move uploaded files or generated files. Returns the refreshed file tree. <change into propper description>",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_source_to_move_files(self, source: Literal["generated", "upload"] = Path()) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            pass
+        except BaseError as e:
+            # logging.warning(
+            #     f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            # )
+            raise
+        except Exception:
+            # logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.delete(
+        "/files/{source}",
+        summary="Delete files.",
+        description="Delete uploaded files or generated files. Returns the refreshed file tree. <change into propper description>",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_source_to_delete_files(self, source: Literal["generated", "upload"] = Path()) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            pass
+        except BaseError as e:
+            # logging.warning(
+            #     f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            # )
+            raise
+        except Exception:
+            # logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response

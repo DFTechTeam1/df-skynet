@@ -59,6 +59,7 @@ class GenerationResultRecord(BaseModel):
     generation_uid: Optional[str] = None
     parent_id: Optional[int] = None
     name: Optional[str] = None
+    type: str = "generated"
     is_main: Optional[bool] = None
     path: Optional[str] = None
     size: Optional[str] = None
@@ -351,12 +352,14 @@ class TreeFile(BaseModel):
     name: str
     path: str
     url: str
+    type: Literal["generated", "upload"] = "generated"
     kind: Optional[str] = None
     icon: Optional[str] = None
     color: Optional[str] = None
     size: Optional[str] = None
     created_at: Optional[str] = None
     creator: Optional[dict[str, Any]] = None
+    updater: Optional[dict[str, Any]] = None
     action: Union[GenerationAction, FileAction]
 
 

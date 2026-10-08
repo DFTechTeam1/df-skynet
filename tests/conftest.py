@@ -1,3 +1,4 @@
+from urllib.parse import urlencode
 from types import SimpleNamespace
 from typing import Any, Optional
 import pytest
@@ -417,6 +418,8 @@ class _FakeUdinCaller:
         """Same as `call` — mirrors `APICaller.udin()`, which the upload endpoint uses."""
         if isinstance(self.raise_on_udin, BaseException):
             raise self.raise_on_udin
+        if kwargs.get("params"):
+            path = f"{path}?{urlencode(kwargs['params'])}"
         return await self.call(method, path, **{k: v for k, v in kwargs.items() if k == "json"})
 
     def stream(self, method: str, path: str, **kwargs: Any) -> _FakeUdinStreamCtx:
