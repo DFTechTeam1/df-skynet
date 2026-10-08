@@ -367,5 +367,7 @@ class TreeFolder(BaseModel):
     icon: str = UPLOAD_TYPE_ICON_COLOR[UploadFileTypes.folder]["icon"]
     color: str = UPLOAD_TYPE_ICON_COLOR[UploadFileTypes.folder]["color"]
     action: FolderAction
+    creator: Optional[dict[str, Any]] = None
+    updater: Optional[dict[str, Any]] = None
     files: list[TreeFile] = []
     children: list["TreeFolder"] = []

@@ -36,6 +36,10 @@ async def get_user_uploaded_files(
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEngineUploadFiles.updated_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
         ),
         filters=tuple(files_filters),
         order_by=(
@@ -56,6 +60,7 @@ async def get_user_uploaded_files(
             "size": format_size(record["size"]),
             "created_at": format_datetime(record["created_at"]),
             "creator": format_user_employees(record["created_by_user"]),
+            "updater": format_user_employees(record["updated_by_user"]),
         }
         for record in serialize(files)
     ]
@@ -77,6 +82,7 @@ def _format_upload_file(record: dict[str, Any]) -> dict[str, Any]:
         "size": format_size(record["size"]),
         "created_at": format_datetime(record["created_at"]),
         "creator": format_user_employees(record["created_by_user"]),
+        "updater": format_user_employees(record.get("updated_by_user")),
     }
 
 
@@ -92,6 +98,10 @@ async def get_user_uploaded_file(ctx: ConnectionContext, file_uid: UUID) -> dict
         table=DfEngineUploadFiles,
         options=(
             selectinload(DfEngineUploadFiles.created_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEngineUploadFiles.updated_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore

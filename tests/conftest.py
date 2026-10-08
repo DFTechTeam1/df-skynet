@@ -440,6 +440,7 @@ def mock_udin(monkeypatch):
     _FakeUdinCaller.calls = []
     _FakeUdinCaller.raise_on_udin = None
     monkeypatch.setattr("apps.controller.files.APICaller", _FakeUdinCaller)
+    monkeypatch.setattr("services.files.APICaller", _FakeUdinCaller)
     return SimpleNamespace(
         set=lambda keyword, status_code, payload=None: _FakeUdinCaller.responses.__setitem__(
             keyword, (status_code, payload)

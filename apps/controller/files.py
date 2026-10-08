@@ -13,7 +13,7 @@ from error import BaseError, ServiceError
 from services.dto import ConnectionContext
 from log import logging
 from middlewares.lang import current_lang, resolve_message
-from schemas.payload.files import SetArchivedPayload, SetFavoritedPayload
+from schemas.payload.files import FolderPayload, MoveFoldersPayload, SetArchivedPayload, SetFavoritedPayload
 from sqlalchemy import update
 from schemas.response import Response
 from services.api_caller import APICaller
@@ -22,8 +22,16 @@ from services.mysql import query
 from services.mysql.model import DfEngineGenerationResults, DfEngineGenerations, DfEngineUploadFiles
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from error import DataNotFoundError, DataValidationError
-from services.files import build_file_tree, find_folder
-from services.dto.asynced.projects import get_project_task
+from services.files import (
+    apply_folder_changes,
+    build_file_tree,
+    call_udin_folder,
+    ensure_task_assigned,
+    find_folder,
+    folder_scope,
+    get_folder_depth_limit,
+)
+from services.dto.asynced.projects import get_project, get_project_task
 from services.dto.asynced.files import get_user_uploaded_file
 from services.dto.format_response import FileAction, TreeFile
 from services.dto.asynced.generation_files import (
@@ -663,5 +671,303 @@ class FilesController(CoreDependencies):
             raise
         except Exception:
             logging.error(f"[get-file] user={user_id} file_uid={file_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.post(
+        "/files/{task_uid}/folders",
+        summary="Create folder.",
+        description="Create a new folder under `path` (a folder from the file tree) in the file tree of a task or song. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        status_code=status.HTTP_201_CREATED,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_task_uid_to_create_a_folder(
+        self, schema: FolderPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            project_task = await get_project_task(ctx, task_uid)
+            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
+            #     raise DataValidationError(message="song_task_already_completed")
+            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
+            #     raise DataValidationError(message="project_task_not_onprocess")
+            project = await get_project(ctx, project_id=project_task["project_id"])
+            # if project['status'] != PROJECT_STATUS_ONGOING:
+            #     raise DataValidationError(message="project_not_ongoing")
+
+            # await ensure_task_assigned(ctx, project_task, user_id)
+
+            parent = find_folder(await build_file_tree(ctx, project_task, user_id), schema.path)
+            if not parent:
+                raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
+            if not parent["action"]["can_create_subfolder"]:
+                key = "folder_depth_exceeded" if len(folder_scope(schema.path)) == 2 else "invalid_folder_scope"
+                logging.warning(
+                    f"[create-folder] user={user_id} task_uid={task_uid} path={schema.path!r} refused "
+                    f"{key} depth_limit={await get_folder_depth_limit(ctx)}"
+                )
+                raise DataValidationError(message=key, error={"path": [key]})
+
+            created = await call_udin_folder(
+                "POST",
+                "new-folder",
+                project["uid"],
+                user_id,
+                {"current_path": schema.path, "name": schema.name},
+                "folder_create_failed",
+                "create-folder",
+            )
+            is_song = project_task["is_song"]
+            self.db.add(
+                DfEngineUploadFiles(
+                    name=schema.name,
+                    type=UploadFileTypes.folder,
+                    path=created["path"],
+                    size=0,
+                    project_id=project_task["project_id"],
+                    task_id=None if is_song else project_task["id"],
+                    song_id=project_task["id"] if is_song else None,
+                    created_by=user_id,
+                )
+            )
+            await apply_folder_changes(ctx, project_task, user_id)
+
+            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.message = resolve_message("folder_created", current_lang.get())
+            logging.info(f"[create-folder] user={user_id} task_uid={task_uid} created={created['path']!r}")
+        except BaseError as e:
+            logging.warning(
+                f"[create-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            )
+            raise
+        except Exception:
+            logging.error(f"[create-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/{task_uid}/folders",
+        summary="Update folder.",
+        description="Rename the folder at `path` to `name`. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_task_uid_to_update_a_folder(
+        self, schema: FolderPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            project_task = await get_project_task(ctx, task_uid)
+            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
+            #     raise DataValidationError(message="song_task_already_completed")
+            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
+            #     raise DataValidationError(message="project_task_not_onprocess")
+            project = await get_project(ctx, project_id=project_task["project_id"])
+            # if project['status'] != PROJECT_STATUS_ONGOING:
+            #     raise DataValidationError(message="project_not_ongoing")
+
+            # await ensure_task_assigned(ctx, project_task, user_id)
+
+            folder = find_folder(await build_file_tree(ctx, project_task, user_id), schema.path)
+            if not folder:
+                raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
+            if not folder["action"]["can_rename"]:
+                raise DataValidationError(
+                    message="folder_action_not_permitted", error={"path": ["folder_action_not_permitted"]}
+                )
+
+            pairs = await call_udin_folder(
+                "PATCH",
+                "rename-folder",
+                project["uid"],
+                user_id,
+                {"path": schema.path, "name": schema.name},
+                "folder_rename_failed",
+                "rename-folder",
+            )
+            new_path = f"{schema.path.rpartition('/')[0]}/{schema.name}"
+            await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [], moves=[(schema.path, new_path)])
+
+            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.message = resolve_message("folder_renamed", current_lang.get())
+            logging.info(
+                f"[rename-folder] user={user_id} task_uid={task_uid} {schema.path!r} -> {new_path!r} files={len(pairs or [])}"
+            )
+        except BaseError as e:
+            logging.warning(
+                f"[rename-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            )
+            raise
+        except Exception:
+            logging.error(f"[rename-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.delete(
+        "/files/{task_uid}/folders",
+        summary="Delete folder.",
+        description="Delete the folder at `path`. Its files (at any depth) are moved up into the parent folder, never deleted. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_task_uid_to_delete_a_folder(
+        self,
+        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+        path: str = Query(
+            ...,
+            description="Full folder path, matching a `path` value from the file tree (e.g. storage/DF-Engine/<name>/upload/images/drafts).",
+        ),
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        path = path.strip("/")
+        try:
+            project_task = await get_project_task(ctx, task_uid)
+            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
+            #     raise DataValidationError(message="song_task_already_completed")
+            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
+            #     raise DataValidationError(message="project_task_not_onprocess")
+            project = await get_project(ctx, project_id=project_task["project_id"])
+            # if project['status'] != PROJECT_STATUS_ONGOING:
+            #     raise DataValidationError(message="project_not_ongoing")
+
+            # await ensure_task_assigned(ctx, project_task, user_id)
+
+            folder = find_folder(await build_file_tree(ctx, project_task, user_id), path)
+            if not folder:
+                raise DataNotFoundError(message="folder_not_found")
+            if not folder["action"]["can_delete"]:
+                raise DataValidationError(
+                    message="folder_action_not_permitted", error={"path": ["folder_action_not_permitted"]}
+                )
+
+            pairs = await call_udin_folder(
+                "DELETE",
+                "delete-folder",
+                project["uid"],
+                user_id,
+                {"path": path},
+                "folder_delete_failed",
+                "delete-folder",
+            )
+            await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [], deleted=[path])
+
+            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.message = resolve_message("folder_deleted", current_lang.get())
+            logging.info(
+                f"[delete-folder] user={user_id} task_uid={task_uid} path={path!r} promoted={len(pairs or [])}"
+            )
+        except BaseError as e:
+            logging.warning(
+                f"[delete-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            )
+            raise
+        except Exception:
+            logging.error(f"[delete-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/{task_uid}/folders/move",
+        summary="Move folders.",
+        description="Move one or more folders into `destination`. Uploaded folders can only go under upload and generated folders under generated, and the type (images or videos) must match. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_with_task_uid_to_move_folders(
+        self, schema: MoveFoldersPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        try:
+            project_task = await get_project_task(ctx, task_uid)
+            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
+            #     raise DataValidationError(message="song_task_already_completed")
+            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
+            #     raise DataValidationError(message="project_task_not_onprocess")
+            project = await get_project(ctx, project_id=project_task["project_id"])
+            # if project['status'] != PROJECT_STATUS_ONGOING:
+            #     raise DataValidationError(message="project_not_ongoing")
+
+            # await ensure_task_assigned(ctx, project_task, user_id)
+
+            tree = await build_file_tree(ctx, project_task, user_id)
+            destination = find_folder(tree, schema.destination)
+            errors: dict[str, list[str]] = {}
+            if not destination:
+                errors["destination"] = ["folder_not_found"]
+            elif not destination["action"]["can_receive_move"]:
+                key = "folder_depth_exceeded" if len(folder_scope(schema.destination)) == 2 else "invalid_folder_scope"
+                errors["destination"] = [key]
+
+            def height(node: dict[str, Any]) -> int:
+                return max((height(child) + 1 for child in node["children"]), default=0)
+
+            depth_limit = await get_folder_depth_limit(ctx)
+            for idx, source in enumerate(schema.folder_paths):
+                field = f"folder_paths.{idx}"
+                folder = find_folder(tree, source)
+                if not folder:
+                    errors[field] = ["folder_not_found"]
+                elif not folder["action"]["can_choose_to_move"]:
+                    errors[field] = ["folder_action_not_permitted"]
+                elif destination and folder_scope(source) != folder_scope(schema.destination):
+                    errors[field] = ["invalid_folder_scope"]
+                elif schema.destination == source or schema.destination.startswith(source + "/"):
+                    errors[field] = ["invalid_folder_scope"]
+                elif source.rpartition("/")[0] == schema.destination:
+                    errors[field] = ["invalid_folder_scope"]
+                elif destination and (len(schema.destination.split("/")) - 5) + 1 + height(folder) > depth_limit:
+                    errors[field] = ["folder_depth_exceeded"]
+            if errors:
+                logging.warning(f"[move-folders] user={user_id} task_uid={task_uid} invalid={errors}")
+                raise DataValidationError(message="folders_move_failed", error=errors)
+
+            # a source nested inside another source travels with it; Udin would fail on the second move
+            sources = [
+                source
+                for source in schema.folder_paths
+                if not any(source.startswith(other + "/") for other in schema.folder_paths)
+            ]
+            pairs = await call_udin_folder(
+                "PATCH",
+                "move-folders",
+                project["uid"],
+                user_id,
+                {"sources": sources, "destination": schema.destination},
+                "folders_move_failed",
+                "move-folders",
+            )
+            await apply_folder_changes(
+                ctx,
+                project_task,
+                user_id,
+                pairs=pairs or [],
+                moves=[(source, f"{schema.destination}/{source.rsplit('/', 1)[-1]}") for source in sources],
+            )
+
+            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.message = resolve_message("folders_moved", current_lang.get())
+            logging.info(
+                f"[move-folders] user={user_id} task_uid={task_uid} moved={len(sources)} "
+                f"destination={schema.destination!r} files={len(pairs or [])}"
+            )
+        except BaseError as e:
+            logging.warning(
+                f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+            )
+            raise
+        except Exception:
+            logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response

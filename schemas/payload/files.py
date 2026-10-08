@@ -3,15 +3,27 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
-class NewFolderPayload(BaseModel):
-    current_path: str = Field(
-        ..., min_length=1, description="Existing folder path to create the new subfolder under.", examples=["images"]
+class FolderPayload(BaseModel):
+    path: str = Field(
+        ...,
+        min_length=1,
+        description="POST: parent folder to create the new folder under. PATCH: folder to rename. Full path as shown in the file tree.",
+        examples=["storage/DF-Engine/Wedding_7b804b30/upload/images"],
     )
-    name: str = Field(..., min_length=1, description="New folder name (no `/` or `\\`).", examples=["references"])
+    name: str = Field(..., min_length=1, description="Folder name (no `/` or `\\`).", examples=["references"])
 
+    @field_validator("path", mode="after")
+    @classmethod
+    def strip_path(cls, value: str) -> str:
+        return value.strip("/")
 
-class DeleteFolderPayload(BaseModel):
-    folder_path: str = Field(..., min_length=1, description="Folder path to delete.", examples=["images/references"])
+    @field_validator("name", mode="after")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value or value in (".", "..") or "/" in value or "\\" in value:
+            raise ValueError("invalid_folder_name")
+        return value
 
 
 class DeleteFilesPayload(BaseModel):
@@ -30,11 +42,6 @@ class RenameFilePayload(BaseModel):
     )
 
 
-class RenameFolderPayload(BaseModel):
-    folder_path: str = Field(..., min_length=1, description="Folder path to rename.", examples=["images/drafts"])
-    name: str = Field(..., min_length=1, description="New folder name (no `/` or `\\`).", examples=["approved"])
-
-
 class MoveFilesPayload(BaseModel):
     file_uids: list[UUID] = Field(
         ...,
@@ -47,9 +54,27 @@ class MoveFilesPayload(BaseModel):
 
 class MoveFoldersPayload(BaseModel):
     folder_paths: list[str] = Field(
-        ..., min_length=1, description="Folder paths to move.", examples=[["images/drafts"]]
+        ...,
+        min_length=1,
+        description="Full paths of the folders to move. Must share the destination's storage (upload or generated) and type (images or videos).",
+        examples=[["storage/DF-Engine/Wedding_7b804b30/upload/images/drafts"]],
     )
-    destination: str = Field(..., min_length=1, description="Destination folder path.", examples=["images/approved"])
+    destination: str = Field(
+        ...,
+        min_length=1,
+        description="Full path of the destination folder.",
+        examples=["storage/DF-Engine/Wedding_7b804b30/upload/images/approved"],
+    )
+
+    @field_validator("folder_paths", mode="after")
+    @classmethod
+    def dedupe_folder_paths(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(path.strip("/") for path in value))
+
+    @field_validator("destination", mode="after")
+    @classmethod
+    def strip_destination(cls, value: str) -> str:
+        return value.strip("/")
 
 
 class SetArchivedPayload(BaseModel):

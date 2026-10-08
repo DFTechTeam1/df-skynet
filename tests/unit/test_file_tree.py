@@ -91,14 +91,37 @@ class TestFormatFileTree:
         """A path with fewer than the `storage/DF-Engine/<project>` levels has nowhere to live."""
         assert files.format_file_tree([_upload("storage/DF-Engine/lonely.jpg")], [], 1, 3) == {}
 
-    def test_foreign_file_strips_actions_from_its_subfolder_only(self):
-        """A subfolder that directly holds another user's file loses all actions; the shared type root keeps its own."""
+    def test_foreign_file_does_not_lock_its_subfolder(self):
+        """Folders are open to everyone assigned to the task, so another user's file leaves the subfolder actionable
+        while the file itself stays owner-only."""
         tree = files.format_file_tree([_upload(f"{BASE}/upload/images/sub/a.jpg", user_id=2)], [], 1, 3)
         images = tree["children"][0]["children"][0]
         sub = images["children"][0]
-        assert sub["action"]["can_rename"] is False and sub["action"]["can_delete"] is False
+        assert sub["action"]["can_rename"] is True and sub["action"]["can_delete"] is True
         assert images["action"]["can_receive_move"] is True
         assert sub["files"][0]["action"]["can_delete"] is False
+
+    def test_folder_row_creates_empty_folder_with_creator_and_updater(self):
+        """A `type=folder` row shows as an empty folder node carrying who created and last changed it."""
+        creator = {"user_id": 1, "image": None, "nickname": "a"}
+        updater = {"user_id": 2, "image": None, "nickname": "b"}
+        row = {**_upload(f"{BASE}/upload/images/empty"), "type": "folder", "creator": creator, "updater": updater}
+        tree = files.format_file_tree([row], [], 3, 3)
+        folder = tree["children"][0]["children"][0]["children"][0]
+        assert folder["path"] == f"{BASE}/upload/images/empty" and folder["files"] == []
+        assert (folder["creator"], folder["updater"]) == (creator, updater)
+        assert folder["action"]["can_rename"] is True
+
+    def test_implicit_folder_has_no_creator_or_updater(self):
+        """Folders only inferred from file paths have no folder row, so no creator/updater."""
+        tree = files.format_file_tree([_upload(f"{BASE}/upload/images/sub/a.jpg")], [], 1, 3)
+        sub = tree["children"][0]["children"][0]["children"][0]
+        assert (sub["creator"], sub["updater"]) == (None, None)
+
+    def test_folder_scope(self):
+        """Scope is the (upload|generated, images|videos) pair after the project folder."""
+        assert files.folder_scope(f"{BASE}/upload/images/x/y") == ("upload", "images")
+        assert files.folder_scope(f"{BASE}/generated") == ("generated",)
 
     def test_own_file_keeps_subfolder_actions(self):
         """When every file under a subfolder is the caller's, the subfolder stays actionable."""

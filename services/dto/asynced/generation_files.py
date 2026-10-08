@@ -84,6 +84,10 @@ async def get_generation_main_files(
         DfEngineGenerations.task_id == task_id,
         DfEngineGenerations.status.in_([GenerationStatuses.success, GenerationStatuses.processing]),  # type: ignore
         DfEngineGenerations.kind.in_(["image", "image_edit", "video"]),  # type: ignore
+        or_(
+            DfEngineGenerations.results.any(DfEngineGenerationResults.is_main.is_(True)),  # type: ignore
+            ~DfEngineGenerations.results.any(),  # type: ignore
+        ),
     ]
     if search:
         term = f"%{search.strip()}%"

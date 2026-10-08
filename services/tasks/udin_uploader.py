@@ -184,7 +184,7 @@ def udin_uploader(
             for idx, b64_json in enumerate(images):
                 version = version_start + idx + 1
                 if version in uploaded_versions:
-                    continue  # already uploaded on a prior attempt of this task
+                    continue
 
                 try:
                     response = caller.udin_sync(
@@ -228,7 +228,7 @@ def udin_uploader(
                         size=uploaded.get("size", 0),
                         md5=uploaded.get("md5"),
                         version=version,
-                        is_main=idx == 0,
+                        is_main=idx == len(images) - 1,
                         parent_id=parent_id,
                         created_by=user_id,
                     )
@@ -252,11 +252,12 @@ def udin_uploader(
                     upload.needs_reconciliation = False
                     upload.reconciled_at = local_time()
                     db.query(DfEngineGenerationReconciliationIssues).filter(
-                        DfEngineGenerationReconciliationIssues.generation_id == generation_id,
+                        DfEngineGenerationReconciliationIssues.generation_id == generation_id,  # type: ignore
                         DfEngineGenerationReconciliationIssues.resolved_at.is_(None),  # type: ignore
                     ).update(
-                        {DfEngineGenerationReconciliationIssues.resolved_at: local_time()}, synchronize_session=False
-                    )  # type: ignore
+                        {DfEngineGenerationReconciliationIssues.resolved_at: local_time()},
+                        synchronize_session=False,  # type: ignore
+                    )
                 db.add(upload)
 
                 generation = db.get(DfEngineGenerations, generation_id)
