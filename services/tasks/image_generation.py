@@ -18,7 +18,7 @@ from services.tasks.udin_uploader import udin_uploader
 from utils.formatter import format_idr, format_usd
 
 
-OPENROUTER_IMAGE_TIMEOUT = Timeout(connect=10, read=60, write=30, pool=10)
+OPENROUTER_IMAGE_TIMEOUT = Timeout(connect=10, read=240, write=30, pool=10)
 
 
 @celery_app.task(
