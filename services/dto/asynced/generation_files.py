@@ -19,9 +19,15 @@ from services.mysql.model.df_engine_generations import GenerationKinds, Generati
 from log import logging
 from error import DataNotFoundError, DataValidationError
 from services.mysql import query
+from utils.formatter import format_user_employees
 from utils.serializer import serialize
 from services.dto import ConnectionContext
-from services.dto.format_response import GenerationResultRecord, GenerationReferenceRecord, UploadedReferenceRecord
+from services.dto.format_response import (
+    grant_generation_override,
+    GenerationResultRecord,
+    GenerationReferenceRecord,
+    UploadedReferenceRecord,
+)
 
 
 def _with_generation(result: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
@@ -51,6 +57,22 @@ def _build_references(generation: dict[str, Any]) -> list[dict[str, Any]]:
     return references
 
 
+def _grant(records: list[dict[str, Any]], can_override: bool, key: Optional[str] = None) -> list[dict[str, Any]]:
+    """Apply the override-role widening to records on their way out. Always called after the cache write/read, so the
+    cached copy stays viewer-neutral."""
+    if can_override:
+        for record in records:
+            grant_generation_override(record[key] if key else record)
+    return records
+
+
+def _grant_detail(detail: dict[str, Any], can_override: bool) -> dict[str, Any]:
+    if can_override:
+        grant_generation_override(detail)
+        _grant(detail.get("variants") or [], True)
+    return detail
+
+
 def _drop(data: dict[str, Any], *keys: str) -> dict[str, Any]:
     for key in keys:
         data.pop(key, None)
@@ -70,7 +92,12 @@ _MAIN_FILE_INTERNAL_KEYS = (
 
 
 async def get_generation_main_files(
-    ctx: ConnectionContext, user_id: int, task_id: int, owner_id: Optional[int] = None, search: Optional[str] = None
+    ctx: ConnectionContext,
+    user_id: int,
+    task_id: int,
+    owner_id: Optional[int] = None,
+    search: Optional[str] = None,
+    can_override: bool = False,
 ) -> list[dict[str, Any]]:
     generation_main_key = ctx.key.generation_files_main_list(task_id, owner_id, search)
     generation_main_files = await get_json(ctx.redis, generation_main_key)
@@ -78,7 +105,7 @@ async def get_generation_main_files(
         logging.info(
             f"user={user_id} listed user galleries source=cache task_id={task_id} owner_id={owner_id} search={search}"
         )
-        return generation_main_files
+        return _grant(generation_main_files, can_override)
 
     filters = [
         DfEngineGenerations.task_id == task_id,
@@ -114,6 +141,13 @@ async def get_generation_main_files(
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(
+                DfEngineGenerations.results.and_(DfEngineGenerationResults.is_main.is_(True))  # type: ignore
+            )
+            .selectinload(DfEngineGenerationResults.updated_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
             selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
             selectinload(DfEngineGenerations.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
@@ -130,12 +164,15 @@ async def get_generation_main_files(
         if results:
             for result in results:
                 generation_main_files.append(
-                    _drop(
-                        GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(
-                            mode="json"
+                    {
+                        **_drop(
+                            GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(
+                                mode="json"
+                            ),
+                            *_MAIN_FILE_INTERNAL_KEYS,
                         ),
-                        *_MAIN_FILE_INTERNAL_KEYS,
-                    )
+                        "updater": format_user_employees(result.get("updated_by_user")),  # shown in the file tree
+                    }
                 )
         else:
             generation_main_files.append(
@@ -147,15 +184,17 @@ async def get_generation_main_files(
         f"user={user_id} listed user galleries source=db task_id={task_id} owner_id={owner_id} search={search} "
         f"count={len(generation_main_files)}"
     )
-    return generation_main_files
+    return _grant(generation_main_files, can_override)
 
 
-async def get_archieved_files(ctx: ConnectionContext, project_id: int, user_id: int) -> list[dict[str, Any]]:
+async def get_archieved_files(
+    ctx: ConnectionContext, project_id: int, user_id: int, can_override: bool = False
+) -> list[dict[str, Any]]:
     archived_key = ctx.key.generation_files_archived_list(user_id, project_id)
     data = await get_json(ctx.redis, archived_key)
     if data:
         logging.info(f"user={user_id} listed archived generations source=cache project_id={project_id}")
-        return data
+        return _grant(data, can_override)
 
     generations = await query(
         ctx.db,
@@ -198,7 +237,7 @@ async def get_archieved_files(ctx: ConnectionContext, project_id: int, user_id: 
     logging.info(
         f"user={user_id} listed archived generations source=db project_id={project_id} count={len(archieved_files)}"
     )
-    return archieved_files
+    return _grant(archieved_files, can_override)
 
 
 async def get_enhance_prompt(ctx: ConnectionContext, enhance_uid: UUID) -> dict[str, Any]:
@@ -237,6 +276,7 @@ async def get_generation_files(
     user_id: Optional[int] = None,
     project_id: Optional[int] = None,
     file_uids: Optional[list[str]] = None,
+    can_override: bool = False,
 ) -> list[dict[str, Any]]:
     if not file_uids and not user_id and not project_id:
         return []
@@ -245,7 +285,7 @@ async def get_generation_files(
     data = await get_json(ctx.redis, user_generation_files_key)
     if data is not None:
         logging.info(f"user={user_id} listed generation files source=cache project_id={project_id}")
-        return data
+        return _grant(data, can_override)
 
     filters = [DfEngineGenerations.results.any()]  # type: ignore
     if project_id:
@@ -298,15 +338,17 @@ async def get_generation_files(
     logging.info(
         f"user={user_id} listed generation files source=db project_id={project_id} count={len(generation_files)}"
     )
-    return generation_files
+    return _grant(generation_files, can_override)
 
 
-async def get_favourited_files(ctx: ConnectionContext, project_id: int, user_id: int) -> list[dict[str, Any]]:
+async def get_favourited_files(
+    ctx: ConnectionContext, project_id: int, user_id: int, can_override: bool = False
+) -> list[dict[str, Any]]:
     favourited_key = ctx.key.generation_files_favourited_list(user_id, project_id)
     data = await get_json(ctx.redis, favourited_key)
     if data is not None:
         logging.info(f"user={user_id} listed favourited generations source=cache project_id={project_id}")
-        return data
+        return _grant(data, can_override)
 
     generations = await query(
         ctx.db,
@@ -349,7 +391,7 @@ async def get_favourited_files(ctx: ConnectionContext, project_id: int, user_id:
     logging.info(
         f"user={user_id} listed favourited generations source=db project_id={project_id} count={len(favourited_files)}"
     )
-    return favourited_files
+    return _grant(favourited_files, can_override)
 
 
 async def get_upload_references(
@@ -412,7 +454,11 @@ async def get_upload_references(
 
 
 async def get_generation_references(
-    ctx: ConnectionContext, user_id: int, project_id: Optional[int] = None, search: Optional[str] = None
+    ctx: ConnectionContext,
+    user_id: int,
+    project_id: Optional[int] = None,
+    search: Optional[str] = None,
+    can_override: bool = False,
 ) -> list[dict[str, Any]]:
     references_picker_key = ctx.key.generation_files_references_picker("generations", user_id, project_id, search)
     data = await get_json(ctx.redis, references_picker_key)
@@ -420,7 +466,7 @@ async def get_generation_references(
         logging.info(
             f"user={user_id} listed generation references source=cache project_id={project_id} search={search} count={len(data)}"
         )
-        return data
+        return _grant(data, can_override, "file")
 
     filters = [
         DfEngineGenerations.results.any(DfEngineGenerationResults.is_main.is_(True)),  # type: ignore
@@ -485,17 +531,17 @@ async def get_generation_references(
     logging.info(
         f"user={user_id} listed generation references source=db project_id={project_id} search={search} count={len(rows)}"
     )
-    return rows
+    return _grant(rows, can_override, "file")
 
 
 async def get_generation_main_file_detail(
-    ctx: ConnectionContext, file_uid: UUID, user_id: Optional[int] = None
+    ctx: ConnectionContext, file_uid: UUID, user_id: Optional[int] = None, can_override: bool = False
 ) -> dict[str, Any]:
     generated_main_file_detail_key = ctx.key.generation_files_main_detail(file_uid)
     generated_main_file_detail_cached = await get_json(ctx.redis, generated_main_file_detail_key)
     if generated_main_file_detail_cached is not None:
         logging.info(f"file_uid={file_uid} fetched generation main file detail source=cache")
-        return generated_main_file_detail_cached
+        return _grant_detail(generated_main_file_detail_cached, can_override)
 
     group_id = (
         select(func.coalesce(DfEngineGenerationResults.parent_id, DfEngineGenerationResults.id))
@@ -587,17 +633,17 @@ async def get_generation_main_file_detail(
         f"file_uid={file_uid} fetched generation main file detail source=db is_main={serialized['is_main']} "
         f"references={len(serialized['references'])}"
     )
-    return serialized
+    return _grant_detail(serialized, can_override)
 
 
 async def get_generation_main_variants(
-    ctx: ConnectionContext, file_uid: UUID, user_id: Optional[int] = None
+    ctx: ConnectionContext, file_uid: UUID, user_id: Optional[int] = None, can_override: bool = False
 ) -> list[dict[str, Any]]:
     generation_variants_key = ctx.key.generation_files_variants_detail(file_uid)
     generation_variants_cached = await get_json(ctx.redis, generation_variants_key)
     if generation_variants_cached is not None:
         logging.info(f"file_uid={file_uid} fetched generation variants source=cache")
-        return generation_variants_cached
+        return _grant(generation_variants_cached, can_override)
 
     group_id = (
         select(func.coalesce(DfEngineGenerationResults.parent_id, DfEngineGenerationResults.id))
@@ -671,4 +717,4 @@ async def get_generation_main_variants(
 
     await set_json(ctx.redis, generation_variants_key, variants)
     logging.info(f"file_uid={file_uid} fetched generation variants source=db count={len(variants)}")
-    return variants
+    return _grant(variants, can_override)

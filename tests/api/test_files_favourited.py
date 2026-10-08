@@ -94,6 +94,7 @@ async def test_favourited_entry_matches_generation_result_record_shape(
         "file_uid",
         "generation_uid",
         "name",
+        "type",
         "is_main",
         "path",
         "size",

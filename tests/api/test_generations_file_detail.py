@@ -119,10 +119,13 @@ async def test_unknown_file_is_404(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_file_owned_by_another_user_is_still_visible(authed_client, project_task, generation_fks, other_user_id):
+async def test_file_owned_by_another_user_is_still_visible(
+    authed_client, project_task, generation_fks, other_user_id, as_roles
+):
     """200 OK; the gallery is task-shared, so a file created by another member on the same task is
     still fetchable — visibility is task-scoped, not owner-scoped. `is_owner`-gated actions (e.g.
     `can_set_main`, `can_use_as_edit`) are what actually restrict what the viewer can do with it."""
+    as_roles(["staff"])
     generation = _make_generation(project_task, other_user_id, generation_fks)
     result = _make_result(generation, other_user_id, is_main=True, version=1)
 
@@ -132,6 +135,27 @@ async def test_file_owned_by_another_user_is_still_visible(authed_client, projec
     assert data["creator"]["user_id"] == int(other_user_id)
     assert data["action"]["can_set_main"] is False
     assert data["action"]["can_use_as_edit"] is False
+    assert data["action"]["can_rename"] is False
+
+
+@pytest.mark.asyncio
+async def test_override_role_can_manage_another_users_file_but_not_set_main(
+    authed_client, project_task, generation_fks, other_user_id, as_roles
+):
+    """200 OK; an override role gets rename/move/edit on someone else's file (detail and variants), while
+    set-main stays owner-only. The shared cache must not leak the widened actions to a plain viewer afterwards."""
+    generation = _make_generation(project_task, other_user_id, generation_fks)
+    result = _make_result(generation, other_user_id, is_main=True, version=1)
+
+    as_roles(["director"])
+    data = (await authed_client.call("GET", _url(result.uid))).json()["data"]
+    for action in (data["action"], data["variants"][0]["action"]):
+        assert (action["can_rename"], action["can_choose_to_move"], action["can_use_as_edit"]) == (True,) * 3
+        assert action["can_set_main"] is False
+
+    as_roles(["staff"])
+    data = (await authed_client.call("GET", _url(result.uid))).json()["data"]
+    assert data["action"]["can_rename"] is False and data["variants"][0]["action"]["can_use_as_edit"] is False
 
 
 @pytest.mark.asyncio

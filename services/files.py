@@ -4,14 +4,15 @@ from fastapi import status
 from httpx import Timeout, TimeoutException
 from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
-from error import BaseError, DataNotFoundError
+from error import BaseError, DataNotFoundError, DataValidationError
 from log import logging
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
+from config.variables import OVERRIDE_FILE_ROLES
 from services.api_caller import APICaller
 from services.dto import ConnectionContext
 from services.dto.asynced.admin_settings import get_admin_settings
 from services.dto.asynced.employees import get_employee
-from services.dto.asynced.projects import get_user_tasks
+from services.dto.asynced.projects import get_project_task, get_user_tasks
 from services.mysql import query
 from services.mysql.model import DfEngineGenerationResults, DfEngineUploadFiles
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
@@ -41,8 +42,16 @@ def folder_action(depth: int, depth_limit: int) -> FolderAction:
     )
 
 
+def has_override(roles: Optional[list[str]]) -> bool:
+    return bool(roles) and any(role in OVERRIDE_FILE_ROLES for role in roles or [])
+
+
 def format_file_tree(
-    uploaded_files: list[dict[str, Any]], generation_files: list[dict[str, Any]], user_id: int, depth_limit: int
+    uploaded_files: list[dict[str, Any]],
+    generation_files: list[dict[str, Any]],
+    user_id: int,
+    depth_limit: int,
+    can_override: bool = False,
 ) -> dict[str, Any]:
     """Nest uploaded files into project-folder trees by their storage `path`; only the uploader gets
     rename/delete/move on a file, while folders are open to everyone assigned to the task (their actions come from
@@ -86,13 +95,15 @@ def format_file_tree(
                 name=file["name"],
                 path=file["path"],
                 url=file["url"],
+                type="upload",
                 kind=file["type"],
                 icon=file["icon"],
                 color=file["color"],
                 size=file["size"],
                 created_at=file["created_at"],
                 creator=file["creator"],
-                action=FileAction(can_rename=is_owner, can_delete=is_owner, can_choose_to_move=is_owner),
+                updater=file.get("updater"),
+                action=FileAction.for_upload(is_owner, can_override),
             ),
         )
 
@@ -108,17 +119,67 @@ def format_file_tree(
                 name=file["name"],
                 path=path,
                 url=url,
+                type="generated",
                 kind=file.get("kind") or ("video" if "/videos/" in path else "image"),
                 icon=file["icon"],
                 color=file["color"],
                 size=file["size"],
                 created_at=file["created_at"],
                 creator=file["creator"],
+                updater=file.get("updater"),
                 action=GenerationAction.model_validate(file["action"]),
             ),
         )
 
     return next((folder.model_dump(mode="json") for folder in roots.values()), {})
+
+
+async def resolve_files(
+    ctx: ConnectionContext, source: str, file_uids: list[Any], user_id: int, roles: Optional[list[str]]
+) -> tuple[list[Any], dict[str, Any]]:
+    """Load `file_uids` from the table `source` names (`generated` -> results, `upload` -> upload files), and
+    require each be owned by the caller or the caller hold an `OVERRIDE_FILE_ROLES` role. Returns `(rows, project_task)`;
+    all files must share one task/song."""
+    uids = [str(uid) for uid in file_uids]
+    if source == "upload":
+        rows = await query(
+            ctx.db,
+            DfEngineUploadFiles,
+            filters=(
+                DfEngineUploadFiles.uid.in_(uids),  # type: ignore
+                DfEngineUploadFiles.type != UploadFileTypes.folder,  # type: ignore
+            ),
+        )
+    else:
+        rows = await query(
+            ctx.db,
+            DfEngineGenerationResults,
+            options=(selectinload(DfEngineGenerationResults.generation),),  # type: ignore
+            filters=(DfEngineGenerationResults.uid.in_(uids),),  # type: ignore
+        )
+    found = {row.uid: row for row in rows}
+    errors = {f"file_uids.{i}": ["file_not_found"] for i, uid in enumerate(uids) if uid not in found}
+    if errors:
+        raise DataNotFoundError(message="file_not_found", error=errors)
+
+    can_override = has_override(roles)
+    errors = {
+        f"file_uids.{i}": ["file_action_not_permitted"]
+        for i, uid in enumerate(uids)
+        if not can_override and found[uid].created_by != user_id
+    }
+    if errors:
+        raise DataValidationError(message="file_action_not_permitted", error=errors)
+
+    scopes = {
+        (row.task_id, row.song_id) if source == "upload" else (row.generation.task_id, row.generation.song_id)
+        for row in found.values()
+    }
+    if len(scopes) != 1:
+        raise DataValidationError(message="file_not_found", error={"file_uids": ["file_not_found"]})
+    task_id, song_id = scopes.pop()
+    project_task = await get_project_task(ctx, task_id=task_id, song_id=song_id)
+    return [found[uid] for uid in uids], project_task
 
 
 async def get_folder_depth_limit(ctx: ConnectionContext) -> int:
@@ -294,7 +355,11 @@ async def apply_folder_changes(
 
 
 async def build_file_tree(
-    ctx: ConnectionContext, project_task: dict[str, Any], user_id: int, my_task: bool = False
+    ctx: ConnectionContext,
+    project_task: dict[str, Any],
+    user_id: int,
+    my_task: bool = False,
+    roles: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """The `GET /files/{task_uid}` payload. Each source is cached by its own getter (uploads, generations,
     admin settings), so after an invalidation this repopulates only what was cleared."""
@@ -305,8 +370,8 @@ async def build_file_tree(
         song_id=project_task["id"] if is_song else None,
         user_id=user_id if my_task else None,
     )
-    generated = await get_generation_main_files(ctx, user_id, project_task["id"], user_id, None)
-    tree = format_file_tree(uploaded, generated, user_id, await get_folder_depth_limit(ctx))
+    generated = await get_generation_main_files(ctx, user_id, project_task["id"], user_id, None, has_override(roles))
+    tree = format_file_tree(uploaded, generated, user_id, await get_folder_depth_limit(ctx), has_override(roles))
     logging.info(
         f"[file-tree] user={user_id} {'song_id' if is_song else 'task_id'}={project_task['id']} "
         f"uploaded={len(uploaded)} generated={len(generated)} root={tree.get('path')}"

@@ -566,3 +566,15 @@ def mock_model_sync(monkeypatch):
     _FakeModelSyncCaller.responses = {}
     monkeypatch.setattr("apps.controller.model_management.APICaller", _FakeModelSyncCaller)
     return SimpleNamespace(set=lambda path, items: _FakeModelSyncCaller.responses.__setitem__(path, items))
+
+
+@pytest.fixture
+def as_roles(app, user_id):
+    """`as_roles([...])` makes the authenticated user carry exactly those JWT roles for the rest of the test."""
+    from apps.dependency.auth import get_user
+
+    def _set(roles: list[str]) -> None:
+        app.dependency_overrides[get_user] = lambda: {"user_id": user_id, "roles": roles, "permissions": []}
+
+    yield _set
+    app.dependency_overrides.pop(get_user, None)

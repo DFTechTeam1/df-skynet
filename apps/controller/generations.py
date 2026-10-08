@@ -44,6 +44,7 @@ from services.dto.asynced.api_keys import get_employee_api_key, validate_api_key
 from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting, get_model, get_menu
 from log import logging
 from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
+from services.files import has_override
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from services.generations import global_reference_sections, reference_sections
 from services.model_management import ModelManagement
@@ -187,7 +188,9 @@ class GenerationsController(CoreDependencies):
             project_id = project["id"]
 
             upload_rows = await get_upload_references(ctx, user_id, project_id=project_id, search=search)
-            generation_rows = await get_generation_references(ctx, user_id, project_id=project_id, search=search)
+            generation_rows = await get_generation_references(
+                ctx, user_id, project_id=project_id, search=search, can_override=has_override(self.user["roles"])
+            )
 
             response.data = reference_sections(upload_rows, generation_rows)
             section_counts = {section["type"]: section["total_data"] for section in response.data}
@@ -223,7 +226,9 @@ class GenerationsController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
             upload_rows = await get_upload_references(ctx, user_id, search=search)
-            generation_rows = await get_generation_references(ctx, user_id, search=search)
+            generation_rows = await get_generation_references(
+                ctx, user_id, search=search, can_override=has_override(self.user["roles"])
+            )
 
             response.data = global_reference_sections(upload_rows, generation_rows)
             section_counts = {section["type"]: section["total_data"] for section in response.data}
@@ -361,7 +366,11 @@ class GenerationsController(CoreDependencies):
         PROJECT_STATUS_ONGOING = 1
 
         try:
-            generated_files = await get_generation_files(ctx, user_id=user_id, file_uids=[str(file_uid)])
+            generated_files = await get_generation_files(
+                ctx, user_id=None if has_override(self.user["roles"]) else user_id, file_uids=[str(file_uid)]
+            )
+            if not generated_files:
+                raise DataNotFoundError(message="file_not_found", error={"file_uid": ["file_not_found"]})
             source_file = generated_files[0]
             edit_parent_id = source_file["parent_id"] or source_file["id"]
             prior = serialize(
@@ -1023,7 +1032,9 @@ class GenerationsController(CoreDependencies):
         owner_id = user_id if my_task else None
         try:
             task = await get_project_task(ctx, task_uid)
-            response.data = await get_generation_main_files(ctx, user_id, task["id"], owner_id, search)
+            response.data = await get_generation_main_files(
+                ctx, user_id, task["id"], owner_id, search, has_override(self.user["roles"])
+            )
             logging.info(
                 f"user={user_id} fetched user galleries task_uid={task_uid} owner_id={owner_id} "
                 f"search={search} count={len(response.data)}"
@@ -1050,13 +1061,15 @@ class GenerationsController(CoreDependencies):
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            variants = await get_generation_main_variants(ctx, file_uid, user_id)
+            variants = await get_generation_main_variants(ctx, file_uid, user_id, has_override(self.user["roles"]))
             target = next((variant for variant in variants if variant["file_uid"] == str(file_uid)), None)
             if not target:
                 raise DataNotFoundError(message="main_generation_file_not_found")
 
             if target["is_main"]:
-                response.data = await get_generation_main_file_detail(ctx, file_uid, user_id)
+                response.data = await get_generation_main_file_detail(
+                    ctx, file_uid, user_id, has_override(self.user["roles"])
+                )
             else:
                 generation_variant_key = cache_key.generation_files_variant_detail(file_uid)
                 generation_variant_cached = await get_json(ctx.redis, generation_variant_key)

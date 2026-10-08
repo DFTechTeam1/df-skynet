@@ -13,7 +13,15 @@ from error import BaseError, ServiceError
 from services.dto import ConnectionContext
 from log import logging
 from middlewares.lang import current_lang, resolve_message
-from schemas.payload.files import FolderPayload, MoveFoldersPayload, SetArchivedPayload, SetFavoritedPayload
+from schemas.payload.files import (
+    DeleteFilesPayload,
+    FolderPayload,
+    MoveFilesPayload,
+    MoveFoldersPayload,
+    RenameFilePayload,
+    SetArchivedPayload,
+    SetFavoritedPayload,
+)
 from sqlalchemy import update
 from schemas.response import Response
 from services.api_caller import APICaller
@@ -30,6 +38,8 @@ from services.files import (
     find_folder,
     folder_scope,
     get_folder_depth_limit,
+    has_override,
+    resolve_files,
 )
 from services.dto.asynced.projects import get_project, get_project_task
 from services.dto.asynced.files import get_user_uploaded_file
@@ -69,7 +79,9 @@ class FilesController(CoreDependencies):
                 f"[get-archived-files] user={user_id} task_uid={task_uid} resolved project_id={project_task['project_id']}"
             )
 
-            archieved_files = await get_archieved_files(ctx, project_task["project_id"], user_id)
+            archieved_files = await get_archieved_files(
+                ctx, project_task["project_id"], user_id, has_override(self.user["roles"])
+            )
             logging.info(
                 f"[get-archived-files] user={user_id} task_uid={task_uid} fetched {len(archieved_files)} archived files"
             )
@@ -103,7 +115,9 @@ class FilesController(CoreDependencies):
                 f"[get-favourited-files] user={user_id} task_uid={task_uid} resolved project_id={project_task['project_id']}"
             )
 
-            favourited_files = await get_favourited_files(ctx, project_task["project_id"], user_id)
+            favourited_files = await get_favourited_files(
+                ctx, project_task["project_id"], user_id, has_override(self.user["roles"])
+            )
             logging.info(
                 f"[get-favourited-files] user={user_id} task_uid={task_uid} fetched {len(favourited_files)} favourited files"
             )
@@ -437,7 +451,9 @@ class FilesController(CoreDependencies):
             await self.redis.delete(cache_key.generation_files_archived_list(user_id, generation.project_id))
             await self.redis.delete(cache_key.generation_files_favourited_list(user_id, generation.project_id))
 
-            response.data = await get_generation_main_file_detail(ctx, file_uid, user_id)
+            response.data = await get_generation_main_file_detail(
+                ctx, file_uid, user_id, has_override(self.user["roles"])
+            )
             response.message = resolve_message("main_generation_set", current_lang.get())
             logging.info(
                 f"[set-main-generation] user={user_id} file_uid={file_uid} task_id={generation.task_id} "
@@ -475,7 +491,9 @@ class FilesController(CoreDependencies):
             project_task = await get_project_task(ctx, task_uid)
             project_uid = project_task["project"]["uid"]
             is_song = project_task["is_song"]
-            if path and not find_folder(await build_file_tree(ctx, project_task, user_id), path):
+            if path and not find_folder(
+                await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), path
+            ):
                 raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
             logging.info(
                 f"[upload-files] user={user_id} task_uid={task_uid} start is_song={is_song} "
@@ -554,7 +572,7 @@ class FilesController(CoreDependencies):
                 f"[upload-files] user={user_id} task_uid={task_uid} saved={len(uploaded)} rows, cache invalidated"
             )
 
-            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
             response.message = "Files successfully uploaded."
             logging.info(f"[upload-files] user={user_id} task_uid={task_uid} done uploaded={len(uploaded)}")
         except BaseError as e:
@@ -585,7 +603,7 @@ class FilesController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
             project_task = await get_project_task(ctx, task_uid)
-            response.data = await build_file_tree(ctx, project_task, user_id, my_task)
+            response.data = await build_file_tree(ctx, project_task, user_id, my_task, self.user["roles"])
             logging.info(
                 f"[get-files] user={user_id} task_uid={task_uid} my_task={my_task} root={response.data.get('path')}"
             )
@@ -621,7 +639,7 @@ class FilesController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
             project_task = await get_project_task(ctx, task_uid)
-            file_tree = await build_file_tree(ctx, project_task, user_id, my_task)
+            file_tree = await build_file_tree(ctx, project_task, user_id, my_task, self.user["roles"])
             folder_details = find_folder(file_tree, path.strip("/"))
             if not folder_details:
                 logging.warning(
@@ -671,7 +689,7 @@ class FilesController(CoreDependencies):
                 size=file["size"],
                 created_at=file["created_at"],
                 creator=file["creator"],
-                action=FileAction(can_rename=is_owner, can_delete=is_owner, can_choose_to_move=is_owner),
+                action=FileAction.for_upload(is_owner, has_override(self.user["roles"])),
             ).model_dump(mode="json")
             logging.info(f"[get-file] user={user_id} file_uid={file_uid} owner={is_owner}")
         except BaseError as e:
@@ -708,7 +726,9 @@ class FilesController(CoreDependencies):
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
-            parent = find_folder(await build_file_tree(ctx, project_task, user_id), schema.path)
+            parent = find_folder(
+                await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), schema.path
+            )
             if not parent:
                 raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
             if not parent["action"]["can_create_subfolder"]:
@@ -743,7 +763,7 @@ class FilesController(CoreDependencies):
             )
             await apply_folder_changes(ctx, project_task, user_id)
 
-            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
             response.message = resolve_message("folder_created", current_lang.get())
             logging.info(f"[create-folder] user={user_id} task_uid={task_uid} created={created['path']!r}")
         except BaseError as e:
@@ -782,7 +802,9 @@ class FilesController(CoreDependencies):
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
-            folder = find_folder(await build_file_tree(ctx, project_task, user_id), schema.path)
+            folder = find_folder(
+                await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), schema.path
+            )
             if not folder:
                 raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
             if not folder["action"]["can_rename"]:
@@ -802,7 +824,7 @@ class FilesController(CoreDependencies):
             new_path = f"{schema.path.rpartition('/')[0]}/{schema.name}"
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [], moves=[(schema.path, new_path)])
 
-            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
             response.message = resolve_message("folder_renamed", current_lang.get())
             logging.info(
                 f"[rename-folder] user={user_id} task_uid={task_uid} {schema.path!r} -> {new_path!r} files={len(pairs or [])}"
@@ -849,7 +871,7 @@ class FilesController(CoreDependencies):
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
-            folder = find_folder(await build_file_tree(ctx, project_task, user_id), path)
+            folder = find_folder(await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), path)
             if not folder:
                 raise DataNotFoundError(message="folder_not_found")
             if not folder["action"]["can_delete"]:
@@ -868,7 +890,7 @@ class FilesController(CoreDependencies):
             )
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [], deleted=[path])
 
-            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
             response.message = resolve_message("folder_deleted", current_lang.get())
             logging.info(
                 f"[delete-folder] user={user_id} task_uid={task_uid} path={path!r} promoted={len(pairs or [])}"
@@ -909,7 +931,7 @@ class FilesController(CoreDependencies):
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
-            tree = await build_file_tree(ctx, project_task, user_id)
+            tree = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
             destination = find_folder(tree, schema.destination)
             errors: dict[str, list[str]] = {}
             if not destination:
@@ -968,7 +990,7 @@ class FilesController(CoreDependencies):
                 moves=[(source, f"{schema.destination}/{source.rsplit('/', 1)[-1]}") for source in sources],
             )
 
-            response.data = await build_file_tree(ctx, project_task, user_id)
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
             response.message = resolve_message("folders_moved", current_lang.get())
             logging.info(
                 f"[move-folders] user={user_id} task_uid={task_uid} moved={len(sources)} "
@@ -987,73 +1009,156 @@ class FilesController(CoreDependencies):
     @controller.patch(
         "/files/{source}/{file_uid}",
         summary="Rename file.",
-        description="Rename generated or uploaded file. Returns the refreshed file tree. <change into propper description>",
+        description="Rename a generated or uploaded file (the extension is always kept). Only the creator or a user with an override role can do this. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_source_and_file_uid_to_rename_file(
-        self, source: Literal["generated", "upload"] = Path(), file_uid: UUID = Path()
+    # Named to sort after the `files_with_task_uid_*` handlers: routes register alphabetically and this two-segment
+    # path would otherwise shadow `PATCH /files/{task_uid}/archieve|favorite|folders`.
+    async def files_with_upload_or_generated_source_and_file_uid_to_rename_file(
+        self,
+        schema: RenameFilePayload,
+        source: Literal["generated", "upload"] = Path(..., description="Where the file lives."),
+        file_uid: UUID = Path(..., description="File UID."),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            pass
+            rows, project_task = await resolve_files(ctx, source, [file_uid], user_id, self.user["roles"])
+            project = await get_project(ctx, project_id=project_task["project_id"])
+            pairs = await call_udin_folder(
+                "PATCH",
+                "rename-file",
+                project["uid"],
+                user_id,
+                {"filepath": rows[0].path, "name": schema.name},
+                "file_rename_failed",
+                "rename-file",
+            )
+            await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [])
+
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.message = resolve_message("file_renamed", current_lang.get())
+            logging.info(f"[rename-file] user={user_id} source={source} file_uid={file_uid} name={schema.name!r}")
         except BaseError as e:
-            # logging.warning(
-            #     f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
-            # )
+            logging.warning(f"[rename-file] user={user_id} file_uid={file_uid} rejected ({e.status_code}): {e.message}")
             raise
         except Exception:
-            # logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[rename-file] user={user_id} file_uid={file_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.patch(
         "/files/{source}",
         summary="Move files.",
-        description="Move uploaded files or generated files. Returns the refreshed file tree. <change into propper description>",
+        description="Move generated or uploaded files into `destination`. Files can only go to a folder of the same storage (upload or generated) and type (images or videos). Only the creator or a user with an override role can do this. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_source_to_move_files(self, source: Literal["generated", "upload"] = Path()) -> Response:
+    async def files_with_source_to_move_files(
+        self,
+        schema: MoveFilesPayload,
+        source: Literal["generated", "upload"] = Path(..., description="Where the files live."),
+    ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            pass
+            rows, project_task = await resolve_files(ctx, source, schema.file_uids, user_id, self.user["roles"])
+            project = await get_project(ctx, project_id=project_task["project_id"])
+
+            tree = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            destination = find_folder(tree, schema.destination)
+            errors: dict[str, list[str]] = {}
+            if not destination:
+                errors["destination"] = ["folder_not_found"]
+            elif not destination["action"]["can_receive_move"]:
+                key = (
+                    "folder_depth_exceeded"
+                    if len(folder_scope(schema.destination)) == 2
+                    else "invalid_folder_move_scope"
+                )
+                errors["destination"] = [key]
+            for idx, row in enumerate(rows):
+                parent = row.path.rpartition("/")[0]
+                if source == "generated" and row.archieved_at is not None:
+                    errors[f"file_uids.{idx}"] = ["file_move_not_permitted"]
+                elif folder_scope(row.path) != folder_scope(schema.destination):
+                    errors[f"file_uids.{idx}"] = ["invalid_folder_move_scope"]
+                elif parent == schema.destination:
+                    errors[f"file_uids.{idx}"] = ["invalid_folder_move_scope"]
+            if errors:
+                logging.warning(f"[move-files] user={user_id} source={source} invalid={errors}")
+                raise (
+                    DataNotFoundError(message="folder_not_found", error=errors)
+                    if "destination" in errors and errors["destination"] == ["folder_not_found"]
+                    else DataValidationError(message=next(iter(errors.values()))[0], error=errors)
+                )
+
+            pairs = await call_udin_folder(
+                "PATCH",
+                "move-files",
+                project["uid"],
+                user_id,
+                {"sources": [row.path for row in rows], "destination": schema.destination},
+                "files_move_failed",
+                "move-files",
+            )
+            await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [])
+
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.message = resolve_message("files_moved", current_lang.get())
+            logging.info(
+                f"[move-files] user={user_id} source={source} moved={len(rows)} destination={schema.destination!r}"
+            )
         except BaseError as e:
-            # logging.warning(
-            #     f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
-            # )
+            logging.warning(f"[move-files] user={user_id} source={source} rejected ({e.status_code}): {e.message}")
             raise
         except Exception:
-            # logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[move-files] user={user_id} source={source} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.delete(
-        "/files/{source}",
-        summary="Delete files.",
-        description="Delete uploaded files or generated files. Returns the refreshed file tree. <change into propper description>",
+        "/files/upload",
+        summary="Delete uploaded files.",
+        description="Permanently delete uploaded files. Generated files cannot be deleted. Only the creator or a user with an override role can do this. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_source_to_delete_files(self, source: Literal["generated", "upload"] = Path()) -> Response:
+    async def files_to_delete_uploaded_files(self, schema: DeleteFilesPayload) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            pass
+            rows, project_task = await resolve_files(ctx, "upload", schema.file_uids, user_id, self.user["roles"])
+            project = await get_project(ctx, project_id=project_task["project_id"])
+
+            await call_udin_folder(
+                "DELETE",
+                "delete-files",
+                project["uid"],
+                user_id,
+                {"sources": [row.path for row in rows]},
+                "files_delete_failed",
+                "delete-files",
+            )
+            for row in rows:
+                await ctx.redis.delete(cache_key.user_file_detail(row.uid))  # type: ignore
+                await self.db.delete(row)
+            await apply_folder_changes(ctx, project_task, user_id)
+
+            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.message = resolve_message("files_deleted", current_lang.get())
+            logging.info(f"[delete-files] user={user_id} deleted={len(rows)}")
         except BaseError as e:
-            # logging.warning(
-            #     f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
-            # )
+            logging.warning(f"[delete-files] user={user_id} rejected ({e.status_code}): {e.message}")
             raise
         except Exception:
-            # logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[delete-files] user={user_id} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response

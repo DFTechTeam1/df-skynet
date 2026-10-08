@@ -438,3 +438,58 @@ async def test_requires_auth(client, source_root):
         "POST", _url(source_root.uid), json={"prompt": "x", "parameter": {}}, raise_for_status=False
     )
     assert resp.status_code == 401
+
+
+@pytest_asyncio.fixture
+async def foreign_source(project_task, other_user_id, image_model, generation_menu_feature):
+    """A generated image owned by someone else."""
+    menu, feature = generation_menu_feature
+    generation = DfEngineGenerationsFactory.create(
+        project_id=project_task.project_id,
+        task_id=project_task.id,
+        created_by=other_user_id,
+        sourceable_id=1,
+        model_id=image_model.id,
+        menu_id=menu.id,
+        feature_id=feature.id,
+    )
+    return DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=other_user_id, is_main=True)
+
+
+@pytest.mark.asyncio
+async def test_editing_someone_elses_file_without_override_role_is_404(
+    authed_client, foreign_source, generation_menu_feature, image_model, as_roles, fake_generation_backends
+):
+    """404 file_not_found; a plain user cannot edit another user's file and nothing is dispatched."""
+    as_roles(["staff"])
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST", _url(foreign_source.uid), json=_payload(menu, feature, image_model), raise_for_status=False
+    )
+    assert resp.status_code == 404
+    assert fake_generation_backends == []
+
+
+@pytest.mark.asyncio
+async def test_editing_someone_elses_file_with_override_role_belongs_to_the_editor(
+    authed_client,
+    foreign_source,
+    generation_menu_feature,
+    image_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    as_roles,
+    user_id,
+    db_session,
+):
+    """200 OK; an override role can edit another user's file, the new version is created by the editor and chains to the original."""
+    as_roles(["director"])
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call("POST", _url(foreign_source.uid), json=_payload(menu, feature, image_model))
+    assert resp.status_code == 200, resp.text
+    assert len(fake_generation_backends) == 1
+    body = resp.json()["data"]
+    assert body["parent_id"] == foreign_source.id and body["kind"] == "image_edit"
+    assert body["creator"]["user_id"] == int(user_id)
