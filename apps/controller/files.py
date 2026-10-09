@@ -172,9 +172,11 @@ class FilesController(CoreDependencies):
                     f"[set-archive-files] user={user_id} task_uid={task_uid} loaded {len(archivable_files)} archivable files"
                 )
             else:
-                archieved_files = await get_generation_files(ctx, scope_user, task_id, song_id)
-                if can_override:
-                    archieved_files = [record for record in archieved_files if record["archieved_at"] is not None]
+                archieved_files = [
+                    record
+                    for record in await get_generation_files(ctx, scope_user, task_id, song_id)
+                    if record["archieved_at"] is not None
+                ]
                 validated_file_uids = {record["file_uid"] for record in archieved_files}
                 logging.info(
                     f"[set-archive-files] user={user_id} task_uid={task_uid} loaded {len(archieved_files)} archived files"
@@ -272,7 +274,12 @@ class FilesController(CoreDependencies):
                     if record["file_uid"] in requested_file_uids
                 ]
                 archieved_files = sorted(
-                    newly_archived + await get_archieved_files(ctx, task_id, song_id, user_id),
+                    list(
+                        {
+                            r["file_uid"]: r
+                            for r in await get_archieved_files(ctx, task_id, song_id, user_id) + newly_archived
+                        }.values()
+                    ),
                     key=lambda record: record["flag_archieved_at"],
                     reverse=True,
                 )
@@ -398,21 +405,33 @@ class FilesController(CoreDependencies):
                 row.updated_by = user_id
                 self.db.add(row)
             await self.db.flush()
-            # /user-galleries/{task_uid} and the file detail caches embed favourited_at: drop them
-            task_ids = {project_task["id"]}
-            if generation_ids := {row.generation_id for row in rows if row.generation_id}:
+
+            groups = {row.parent_id or row.id for row in rows}
+            family = await query(
+                self.db,
+                DfEngineGenerationResults,
+                filters=(
+                    or_(
+                        DfEngineGenerationResults.id.in_(groups),  # type: ignore
+                        DfEngineGenerationResults.parent_id.in_(groups),  # type: ignore
+                    ),
+                ),
+            )
+            for member in family:
+                await self.redis.delete(cache_key.generation_files_main_detail(member.uid))  # type: ignore
+                await self.redis.delete(cache_key.generation_files_variant_detail(member.uid))  # type: ignore
+                await self.redis.delete(cache_key.generation_files_variants_detail(member.uid))  # type: ignore
+            generation_ids = {member.generation_id for member in family if member.generation_id}
+            affected_tasks = {project_task["id"]}
+            if generation_ids:
                 generations = await query(
                     self.db,
                     DfEngineGenerations,
                     filters=(DfEngineGenerations.id.in_(generation_ids),),  # type: ignore
                 )
-                task_ids |= {g.task_id for g in generations if g.task_id}
-            for task_id in task_ids:
-                await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(task_id))
-            for row in rows:
-                await self.redis.delete(cache_key.generation_files_main_detail(row.uid))  # type: ignore
-                await self.redis.delete(cache_key.generation_files_variant_detail(row.uid))  # type: ignore
-                await self.redis.delete(cache_key.generation_files_variants_detail(row.uid))  # type: ignore
+                affected_tasks |= {g.task_id for g in generations if g.task_id}
+            for affected in affected_tasks:
+                await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(affected))
             logging.info(
                 f"[set-favourite-files] user={user_id} task_uid={task_uid} "
                 f"updated {len(rows)} rows file_uids={requested_file_uids} is_favorited={schema.is_favorited}"
@@ -455,13 +474,17 @@ class FilesController(CoreDependencies):
                     if record["file_uid"] in requested_file_uids
                 ]
                 favourited_files = sorted(
-                    newly_favourited + await get_favourited_files(ctx, task_id, song_id, user_id),
+                    list(
+                        {
+                            r["file_uid"]: r
+                            for r in await get_favourited_files(ctx, task_id, song_id, user_id) + newly_favourited
+                        }.values()
+                    ),
                     key=lambda record: record["flag_favourited_at"],
                     reverse=True,
                 )
 
             if can_override:
-                # cached lists are per viewer and the response mixes owners: clear them instead of patching
                 await invalidate_generation_lists(ctx, {user_id, *(row.created_by for row in rows), *previous_updaters})
                 favourited_files = await get_favourited_files(ctx, task_id, song_id, user_id, True)
             else:
