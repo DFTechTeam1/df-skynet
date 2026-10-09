@@ -504,11 +504,9 @@ class APIKeyManagementController(CoreDependencies):
                 )
             )
 
-            if revoked_cleanly:
-                # Archive only when OpenRouter confirmed the revoke. A stale/invalid
-                # hash (revoke failed) means there's nothing live to snapshot — just
-                # drop the row.
-                await ApiKeyManagement().archive(self.db, record)
+            # Always archive, even if the revoke failed (stale/invalid hash): generations point at this key and must be
+            # repointed to the snapshot before the row goes.
+            await ApiKeyManagement().archive(self.db, record)
 
             await self.db.delete(record)
             await self.db.flush()
