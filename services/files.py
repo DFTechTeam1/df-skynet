@@ -269,13 +269,17 @@ async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, us
     await ctx.db.flush()
 
 
-async def invalidate_generation_lists(ctx: ConnectionContext, project_id: int, user_ids: Any) -> None:
-    """Drop every user's cached result/archived/favourited lists of a project. The lists are keyed per viewer, so a
-    change made by an override user must also clear the file owners' (and a previous updater's) lists."""
+def task_scope(project_task: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
+    """`(task_id, song_id)` of a resolved project task or song: exactly one is set."""
+    return (None, project_task["id"]) if project_task["is_song"] else (project_task["id"], None)
+
+
+async def invalidate_generation_lists(ctx: ConnectionContext, user_ids: Any) -> None:
+    """Drop the cached result/archived/favourited lists of these viewers (all tasks). The lists are keyed per viewer, so
+    a change made by an override user must also clear the file owners' (and a previous updater's) lists."""
     for uid in {uid for uid in user_ids if uid is not None}:
-        await ctx.redis.delete(ctx.key.generation_files_result_list(uid, project_id))  # type: ignore
-        await ctx.redis.delete(ctx.key.generation_files_archived_list(uid, project_id))  # type: ignore
-        await ctx.redis.delete(ctx.key.generation_files_favourited_list(uid, project_id))  # type: ignore
+        for pattern in ctx.key.generation_files_user_lists_patterns(uid):
+            await delete_pattern(ctx.redis, pattern)
 
 
 async def apply_folder_changes(
@@ -377,12 +381,8 @@ async def apply_folder_changes(
             await ctx.redis.delete(ctx.key.generation_files_variant_detail(uid))  # type: ignore
             await ctx.redis.delete(ctx.key.generation_files_variants_detail(uid))  # type: ignore
         for uid in creators:
-            for key in (
-                ctx.key.generation_files_result_list(uid, project_task["project_id"]),
-                ctx.key.generation_files_archived_list(uid, project_task["project_id"]),  # type: ignore
-                ctx.key.generation_files_favourited_list(uid, project_task["project_id"]),  # type: ignore
-            ):
-                await ctx.redis.delete(key)  # type: ignore
+            for pattern in ctx.key.generation_files_user_lists_patterns(uid):
+                await delete_pattern(ctx.redis, pattern)
             await delete_pattern(ctx.redis, ctx.key.generation_file_detail_pattern(uid))  # type: ignore
     logging.info(
         f"[folder-changes] user={user_id} project_id={project_task['project_id']} pairs={len(pairs)} "
@@ -406,15 +406,8 @@ async def build_file_tree(
         song_id=project_task["id"] if is_song else None,
         user_id=user_id if my_task else None,
     )
-    generated = await get_generation_main_files(
-        ctx,
-        user_id,
-        project_task["id"],
-        my_task,
-        None,
-        has_override(roles),
-        project_id=project_task["project_id"],
-    )
+    task_id, song_id = task_scope(project_task)
+    generated = await get_generation_main_files(ctx, user_id, task_id, my_task, None, has_override(roles), song_id)
     tree = format_file_tree(uploaded, generated, user_id, await get_folder_depth_limit(ctx), has_override(roles))
     logging.info(
         f"[file-tree] user={user_id} {'song_id' if is_song else 'task_id'}={project_task['id']} "

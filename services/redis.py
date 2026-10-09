@@ -363,29 +363,39 @@ class CacheKeys:
 
     # --- generation_files ---
     def generation_files_main_list(
-        self, task_id: int, user_id: Optional[int] = None, search: Optional[str] = None
+        self, task_id: Optional[int], user_id: Optional[int] = None, search: Optional[str] = None, song_id=None
     ) -> str:
+        # the scope id (task or song) stays first so `generation_files_main_list_pattern(<id>)` clears both kinds
         return (
-            f"generation_files:main:task_id={task_id}:user_id={user_id}"
-            f":search={(search or '').strip().lower() or 'all'}"
+            f"generation_files:main:task_id={task_id if song_id is None else song_id}:is_song={song_id is not None}"
+            f":user_id={user_id}:search={(search or '').strip().lower() or 'all'}"
         )
 
-    def generation_files_main_list_pattern(self, task_id: int) -> str:
+    def generation_files_main_list_pattern(self, task_id: Optional[int]) -> str:
         return f"generation_files:main:task_id={task_id}:*"
 
-    def generation_files_archived_list(self, user_id: int, project_id: int) -> str:
-        return f"generation_files:archived:user_id={user_id}:project_id={project_id}"
+    def generation_files_archived_list(
+        self, user_id: int, task_id: Optional[int] = None, song_id: Optional[int] = None
+    ) -> str:
+        return f"generation_files:archived:user_id={user_id}:task_id={task_id}:song_id={song_id}"
 
-    def generation_files_favourited_list(self, user_id: int, project_id: int) -> str:
-        return f"generation_files:favourited:user_id={user_id}:project_id={project_id}"
+    def generation_files_favourited_list(
+        self, user_id: int, task_id: Optional[int] = None, song_id: Optional[int] = None
+    ) -> str:
+        return f"generation_files:favourited:user_id={user_id}:task_id={task_id}:song_id={song_id}"
 
     def generation_files_result_list(
         self,
         user_id: Optional[int] = None,
-        project_id: Optional[int] = None,
+        task_id: Optional[int] = None,
+        song_id: Optional[int] = None,
         file_uids: Optional[list[str]] = None,
     ) -> str:
-        return f"generation_files:results:user_id={user_id}:project_id={project_id}:file_uids={file_uids}"
+        return f"generation_files:results:user_id={user_id}:task_id={task_id}:song_id={song_id}:file_uids={file_uids}"
+
+    def generation_files_user_lists_patterns(self, user_id: int) -> list[str]:
+        """Every task's result/archived/favourited lists of one viewer."""
+        return [f"generation_files:{kind}:user_id={user_id}:*" for kind in ("results", "archived", "favourited")]
 
     def generation_files_references_picker(
         self,

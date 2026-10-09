@@ -30,6 +30,11 @@ from services.dto.format_response import (
 )
 
 
+def _scope(task_id: Optional[int], song_id: Optional[int]) -> Any:
+    """Generations belong to a project task (`task_id`) or a song (`song_id`), never both."""
+    return DfEngineGenerations.song_id == song_id if song_id is not None else DfEngineGenerations.task_id == task_id
+
+
 def _with_generation(result: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     return {
         **result,
@@ -98,12 +103,11 @@ async def get_generation_main_files(
     my_task: bool = False,
     search: Optional[str] = None,
     can_override: bool = False,
-    project_id: Optional[int] = None,
+    song_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    """Main files of one task, or of the whole project when `project_id` is given. Project-wide lists skip the cache:
-    it is keyed and invalidated per task, so another task's generation would leave it stale."""
-    generation_main_key = ctx.key.generation_files_main_list(task_id, user_id if my_task else None, search)
-    generation_main_files = None if project_id else await get_json(ctx.redis, generation_main_key)
+    """Main files of one task (`task_id`) or one song (`song_id`)."""
+    generation_main_key = ctx.key.generation_files_main_list(task_id, user_id if my_task else None, search, song_id)
+    generation_main_files = await get_json(ctx.redis, generation_main_key)
     if generation_main_files is not None:
         logging.info(
             f"user={user_id} listed user galleries source=cache task_id={task_id} my_task={my_task} search={search}"
@@ -111,7 +115,7 @@ async def get_generation_main_files(
         return _grant(generation_main_files, can_override)
 
     filters = [
-        DfEngineGenerations.project_id == project_id if project_id else DfEngineGenerations.task_id == task_id,
+        _scope(task_id, song_id),
         DfEngineGenerations.status.in_([GenerationStatuses.success, GenerationStatuses.processing]),  # type: ignore
         DfEngineGenerations.kind.in_(["image", "image_edit", "video"]),  # type: ignore
         or_(
@@ -182,8 +186,7 @@ async def get_generation_main_files(
                 _drop(GenerationResultRecord.pending(record).model_dump(mode="json"), *_MAIN_FILE_INTERNAL_KEYS)
             )
 
-    if not project_id:
-        await set_json(ctx.redis, generation_main_key, generation_main_files)
+    await set_json(ctx.redis, generation_main_key, generation_main_files)
     logging.info(
         f"user={user_id} listed user galleries source=db task_id={task_id} my_task={my_task} search={search} "
         f"count={len(generation_main_files)}"
@@ -192,12 +195,16 @@ async def get_generation_main_files(
 
 
 async def get_archieved_files(
-    ctx: ConnectionContext, project_id: int, user_id: int, can_override: bool = False
+    ctx: ConnectionContext,
+    task_id: Optional[int],
+    song_id: Optional[int],
+    user_id: int,
+    can_override: bool = False,
 ) -> list[dict[str, Any]]:
-    archived_key = ctx.key.generation_files_archived_list(user_id, project_id)
+    archived_key = ctx.key.generation_files_archived_list(user_id, task_id, song_id)
     data = await get_json(ctx.redis, archived_key)
     if data:
-        logging.info(f"user={user_id} listed archived generations source=cache project_id={project_id}")
+        logging.info(f"user={user_id} listed archived generations source=cache task_id={task_id} song_id={song_id}")
         return _grant(data, can_override)
 
     generations = await query(
@@ -209,7 +216,7 @@ async def get_archieved_files(
             ),
         ),
         filters=(
-            DfEngineGenerations.project_id == project_id,
+            _scope(task_id, song_id),
             # the owner's files, plus files an override user changed (`updated_by`) on someone else's generation
             or_(
                 DfEngineGenerations.created_by == user_id,  # type: ignore
@@ -249,7 +256,7 @@ async def get_archieved_files(
 
     await set_json(ctx.redis, archived_key, archieved_files)
     logging.info(
-        f"user={user_id} listed archived generations source=db project_id={project_id} count={len(archieved_files)}"
+        f"user={user_id} listed archived generations source=db task_id={task_id} song_id={song_id} count={len(archieved_files)}"
     )
     return _grant(archieved_files, can_override)
 
@@ -288,22 +295,23 @@ async def get_enhance_prompt(ctx: ConnectionContext, enhance_uid: UUID) -> dict[
 async def get_generation_files(
     ctx: ConnectionContext,
     user_id: Optional[int] = None,
-    project_id: Optional[int] = None,
+    task_id: Optional[int] = None,
+    song_id: Optional[int] = None,
     file_uids: Optional[list[str]] = None,
     can_override: bool = False,
 ) -> list[dict[str, Any]]:
-    if not file_uids and not user_id and not project_id:
+    if not file_uids and not user_id and task_id is None and song_id is None:
         return []
 
-    user_generation_files_key = ctx.key.generation_files_result_list(user_id, project_id, file_uids)
+    user_generation_files_key = ctx.key.generation_files_result_list(user_id, task_id, song_id, file_uids)
     data = await get_json(ctx.redis, user_generation_files_key) if user_id else None
     if data is not None:
-        logging.info(f"user={user_id} listed generation files source=cache project_id={project_id}")
+        logging.info(f"user={user_id} listed generation files source=cache task_id={task_id} song_id={song_id}")
         return _grant(data, can_override)
 
     filters = [DfEngineGenerations.results.any()]  # type: ignore
-    if project_id:
-        filters.append(DfEngineGenerations.project_id == project_id)  # type: ignore
+    if task_id is not None or song_id is not None:
+        filters.append(_scope(task_id, song_id))
     if file_uids:
         filters.append(
             DfEngineGenerations.results.any(DfEngineGenerationResults.uid.in_(file_uids))  # type: ignore
@@ -351,18 +359,22 @@ async def get_generation_files(
     if user_id:
         await set_json(ctx.redis, user_generation_files_key, generation_files)
     logging.info(
-        f"user={user_id} listed generation files source=db project_id={project_id} count={len(generation_files)}"
+        f"user={user_id} listed generation files source=db task_id={task_id} song_id={song_id} count={len(generation_files)}"
     )
     return _grant(generation_files, can_override)
 
 
 async def get_favourited_files(
-    ctx: ConnectionContext, project_id: int, user_id: int, can_override: bool = False
+    ctx: ConnectionContext,
+    task_id: Optional[int],
+    song_id: Optional[int],
+    user_id: int,
+    can_override: bool = False,
 ) -> list[dict[str, Any]]:
-    favourited_key = ctx.key.generation_files_favourited_list(user_id, project_id)
+    favourited_key = ctx.key.generation_files_favourited_list(user_id, task_id, song_id)
     data = await get_json(ctx.redis, favourited_key)
     if data is not None:
-        logging.info(f"user={user_id} listed favourited generations source=cache project_id={project_id}")
+        logging.info(f"user={user_id} listed favourited generations source=cache task_id={task_id} song_id={song_id}")
         return _grant(data, can_override)
 
     generations = await query(
@@ -374,7 +386,7 @@ async def get_favourited_files(
             ),
         ),
         filters=(
-            DfEngineGenerations.project_id == project_id,
+            _scope(task_id, song_id),
             or_(
                 DfEngineGenerations.created_by == user_id,  # type: ignore
                 DfEngineGenerations.results.any(  # type: ignore
@@ -413,7 +425,7 @@ async def get_favourited_files(
 
     await set_json(ctx.redis, favourited_key, favourited_files)
     logging.info(
-        f"user={user_id} listed favourited generations source=db project_id={project_id} count={len(favourited_files)}"
+        f"user={user_id} listed favourited generations source=db task_id={task_id} song_id={song_id} count={len(favourited_files)}"
     )
     return _grant(favourited_files, can_override)
 

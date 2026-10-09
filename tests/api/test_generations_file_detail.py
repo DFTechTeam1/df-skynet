@@ -236,3 +236,58 @@ async def test_override_role_archive_and_favourite_set_updated_by_and_show_in_ov
         await db_session.execute(select(DfEngineGenerationResults).where(DfEngineGenerationResults.id == other.id))
     ).scalar_one()
     assert row.updated_by == int(user_id) and row.archieved_at and row.favourited_at
+
+
+@pytest.mark.asyncio
+async def test_file_lists_are_scoped_to_the_task_not_the_project(
+    authed_client, project_task, user_id, generation_fks, db_session
+):
+    """200 OK; with a sibling task in the same project, the favourited, archived and tree lists only return the task in the URL."""
+    from sqlalchemy import select
+    from services.mysql.model import ProjectTasks
+    from utils import local_time
+
+    sibling_task = (
+        (
+            await db_session.execute(
+                select(ProjectTasks).where(
+                    ProjectTasks.project_id == project_task.project_id, ProjectTasks.id != project_task.id
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert sibling_task is not None, "the fixture project needs a second task to prove the task scoping"
+
+    mine = _make_generation(project_task, user_id, generation_fks)
+    my_fav = _make_result(mine, user_id, is_main=True, version=1, favourited_at=local_time())
+    my_arch = _make_result(mine, user_id, is_main=False, version=2, parent_id=my_fav.id, archieved_at=local_time())
+    sibling = DfEngineGenerationsFactory.create(
+        project_id=project_task.project_id,
+        task_id=sibling_task.id,
+        created_by=int(user_id),
+        sourceable_id=1,
+        **generation_fks,
+    )
+    other_fav = _make_result(sibling, user_id, is_main=True, version=1, favourited_at=local_time())
+    other_arch = _make_result(
+        sibling, user_id, is_main=False, version=2, parent_id=other_fav.id, archieved_at=local_time()
+    )
+
+    base = f"/api/files/{project_task.uid}"
+    fav = {f["file_uid"] for f in (await authed_client.call("GET", f"{base}/favourited")).json()["data"]}
+    arch = {f["file_uid"] for f in (await authed_client.call("GET", f"{base}/archieved")).json()["data"]}
+    assert str(my_fav.uid) in fav and str(my_arch.uid) in arch
+    assert str(other_fav.uid) not in fav and str(other_arch.uid) not in arch
+
+    tree = (await authed_client.call("GET", base)).json()["data"]
+    tree_uids = set()
+
+    def walk(node):
+        tree_uids.update(f["file_uid"] for f in node.get("files") or [])
+        for child in node.get("children") or []:
+            walk(child)
+
+    walk(tree)
+    assert str(other_fav.uid) not in tree_uids
