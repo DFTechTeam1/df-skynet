@@ -60,11 +60,15 @@ async def test_download_unknown_uid_is_404(authed_client, project_task, mock_udi
 
 
 @pytest.mark.asyncio
-async def test_download_someone_elses_file_is_404(
-    authed_client, project_task, other_user_id, generation_fks, mock_udin
+async def test_download_someone_elses_file_is_allowed(
+    authed_client, project_task, other_user_id, generation_fks, mock_udin, as_roles
 ):
-    """404 file_not_found; ownership is enforced at the query, same as every other files endpoint."""
-    result = _make_result(project_task, other_user_id, generation_fks)
-    resp = await authed_client.call("GET", _url(result.uid), raise_for_status=False)
-    assert resp.status_code == 404
-    assert resp.json()["message"] == resolve_message("file_not_found", "en")
+    """200 OK; any signed-in user, override role or not, can download a file another user generated."""
+    as_roles(["staff"])
+    result = _make_result(project_task, other_user_id, generation_fks, name="theirs.mp4", path="renders/theirs.mp4")
+    mock_udin.set_stream("renders/theirs.mp4", 200, b"their-bytes")
+
+    resp = await authed_client.call("GET", _url(result.uid))
+    assert resp.status_code == 200
+    assert resp.content == b"their-bytes"
+    assert "theirs.mp4" in resp.headers["content-disposition"]

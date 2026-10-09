@@ -296,8 +296,7 @@ async def get_generation_files(
         return []
 
     user_generation_files_key = ctx.key.generation_files_result_list(user_id, project_id, file_uids)
-    # project-wide lists (no user) are not cached: invalidation is per user, so a new generation would leave them stale
-    data = None if (project_id and not user_id) else await get_json(ctx.redis, user_generation_files_key)
+    data = await get_json(ctx.redis, user_generation_files_key) if user_id else None
     if data is not None:
         logging.info(f"user={user_id} listed generation files source=cache project_id={project_id}")
         return _grant(data, can_override)
@@ -349,7 +348,7 @@ async def get_generation_files(
                     message="file_not_found", error={f"references.{idx}.generated": ["file_not_found"]}
                 )
 
-    if user_id or not project_id:
+    if user_id:
         await set_json(ctx.redis, user_generation_files_key, generation_files)
     logging.info(
         f"user={user_id} listed generation files source=db project_id={project_id} count={len(generation_files)}"

@@ -297,7 +297,7 @@ class FilesController(CoreDependencies):
     @controller.get(
         "/files/download/{file_uid}",
         summary="Download generated file.",
-        description="Downloads one of your files to your device.",
+        description="Downloads a generated image, edited image or video to your device. Any signed-in user can download any generated file.",
         tags=["Files"],
     )
     async def files_with_file_uid_to_download_generated_file(
@@ -306,7 +306,7 @@ class FilesController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         user_id = int(self.user["user_id"])
         try:
-            generation_files = await get_generation_files(ctx, user_id, file_uids=[str(file_uid)])
+            generation_files = await get_generation_files(ctx, file_uids=[str(file_uid)])  # not owner-scoped
             record = generation_files[0]
             content_type = mimetypes.guess_type(record["name"])[0] or "application/octet-stream"
 
