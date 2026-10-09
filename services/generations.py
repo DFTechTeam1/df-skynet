@@ -2,6 +2,13 @@ from typing import Any
 from services.mysql.model.df_engine_generations import GenerationKinds
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 
+# Generation kinds the picker offers, and the section each lands in (an edited image is still an image).
+GENERATION_SECTIONS = {
+    GenerationKinds.image: "Image Generations",
+    GenerationKinds.image_edit: "Image Generations",
+    GenerationKinds.element: "Elements",
+}
+
 
 def reference_sections(
     upload_rows: list[dict[str, Any]], generation_rows: list[dict[str, Any]]
@@ -11,7 +18,7 @@ def reference_sections(
     for row in upload_rows:
         if row["kind"] == UploadFileTypes.image:
             sections["Image Uploads"].append(row["file"])
-    labels = {GenerationKinds.image: "Image Generations", GenerationKinds.element: "Elements"}
+    labels = GENERATION_SECTIONS
     for row in generation_rows:
         if row["kind"] in labels:
             sections[labels[row["kind"]]].append(row["file"])
@@ -24,7 +31,7 @@ def global_reference_sections(
     """Global picker payload: the same three sections as `reference_sections`, each grouped projects -> tasks -> files.
     Projects and tasks keep the order their first file appears in (rows arrive newest first)."""
     sections: dict[str, list[dict[str, Any]]] = {"Image Uploads": [], "Image Generations": [], "Elements": []}
-    labels = {GenerationKinds.image: "Image Generations", GenerationKinds.element: "Elements"}
+    labels = GENERATION_SECTIONS
     rows = [("Image Uploads", row) for row in upload_rows if row["kind"] == UploadFileTypes.image]
     rows += [(labels[row["kind"]], row) for row in generation_rows if row["kind"] in labels]
 

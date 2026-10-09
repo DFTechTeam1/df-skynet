@@ -232,8 +232,11 @@ async def test_uploaded_file_detail_as_owner(authed_client, project_task, user_i
 
 
 @pytest.mark.asyncio
-async def test_uploaded_file_detail_is_cached_and_read_only_for_non_owner(authed_client, project_task, other_user_id):
-    """200 OK; a second call is served from cache and a non-owner gets no rename/delete/move."""
+async def test_uploaded_file_detail_is_cached_and_read_only_for_non_owner(
+    authed_client, project_task, other_user_id, as_roles
+):
+    """200 OK; a second call is served from cache and a non-owner without an override role gets no rename/delete/move."""
+    as_roles(["staff"])
     upload = _make_upload(project_task, other_user_id, "upload/images")
 
     first = await authed_client.call("GET", _detail_url(upload.uid))

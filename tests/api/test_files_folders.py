@@ -1,10 +1,23 @@
 import pytest
+import pytest_asyncio
 from uuid import uuid4
 from httpx import TimeoutException
 from sqlalchemy import select
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
 from services.mysql.model import DfEngineUploadFiles
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
+
+
+@pytest_asyncio.fixture
+async def generation_fks(user_id) -> dict:
+    """Self-contained model_option/menu/feature ids for df_engine_generations' NOT NULL FKs."""
+    model_option = DfEngineModelOptionsFactory.create()
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    return {"model_id": model_option.id, "menu_id": menu.id, "feature_id": feature.id}
 
 
 def _url(task_uid, suffix="folders"):
@@ -169,29 +182,38 @@ async def test_rename_unknown_folder_is_404(authed_client, project_task, user_id
 
 
 @pytest.mark.asyncio
-async def test_delete_promotes_files_and_removes_folder_rows(
-    authed_client, project_task, user_id, mock_udin, db_session
-):
-    """200; files move to the parent with the collision-renamed name Udin returns, folder + nested folder rows are deleted, updated_by is set."""
+async def test_delete_upload_folder_deletes_its_files(authed_client, project_task, user_id, mock_udin, db_session):
+    """200; files at any depth under an upload folder are deleted (Udin delete-files + DB rows) along with the folder + nested folder rows; files outside stay."""
     base = f"{_root(project_task)}/upload/images"
     folder = f"{base}/gone_{uuid4().hex[:5]}"
     folder_row = _upload(project_task, user_id, folder, type=UploadFileTypes.folder, size=0)
     nested_row = _upload(project_task, user_id, f"{folder}/inner", type=UploadFileTypes.folder, size=0)
     file_row = _upload(project_task, user_id, f"{folder}/inner/a.jpg")
-    promoted = f"{base}/a_1.jpg"
-    mock_udin.set(
-        "delete-folder",
-        200,
-        {"data": [{"from": {"name": "a.jpg", "path": file_row.path}, "to": {"name": "a_1.jpg", "path": promoted}}]},
-    )
+    outside_row = _upload(project_task, user_id, f"{base}/keep.jpg")
 
     resp = await authed_client.call("DELETE", _url(project_task.uid), params={"path": folder}, raise_for_status=False)
     assert resp.status_code == 200, resp.text
+    assert any(
+        c[0] == "DELETE" and "delete-files" in c[1] and c[2] == {"sources": [file_row.path]} for c in mock_udin.calls
+    )
     assert mock_udin.calls[-1][0] == "DELETE" and mock_udin.calls[-1][2] == {"path": folder}
-    (file_row,) = await _reload(db_session, file_row)
-    assert (file_row.path, file_row.name, file_row.updated_by) == (promoted, "a_1.jpg", int(user_id))
-    assert await _reload(db_session, folder_row, nested_row) == [None, None]
+    assert await _reload(db_session, folder_row, nested_row, file_row) == [None, None, None]
+    assert (await _reload(db_session, outside_row))[0] is not None
     assert _folder(resp.json()["data"], folder) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_generated_folder_keeps_files_and_skips_delete_files(
+    authed_client, project_task, user_id, mock_udin, db_session
+):
+    """200; a generated folder is removed but no delete-files call is made (files are promoted by Udin, never deleted)."""
+    folder = f"{_root(project_task)}/generated/images/gone_{uuid4().hex[:5]}"
+    folder_row = _upload(project_task, user_id, folder, type=UploadFileTypes.folder, size=0)
+
+    resp = await authed_client.call("DELETE", _url(project_task.uid), params={"path": folder}, raise_for_status=False)
+    assert resp.status_code == 200, resp.text
+    assert not any("delete-files" in c[1] for c in mock_udin.calls)
+    assert await _reload(db_session, folder_row) == [None]
 
 
 @pytest.mark.asyncio
@@ -255,7 +277,7 @@ async def test_move_folders_rewrites_prefixes_in_one_call(authed_client, project
 
 @pytest.mark.asyncio
 async def test_move_between_upload_and_generated_is_refused(authed_client, project_task, user_id, mock_udin):
-    """422 folders_move_failed with invalid_folder_scope on the source when upload and generated are mixed; Udin is never called."""
+    """422 folders_move_failed with invalid_folder_move_scope on the source when upload and generated are mixed; Udin is never called."""
     root = _root(project_task)
     src, dest = f"{root}/upload/images/s_{uuid4().hex[:5]}", f"{root}/generated/images/d_{uuid4().hex[:5]}"
     _upload(project_task, user_id, src, type=UploadFileTypes.folder, size=0)
@@ -317,3 +339,43 @@ async def test_move_udin_errors_use_folder_paths_keys(authed_client, project_tas
     )
     assert resp.status_code == 422
     assert list(resp.json()["error"]) == ["folder_paths.0"]
+
+
+@pytest.mark.asyncio
+async def test_delete_generated_folder_promotes_generation_results(
+    authed_client, project_task, user_id, mock_udin, db_session, generation_fks
+):
+    """200; Udin's promoted pairs rewrite the generation result path, the folder row is deleted and the folder leaves the tree."""
+    from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+    from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
+    from services.mysql.model import DfEngineGenerationResults
+
+    base = f"{_root(project_task)}/generated/images"
+    folder = f"{base}/gone_{uuid4().hex[:5]}"
+    folder_row = _upload(project_task, user_id, folder, type=UploadFileTypes.folder, size=0)
+    generation = DfEngineGenerationsFactory.create(
+        project_id=project_task.project_id,
+        task_id=project_task.id,
+        created_by=int(user_id),
+        sourceable_id=1,
+        **generation_fks,
+    )
+    old, new = f"{folder}/g.png", f"{base}/g.png"
+    result = DfEngineGenerationResultsFactory.create(
+        generation_id=generation.id, created_by=int(user_id), path=old, name="g.png", is_main=True
+    )
+    mock_udin.set(
+        "delete-folder",
+        200,
+        {"data": [{"from": {"name": "g.png", "path": old}, "to": {"name": "g.png", "path": new}}]},
+    )
+
+    resp = await authed_client.call("DELETE", _url(project_task.uid), params={"path": folder}, raise_for_status=False)
+    assert resp.status_code == 200, resp.text
+    assert await _reload(db_session, folder_row) == [None]
+    await db_session.commit()
+    row = (
+        await db_session.execute(select(DfEngineGenerationResults).where(DfEngineGenerationResults.id == result.id))
+    ).scalar_one()
+    assert row.path == new
+    assert _folder(resp.json()["data"], folder) is None

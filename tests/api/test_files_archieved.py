@@ -90,6 +90,7 @@ async def test_archived_entry_matches_generation_result_record_shape(
         "file_uid",
         "generation_uid",
         "name",
+        "type",
         "is_main",
         "path",
         "size",

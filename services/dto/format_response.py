@@ -40,6 +40,23 @@ class GenerationAction(BaseModel):
         )
 
 
+def grant_generation_override(record: dict[str, Any]) -> None:
+    """Widen a serialized generated-file record for an `OVERRIDE_FILE_ROLES` user: rename, move (unless archived)
+    image-edit, set-main, archive and favourite work on anyone's file. Pending records (no file yet)
+    are left alone. Applied on the way out, never before caching, because cached lists are shared between viewers."""
+    action = record.get("action")
+    if record.get("file_uid") is None or not action:
+        return
+    action["can_rename"] = True
+    action["can_choose_to_move"] = record.get("archieved_at") is None
+    action["can_use_as_edit"] = action["can_use_as_reference"]
+    action["can_set_main"] = record.get("is_main") is False
+    action["can_archieve"] = record.get("archieved_at") is None and record.get("is_main") is False
+    action["can_unarchieve"] = record.get("archieved_at") is not None
+    action["can_favorited"] = record.get("favourited_at") is None
+    action["can_unfavorited"] = record.get("favourited_at") is not None
+
+
 class ReferenceAction(BaseModel):
     can_fetch_detail: bool = True
     can_use_as_reference: bool
@@ -59,6 +76,7 @@ class GenerationResultRecord(BaseModel):
     generation_uid: Optional[str] = None
     parent_id: Optional[int] = None
     name: Optional[str] = None
+    type: str = "generated"
     is_main: Optional[bool] = None
     path: Optional[str] = None
     size: Optional[str] = None
@@ -345,18 +363,25 @@ class FileAction(BaseModel):
     can_choose_to_move: bool = False
     can_use_as_reference: bool = True
 
+    @classmethod
+    def for_upload(cls, is_owner: bool, can_override: bool = False) -> "FileAction":
+        allowed = is_owner or can_override
+        return cls(can_rename=allowed, can_delete=allowed, can_choose_to_move=allowed)
+
 
 class TreeFile(BaseModel):
     file_uid: Optional[Any] = None
     name: str
     path: str
     url: str
+    type: Literal["generated", "upload"] = "generated"
     kind: Optional[str] = None
     icon: Optional[str] = None
     color: Optional[str] = None
     size: Optional[str] = None
     created_at: Optional[str] = None
     creator: Optional[dict[str, Any]] = None
+    updater: Optional[dict[str, Any]] = None
     action: Union[GenerationAction, FileAction]
 
 

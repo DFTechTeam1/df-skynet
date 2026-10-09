@@ -34,12 +34,24 @@ class DeleteFilesPayload(BaseModel):
         examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
     )
 
+    @field_validator("file_uids", mode="before")
+    @classmethod
+    def dedupe_file_uids(cls, value: list[Any]) -> list[str]:
+        return list(dict.fromkeys(str(UUID(str(uid))) for uid in value))
+
 
 class RenameFilePayload(BaseModel):
-    file_uid: UUID = Field(..., description="File `uid` to rename.", examples=["b3f1c2d4-5678-4abc-9def-0123456789ab"])
     name: str = Field(
         ..., min_length=1, description="New name (extension is always preserved).", examples=["final_render"]
     )
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value or value in (".", "..") or "/" in value or "\\" in value:
+            raise ValueError("invalid_file_name")
+        return value
 
 
 class MoveFilesPayload(BaseModel):
@@ -49,7 +61,22 @@ class MoveFilesPayload(BaseModel):
         description="File `uid`s to move.",
         examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
     )
-    destination: str = Field(..., min_length=1, description="Destination folder path.", examples=["images/approved"])
+    destination: str = Field(
+        ...,
+        min_length=1,
+        description="Full path of the destination folder.",
+        examples=["storage/DF-Engine/Wedding_7b804b30/upload/images/approved"],
+    )
+
+    @field_validator("file_uids", mode="before")
+    @classmethod
+    def dedupe_file_uids(cls, value: list[Any]) -> list[str]:
+        return list(dict.fromkeys(str(UUID(str(uid))) for uid in value))
+
+    @field_validator("destination", mode="after")
+    @classmethod
+    def strip_destination(cls, value: str) -> str:
+        return value.strip("/")
 
 
 class MoveFoldersPayload(BaseModel):

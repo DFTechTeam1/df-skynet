@@ -3,7 +3,13 @@ from datetime import timedelta
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineApiKeys, DfEngineApiKeySnapshots, DfEngineExternalApiCalls, Employees
+from services.mysql.model import (
+    DfEngineApiKeys,
+    DfEngineApiKeySnapshots,
+    DfEngineExternalApiCalls,
+    DfEngineGenerations,
+    Employees,
+)
 from services.mysql.factory import DfEngineApiKeysFactory
 from utils import local_time
 from tests.helpers import response_names
@@ -70,6 +76,51 @@ async def test_delete_archives_a_snapshot_on_clean_revoke(authed_client, db_sess
     ).scalar_one()
     assert snapshot.name == row_name
     assert snapshot.employee_name == nickname
+
+
+@pytest.mark.asyncio
+async def test_delete_repoints_the_keys_generations_to_the_snapshot(
+    authed_client, db_session, user_id, active_employee_uid, project_task
+):
+    """200 OK; generations made with the deleted key move to `DfEngineApiKeySnapshots` (id + type), others stay."""
+    from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+    from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+    from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+    from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id, employee_name=employee.nickname)
+    row_key = row.key
+    other = _key(employee.id, user_id, employee_name=employee.nickname)
+    fks = {
+        "model_id": DfEngineModelOptionsFactory.create().id,
+        "menu_id": DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None).id,
+        "feature_id": DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None).id,
+    }
+
+    def _gen(key_row):
+        return DfEngineGenerationsFactory.create(
+            project_id=project_task.project_id,
+            task_id=project_task.id,
+            created_by=int(user_id),
+            sourceable_id=key_row.id,
+            sourceable_type=DfEngineApiKeys.__name__,
+            **fks,
+        ).id
+
+    mine, theirs = _gen(row), _gen(other)
+
+    resp = await authed_client.call("DELETE", f"{URL}/{row.uid}")
+    assert resp.status_code == 200
+
+    await db_session.rollback()
+    snapshot = (
+        await db_session.execute(select(DfEngineApiKeySnapshots).where(DfEngineApiKeySnapshots.key == row_key))
+    ).scalar_one()
+    moved = (await db_session.execute(select(DfEngineGenerations).where(DfEngineGenerations.id == mine))).scalar_one()
+    kept = (await db_session.execute(select(DfEngineGenerations).where(DfEngineGenerations.id == theirs))).scalar_one()
+    assert (moved.sourceable_id, moved.sourceable_type) == (snapshot.id, DfEngineApiKeySnapshots.__name__)
+    assert (kept.sourceable_id, kept.sourceable_type) == (other.id, DfEngineApiKeys.__name__)
 
 
 @pytest.mark.asyncio

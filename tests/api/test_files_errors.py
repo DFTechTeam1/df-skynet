@@ -62,9 +62,10 @@ async def test_archive_without_a_cached_result_list_skips_the_cache_patch(authed
 
 @pytest.mark.asyncio
 async def test_archive_with_a_cache_miss_still_updates_and_returns_the_archived_list(
-    authed_client, project_task, monkeypatch
+    authed_client, project_task, monkeypatch, as_roles
 ):
     """200 OK; archiving works when the cached result list is absent, only the cache patch is skipped."""
+    as_roles(["staff"])
     uid = str(uuid4())
     record = {
         "file_uid": uid,
@@ -110,3 +111,19 @@ async def test_listing_endpoints_pass_domain_errors_through(authed_client, suffi
     """404 project_task_not_found; a BaseError from resolving the task is re-raised untouched, not turned into 500."""
     resp = await authed_client.call("GET", f"/api/files/{uuid4()}/{suffix}", raise_for_status=False)
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upload_into_unknown_folder_is_rejected_before_udin(authed_client, project_task, mock_udin):
+    """404 folder_not_found; `path` must be an existing folder in the file tree, and Udin is never called."""
+    resp = await authed_client.call(
+        "POST",
+        f"/api/files/{project_task.uid}/uploads",
+        params={"path": "storage/DF-Engine/nope/upload/images/missing"},
+        headers={"content-type": "multipart/form-data; boundary=x"},
+        content=b"x",
+        raise_for_status=False,
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"] == {"path": ["We couldn't find that folder."]}
+    assert mock_udin.calls == []

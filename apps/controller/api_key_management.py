@@ -127,7 +127,7 @@ class APIKeyManagementController(CoreDependencies):
                         hash=response_body["data"]["hash"],
                         employee_id=employee.id,
                         employee_name=employee.nickname,
-                        limit=schema.limit,
+                        limit=schema.limit,  # type: ignore
                         limit_reset=schema.limit_reset.value if schema.limit_reset else None,
                         expires_at=schema.expires_at,
                         created_by=int(self.user["user_id"]),
@@ -226,29 +226,9 @@ class APIKeyManagementController(CoreDependencies):
 
             for record in records:
                 if record.expires_at is not None and record.expires_at <= local_time():
-                    # Past its own expiry — clean up instead of rotating.
-                    # The OpenRouter secret is already dead, so no revoke
-                    # call; just archive the row and drop it, in its own SAVEPOINT.
                     try:
                         async with self.db.begin_nested():
-                            self.db.add(
-                                DfEngineApiKeySnapshots(
-                                    created_at=record.created_at,
-                                    updated_at=record.updated_at,
-                                    expires_at=record.expires_at,
-                                    limit=record.limit,
-                                    limit_reset=record.limit_reset,
-                                    uid=record.uid,
-                                    key=record.key,
-                                    hash=record.hash,
-                                    name=record.name,
-                                    description=record.description,
-                                    employee_id=record.employee_id,
-                                    employee_name=record.employee_name,
-                                    created_by=record.created_by,
-                                    updated_by=record.updated_by,
-                                )
-                            )
+                            await ApiKeyManagement().archive(self.db, record)
                             await self.db.delete(record)
                     except IntegrityError as e:
                         self.db.add(
@@ -347,29 +327,10 @@ class APIKeyManagementController(CoreDependencies):
 
                 # Swap the rows inside a SAVEPOINT so a conflict here unwinds ONLY this
                 # key — the request-wide transaction (prior rotations + every log row
-                # above) stays intact. ponytail: generation_prompts still points at
-                # df_engine_api_keys.id via a polymorphic FK; repoint those to the
-                # snapshot id once that model is mapped in this service.
+                # above) stays intact. archive_api_key also repoints the key's generations.
                 try:
                     async with self.db.begin_nested():
-                        self.db.add(
-                            DfEngineApiKeySnapshots(
-                                created_at=record.created_at,
-                                updated_at=record.updated_at,
-                                expires_at=record.expires_at,
-                                limit=record.limit,
-                                limit_reset=record.limit_reset,
-                                uid=record.uid,
-                                key=record.key,
-                                hash=record.hash,
-                                name=record.name,
-                                description=record.description,
-                                employee_id=record.employee_id,
-                                employee_name=record.employee_name,
-                                created_by=record.created_by,
-                                updated_by=record.updated_by,
-                            )
-                        )
+                        await ApiKeyManagement().archive(self.db, record)
                         self.db.add(
                             DfEngineApiKeys(
                                 name=record.name,
@@ -547,27 +508,7 @@ class APIKeyManagementController(CoreDependencies):
                 # Archive only when OpenRouter confirmed the revoke. A stale/invalid
                 # hash (revoke failed) means there's nothing live to snapshot — just
                 # drop the row.
-                # ponytail: generation_prompts still points at df_engine_api_keys.id via
-                # a polymorphic FK; repoint those to the snapshot id here once that model
-                # is mapped in this service. Same TODO in the rotate flow.
-                self.db.add(
-                    DfEngineApiKeySnapshots(
-                        created_at=record.created_at,
-                        updated_at=record.updated_at,
-                        expires_at=record.expires_at,
-                        limit=record.limit,
-                        limit_reset=record.limit_reset,
-                        uid=record.uid,
-                        key=record.key,
-                        hash=record.hash,
-                        name=record.name,
-                        description=record.description,
-                        employee_id=record.employee_id,
-                        employee_name=record.employee_name,
-                        created_by=record.created_by,
-                        updated_by=record.updated_by,
-                    )
-                )
+                await ApiKeyManagement().archive(self.db, record)
 
             await self.db.delete(record)
             await self.db.flush()

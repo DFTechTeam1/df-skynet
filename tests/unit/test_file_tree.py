@@ -131,6 +131,59 @@ class TestFormatFileTree:
         assert sub["files"][0]["action"]["can_delete"] is True
 
 
+class TestOverride:
+    FOREIGN = [_upload(f"{BASE}/upload/images/sub/a.jpg", user_id=2)]
+
+    def _file(self, tree):
+        return tree["children"][0]["children"][0]["children"][0]["files"][0]
+
+    def test_has_override(self):
+        """Any role in OVERRIDE_FILE_ROLES counts; empty/None/unknown do not."""
+        assert files.has_override(["staff", "director"]) is True
+        assert files.has_override(["staff"]) is False
+        assert files.has_override([]) is False and files.has_override(None) is False
+
+    def test_override_role_manages_foreign_upload(self):
+        """Override roles get every upload action on someone else's file; plain users get none."""
+        on = self._file(files.format_file_tree(self.FOREIGN, [], 1, 3, can_override=True))
+        off = self._file(files.format_file_tree(self.FOREIGN, [], 1, 3))
+        assert on["type"] == "upload"
+        assert (on["action"]["can_rename"], on["action"]["can_delete"], on["action"]["can_choose_to_move"]) == (
+            True,
+        ) * 3
+        assert (off["action"]["can_rename"], off["action"]["can_delete"], off["action"]["can_choose_to_move"]) == (
+            False,
+        ) * 3
+
+    def test_generated_has_no_delete_action(self):
+        """Generated files never expose can_delete, override or not."""
+        tree = files.format_file_tree([], [_generated(f"{BASE}/generated/images/g.png", user_id=2)], 1, 3, True)
+        file = tree["children"][0]["children"][0]["files"][0]
+        assert file["type"] == "generated" and "can_delete" not in file["action"]
+
+    def test_grant_generation_override(self):
+        """Override widens rename/move/edit; archive/favourite/set-main stay; archived files can't move; pending records untouched."""
+        from services.dto.format_response import GenerationAction, grant_generation_override
+
+        result = {"archieved_at": None, "is_main": False, "favourited_at": None, "path": "x/images/a.png"}
+        action = GenerationAction.from_result(result, is_owner=False).model_dump()
+        assert not (action["can_rename"] or action["can_use_as_edit"] or action["can_choose_to_move"])
+        record = {"file_uid": "u", "archieved_at": None, "action": dict(action)}
+        grant_generation_override(record)
+        assert (
+            record["action"]["can_rename"],
+            record["action"]["can_choose_to_move"],
+            record["action"]["can_use_as_edit"],
+        ) == (True,) * 3
+        assert not (record["action"]["can_archieve"] or record["action"]["can_set_main"])
+        archived = {"file_uid": "u", "archieved_at": "x", "action": dict(action)}
+        grant_generation_override(archived)
+        assert archived["action"]["can_choose_to_move"] is False
+        pending = {"file_uid": None, "action": dict(action)}
+        grant_generation_override(pending)
+        assert pending["action"]["can_rename"] is False
+
+
 class TestFindFolder:
     TREE = {"path": "a", "children": [{"path": "a/b", "children": [{"path": "a/b/c"}]}, {"path": "a/d"}]}
 
@@ -153,13 +206,13 @@ class TestBuildFileTree:
         "is_song,upload_kwargs", [(False, {"task_id": 7, "song_id": None}), (True, {"task_id": None, "song_id": 7})]
     )
     async def test_scopes_uploads_by_task_or_song_and_my_task(self, monkeypatch, is_song, upload_kwargs):
-        """Uploads are queried by task_id or song_id; `my_task` narrows them to the caller while generated files do not follow it."""
+        """Uploads are queried by task_id or song_id; `my_task` narrows them to the caller and generated files are project-wide, narrowed to the caller only by `my_task`."""
         get_uploads = AsyncMock(return_value=[])
         monkeypatch.setattr(files, "get_user_uploaded_files", get_uploads)
         monkeypatch.setattr(files, "get_generation_main_files", AsyncMock(return_value=[]))
         monkeypatch.setattr(files, "get_admin_settings", AsyncMock(return_value={"folder_depth_limit": 3}))
 
-        tree = await files.build_file_tree(object(), {"id": 7, "is_song": is_song}, 5, my_task=True)
+        tree = await files.build_file_tree(object(), {"id": 7, "is_song": is_song, "project_id": 9}, 5, my_task=True)
         assert tree == {}
         get_uploads.assert_awaited_once_with(unittest_any(), user_id=5, **upload_kwargs)
 
@@ -170,10 +223,12 @@ class TestBuildFileTree:
         monkeypatch.setattr(files, "get_generation_main_files", AsyncMock(return_value=[]))
         monkeypatch.setattr(files, "get_admin_settings", AsyncMock(return_value={}))
         monkeypatch.setattr(
-            files, "format_file_tree", lambda up, gen, user_id, limit: seen.setdefault("limit", limit) and {}
+            files,
+            "format_file_tree",
+            lambda up, gen, user_id, limit, override=False: seen.setdefault("limit", limit) and {},
         )
 
-        await files.build_file_tree(object(), {"id": 1, "is_song": False}, 1)
+        await files.build_file_tree(object(), {"id": 1, "is_song": False, "project_id": 9}, 1)
         assert seen["limit"] == 4
 
 
@@ -193,7 +248,7 @@ class TestReferenceSections:
         ]
 
     def test_routes_rows_and_drops_unsupported_kinds(self):
-        """Image uploads and image/element generations are kept; video uploads and video/other generations are dropped."""
+        """Image uploads and image/image_edit/element generations are kept; video uploads and video generations are dropped."""
         sections = reference_sections(
             [{"kind": UploadFileTypes.image, "file": "u-img"}, {"kind": UploadFileTypes.video, "file": "u-vid"}],
             [
@@ -205,7 +260,7 @@ class TestReferenceSections:
         )
         by_type = {s["type"]: s for s in sections}
         assert by_type["Image Uploads"]["files"] == ["u-img"]
-        assert by_type["Image Generations"]["files"] == ["g-img"]
+        assert by_type["Image Generations"]["files"] == ["g-img", "g-edit"]
         assert by_type["Elements"]["files"] == ["g-el"] and by_type["Elements"]["total_data"] == 1
 
 
@@ -260,7 +315,7 @@ class TestGlobalReferenceSections:
         assert project2["tasks"][0] == {"id": 20, "name": "T20", "files": ["a", "d"]}
 
     def test_routes_kinds_and_drops_unsupported_ones(self):
-        """Image uploads, image and element generations are kept; video uploads and other kinds are dropped."""
+        """Image uploads, image/image_edit and element generations are kept; video uploads and video generations are dropped."""
         from services.generations import global_reference_sections
 
         sections = {
@@ -276,5 +331,5 @@ class TestGlobalReferenceSections:
             )
         }
         assert sections["Image Uploads"]["projects"][0]["tasks"][0]["files"] == ["u-img"]
-        assert sections["Image Generations"]["total_data"] == 1
+        assert sections["Image Generations"]["total_data"] == 2  # image + image_edit
         assert sections["Elements"]["projects"][0]["tasks"][0]["id"] == 4
