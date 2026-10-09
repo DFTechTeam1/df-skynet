@@ -95,20 +95,23 @@ async def get_generation_main_files(
     ctx: ConnectionContext,
     user_id: int,
     task_id: int,
-    owner_id: Optional[int] = None,
+    my_task: bool = False,
     search: Optional[str] = None,
     can_override: bool = False,
+    project_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    generation_main_key = ctx.key.generation_files_main_list(task_id, owner_id, search)
-    generation_main_files = await get_json(ctx.redis, generation_main_key)
+    """Main files of one task, or of the whole project when `project_id` is given. Project-wide lists skip the cache:
+    it is keyed and invalidated per task, so another task's generation would leave it stale."""
+    generation_main_key = ctx.key.generation_files_main_list(task_id, user_id if my_task else None, search)
+    generation_main_files = None if project_id else await get_json(ctx.redis, generation_main_key)
     if generation_main_files is not None:
         logging.info(
-            f"user={user_id} listed user galleries source=cache task_id={task_id} owner_id={owner_id} search={search}"
+            f"user={user_id} listed user galleries source=cache task_id={task_id} my_task={my_task} search={search}"
         )
         return _grant(generation_main_files, can_override)
 
     filters = [
-        DfEngineGenerations.task_id == task_id,
+        DfEngineGenerations.project_id == project_id if project_id else DfEngineGenerations.task_id == task_id,
         DfEngineGenerations.status.in_([GenerationStatuses.success, GenerationStatuses.processing]),  # type: ignore
         DfEngineGenerations.kind.in_(["image", "image_edit", "video"]),  # type: ignore
         or_(
@@ -127,8 +130,8 @@ async def get_generation_main_files(
                 ),
             )
         )
-    if owner_id:
-        filters.append(DfEngineGenerations.created_by == owner_id)  # type: ignore
+    if my_task:
+        filters.append(DfEngineGenerations.created_by == user_id)  # type: ignore
 
     generations = await query(
         ctx.db,
@@ -179,9 +182,10 @@ async def get_generation_main_files(
                 _drop(GenerationResultRecord.pending(record).model_dump(mode="json"), *_MAIN_FILE_INTERNAL_KEYS)
             )
 
-    await set_json(ctx.redis, generation_main_key, generation_main_files)
+    if not project_id:
+        await set_json(ctx.redis, generation_main_key, generation_main_files)
     logging.info(
-        f"user={user_id} listed user galleries source=db task_id={task_id} owner_id={owner_id} search={search} "
+        f"user={user_id} listed user galleries source=db task_id={task_id} my_task={my_task} search={search} "
         f"count={len(generation_main_files)}"
     )
     return _grant(generation_main_files, can_override)
@@ -206,7 +210,16 @@ async def get_archieved_files(
         ),
         filters=(
             DfEngineGenerations.project_id == project_id,
-            DfEngineGenerations.created_by == user_id,
+            # the owner's files, plus files an override user changed (`updated_by`) on someone else's generation
+            or_(
+                DfEngineGenerations.created_by == user_id,  # type: ignore
+                DfEngineGenerations.results.any(  # type: ignore
+                    and_(
+                        DfEngineGenerationResults.archieved_at.is_not(None),
+                        DfEngineGenerationResults.updated_by == user_id,
+                    )  # type: ignore
+                ),
+            ),
             DfEngineGenerations.results.any(DfEngineGenerationResults.archieved_at.is_not(None)),  # type: ignore
         ),
     )
@@ -228,6 +241,7 @@ async def get_archieved_files(
             )
             for record in serialize(generations)
             for result in record["results"]
+            if record["created_by"] == user_id or result["updated_by"] == user_id
         ),
         key=lambda r: r["flag_archieved_at"],
         reverse=True,
@@ -282,7 +296,8 @@ async def get_generation_files(
         return []
 
     user_generation_files_key = ctx.key.generation_files_result_list(user_id, project_id, file_uids)
-    data = await get_json(ctx.redis, user_generation_files_key)
+    # project-wide lists (no user) are not cached: invalidation is per user, so a new generation would leave them stale
+    data = None if (project_id and not user_id) else await get_json(ctx.redis, user_generation_files_key)
     if data is not None:
         logging.info(f"user={user_id} listed generation files source=cache project_id={project_id}")
         return _grant(data, can_override)
@@ -334,7 +349,8 @@ async def get_generation_files(
                     message="file_not_found", error={f"references.{idx}.generated": ["file_not_found"]}
                 )
 
-    await set_json(ctx.redis, user_generation_files_key, generation_files)
+    if user_id or not project_id:
+        await set_json(ctx.redis, user_generation_files_key, generation_files)
     logging.info(
         f"user={user_id} listed generation files source=db project_id={project_id} count={len(generation_files)}"
     )
@@ -360,7 +376,15 @@ async def get_favourited_files(
         ),
         filters=(
             DfEngineGenerations.project_id == project_id,
-            DfEngineGenerations.created_by == user_id,
+            or_(
+                DfEngineGenerations.created_by == user_id,  # type: ignore
+                DfEngineGenerations.results.any(  # type: ignore
+                    and_(
+                        DfEngineGenerationResults.favourited_at.is_not(None),
+                        DfEngineGenerationResults.updated_by == user_id,
+                    )  # type: ignore
+                ),
+            ),
             DfEngineGenerations.results.any(DfEngineGenerationResults.favourited_at.is_not(None)),  # type: ignore
         ),
     )
@@ -382,6 +406,7 @@ async def get_favourited_files(
             )
             for record in serialize(generations)
             for result in record["results"]
+            if record["created_by"] == user_id or result["updated_by"] == user_id
         ),
         key=lambda r: r["flag_favourited_at"],
         reverse=True,
@@ -397,17 +422,19 @@ async def get_favourited_files(
 async def get_upload_references(
     ctx: ConnectionContext, user_id: int, project_id: Optional[int] = None, search: Optional[str] = None
 ) -> list[dict[str, Any]]:
+    """Uploads of one project (anyone's) when `project_id` is given, else the caller's across all projects. The
+    project-wide list is not cached: it is keyed and invalidated per user, so another member's upload would leave it stale."""
     references_picker_key = ctx.key.generation_files_references_picker("uploads", user_id, project_id, search)
-    data = await get_json(ctx.redis, references_picker_key)
+    data = None if project_id else await get_json(ctx.redis, references_picker_key)
     if data is not None:
         logging.info(
             f"user={user_id} listed upload references source=cache project_id={project_id} search={search} count={len(data)}"
         )
         return data
 
-    filters = [DfEngineUploadFiles.created_by == user_id]  # type: ignore
-    if project_id:
-        filters.append(DfEngineUploadFiles.project_id == project_id)  # type: ignore
+    filters = [
+        DfEngineUploadFiles.project_id == project_id if project_id else DfEngineUploadFiles.created_by == user_id
+    ]  # type: ignore
     if search:
         term = f"%{search.strip()}%"
         filters.append(
@@ -445,7 +472,8 @@ async def get_upload_references(
         for record in serialize(uploads)
     ]
 
-    await set_json(ctx.redis, references_picker_key, rows)
+    if not project_id:
+        await set_json(ctx.redis, references_picker_key, rows)
 
     logging.info(
         f"user={user_id} listed upload references source=db project_id={project_id} search={search} count={len(rows)}"
@@ -625,7 +653,10 @@ async def get_generation_main_file_detail(
         "flag_favourited_at",
         "flag_archieved_at",
     )
-    serialized["variants"] = await get_generation_main_variants(ctx, file_uid, user_id)
+    # archived versions stay fetchable by their own uid but are not listed as variants of the main file
+    serialized["variants"] = [
+        variant for variant in await get_generation_main_variants(ctx, file_uid, user_id) if not variant["archieved_at"]
+    ]
     serialized["references"] = _build_references(serialized_main_file.get("generation") or {})
 
     await set_json(ctx.redis, generated_main_file_detail_key, serialized)

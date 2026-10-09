@@ -1,3 +1,4 @@
+from uuid import uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete, select
@@ -457,14 +458,29 @@ async def foreign_source(project_task, other_user_id, image_model, generation_me
 
 
 @pytest.mark.asyncio
-async def test_editing_someone_elses_file_without_override_role_is_404(
+async def test_editing_someone_elses_file_without_override_role_is_refused(
     authed_client, foreign_source, generation_menu_feature, image_model, as_roles, fake_generation_backends
 ):
-    """404 file_not_found; a plain user cannot edit another user's file and nothing is dispatched."""
+    """422 file_edit_not_permitted; a plain user cannot edit another user's file and nothing is dispatched."""
     as_roles(["staff"])
     menu, feature = generation_menu_feature
     resp = await authed_client.call(
         "POST", _url(foreign_source.uid), json=_payload(menu, feature, image_model), raise_for_status=False
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == {"file_uid": ["You can only edit images you generated yourself."]}
+    assert fake_generation_backends == []
+
+
+@pytest.mark.asyncio
+async def test_editing_a_file_that_does_not_exist_is_404(
+    authed_client, generation_menu_feature, image_model, as_roles, fake_generation_backends
+):
+    """404 file_not_found; an unknown file uid is still reported as missing, not as a permission problem."""
+    as_roles(["staff"])
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST", _url(uuid4()), json=_payload(menu, feature, image_model), raise_for_status=False
     )
     assert resp.status_code == 404
     assert fake_generation_backends == []

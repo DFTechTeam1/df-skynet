@@ -22,7 +22,7 @@ FILES_URL = "/api/files"
 
 
 @pytest.mark.asyncio
-async def test_archive_is_noop_for_main_result_then_favorite_does_not_bust_stale_picker_cache(
+async def test_archive_is_refused_for_main_result_then_favorite_does_not_bust_stale_picker_cache(
     authed_client, project_task, user_id, db_session
 ):
     """Walks a generation result through an archive attempt then a favorite, checking the
@@ -61,20 +61,19 @@ async def test_archive_is_noop_for_main_result_then_favorite_does_not_bust_stale
     picker = await authed_client.call("GET", picker_url)
     assert result.uid in [f["file_uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
 
-    # 2. archiving the current main "succeeds" (200, reported as archived) via the real files API,
-    # but the row is_main=True so the underlying UPDATE excludes it - a silent no-op
+    # 2. archiving the current main is refused (422) via the real files API; the row is untouched
     archive_resp = await authed_client.call(
         "PATCH",
         f"{FILES_URL}/{project_task.uid}/archieve",
         json={"file_uids": [str(result.uid)]},
+        raise_for_status=False,
     )
-    assert archive_resp.status_code == 200
-    assert result.uid in [f["file_uid"] for f in archive_resp.json()["data"]]
+    assert archive_resp.status_code == 422
 
     db_row = await _fetch_result(result.uid)
     assert db_row.archieved_at is None
 
-    # 3. still live in the picker - the no-op archive never touched the row
+    # 3. still live in the picker - the refused archive never touched the row
     picker = await authed_client.call("GET", picker_url)
     assert result.uid in [f["file_uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
 

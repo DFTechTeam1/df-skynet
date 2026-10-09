@@ -139,11 +139,11 @@ async def test_file_owned_by_another_user_is_still_visible(
 
 
 @pytest.mark.asyncio
-async def test_override_role_can_manage_another_users_file_but_not_set_main(
+async def test_override_role_can_manage_another_users_file(
     authed_client, project_task, generation_fks, other_user_id, as_roles
 ):
     """200 OK; an override role gets rename/move/edit on someone else's file (detail and variants), while
-    set-main stays owner-only. The shared cache must not leak the widened actions to a plain viewer afterwards."""
+    set-main and archive follow `is_main`/archive state, favourite stays owner-only. The shared cache must not leak the widened actions to a plain viewer afterwards."""
     generation = _make_generation(project_task, other_user_id, generation_fks)
     result = _make_result(generation, other_user_id, is_main=True, version=1)
 
@@ -151,7 +151,8 @@ async def test_override_role_can_manage_another_users_file_but_not_set_main(
     data = (await authed_client.call("GET", _url(result.uid))).json()["data"]
     for action in (data["action"], data["variants"][0]["action"]):
         assert (action["can_rename"], action["can_choose_to_move"], action["can_use_as_edit"]) == (True,) * 3
-        assert action["can_set_main"] is False
+        assert action["can_set_main"] is False  # it is already the main version
+        assert action["can_archieve"] is False  # main versions cannot be archived
 
     as_roles(["staff"])
     data = (await authed_client.call("GET", _url(result.uid))).json()["data"]
@@ -186,3 +187,52 @@ async def test_requires_auth(client, project_task):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", _url(uuid4()), raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_main_file_detail_hides_archived_variants_but_they_stay_fetchable(
+    authed_client, project_task, user_id, generation_fks
+):
+    """200 OK; the main file's `variants` omit archived versions, an archived version is still fetched directly by its own uid."""
+    from utils import local_time
+
+    generation = _make_generation(project_task, user_id, generation_fks)
+    root = _make_result(generation, user_id, is_main=False, version=1)
+    archived = _make_result(generation, user_id, is_main=False, version=2, parent_id=root.id, archieved_at=local_time())
+    main = _make_result(generation, user_id, is_main=True, version=3, parent_id=root.id)
+
+    data = (await authed_client.call("GET", _url(main.uid))).json()["data"]
+    assert [v["file_uid"] for v in data["variants"]] == [str(root.uid), str(main.uid)]
+
+    direct = (await authed_client.call("GET", _url(archived.uid))).json()["data"]
+    assert direct["file_uid"] == str(archived.uid) and "variants" not in direct
+
+
+@pytest.mark.asyncio
+async def test_override_role_archive_and_favourite_set_updated_by_and_show_in_overriders_lists(
+    authed_client, project_task, user_id, generation_fks, other_user_id, as_roles, db_session
+):
+    """200 OK; an override user archives/favourites another user's non-main file: `updated_by` becomes the overrider and the file shows in the overrider's archived and favourited lists."""
+    from sqlalchemy import select
+    from services.mysql.model import DfEngineGenerationResults
+
+    generation = _make_generation(project_task, other_user_id, generation_fks)
+    root = _make_result(generation, other_user_id, is_main=True, version=1)
+    other = _make_result(generation, other_user_id, is_main=False, version=2, parent_id=root.id)
+    base = f"/api/files/{project_task.uid}"
+
+    as_roles(["director"])
+    for suffix, body, key in (
+        ("archieve", {"file_uids": [str(other.uid)], "is_archieved": True}, "archieved"),
+        ("favorite", {"file_uids": [str(other.uid)], "is_favorited": True}, "favourited"),
+    ):
+        resp = await authed_client.call("PATCH", f"{base}/{suffix}", json=body)
+        assert str(other.uid) in [f["file_uid"] for f in resp.json()["data"]]
+        listed = await authed_client.call("GET", f"{base}/{key}")
+        assert str(other.uid) in [f["file_uid"] for f in listed.json()["data"]]
+
+    await db_session.commit()
+    row = (
+        await db_session.execute(select(DfEngineGenerationResults).where(DfEngineGenerationResults.id == other.id))
+    ).scalar_one()
+    assert row.updated_by == int(user_id) and row.archieved_at and row.favourited_at

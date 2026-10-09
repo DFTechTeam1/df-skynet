@@ -78,7 +78,7 @@ def _udin_rename(mock_udin, old, new):
 
 @pytest.mark.asyncio
 async def test_rename_upload_by_owner(authed_client, project_task, user_id, mock_udin, db_session, as_roles):
-    """200; Udin gets filepath+name, row name/path follow Udin's pair and updated_by is the caller."""
+    """200; Udin gets filepath + name with the file's own extension, row name/path follow Udin's pair and updated_by is the caller."""
     as_roles(PLAIN)
     old = f"{_root(project_task)}/upload/images/a_{uuid4().hex[:6]}.jpg"
     new = old.replace("/a_", "/b_")
@@ -86,7 +86,7 @@ async def test_rename_upload_by_owner(authed_client, project_task, user_id, mock
     _udin_rename(mock_udin, old, new)
     resp = await authed_client.call("PATCH", f"/api/files/upload/{row.uid}", json={"name": "b"}, raise_for_status=False)
     assert resp.status_code == 200, resp.text
-    assert mock_udin.calls[-1][2] == {"filepath": old, "name": "b"}
+    assert mock_udin.calls[-1][2] == {"filepath": old, "name": "b.jpg"}
     row = await _row(db_session, DfEngineUploadFiles, row.id)
     assert (row.path, row.updated_by) == (new, int(user_id)) and row.updated_at is not None
 
@@ -335,3 +335,17 @@ async def test_tree_marks_type_and_override_actions(authed_client, project_task,
     assert plain["type"] == over["type"] == "upload"
     assert not any(plain["action"][k] for k in ("can_rename", "can_delete", "can_choose_to_move"))
     assert all(over["action"][k] for k in ("can_rename", "can_delete", "can_choose_to_move"))
+
+
+@pytest.mark.asyncio
+async def test_rename_keeps_a_dot_in_the_new_name(authed_client, project_task, user_id, mock_udin, as_roles):
+    """200; a name like `anjay.txt lagii` is sent with the real extension appended, so Udin cannot read `.txt lagii` as one."""
+    as_roles(PLAIN)
+    old = f"{_root(project_task)}/upload/images/a_{uuid4().hex[:6]}.png"
+    row = _upload(project_task, user_id, old)
+    _udin_rename(mock_udin, old, old.replace("/a_", "/b_"))
+    resp = await authed_client.call(
+        "PATCH", f"/api/files/upload/{row.uid}", json={"name": "anjay.txt lagii"}, raise_for_status=False
+    )
+    assert resp.status_code == 200, resp.text
+    assert mock_udin.calls[-1][2] == {"filepath": old, "name": "anjay.txt lagii.png"}

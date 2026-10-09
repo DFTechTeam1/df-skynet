@@ -1,11 +1,15 @@
 import re
 from datetime import datetime
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from utils import local_time
 from utils.formatter import format_user_employees, format_datetime, format_employee_users
 from typing import Any
 from services.mysql.model import (
     DfEngineApiKeys,
+    DfEngineApiKeySnapshots,
+    DfEngineGenerations,
     Employees,
     Users,
 )
@@ -106,3 +110,34 @@ class ApiKeyManagement:
         record.pop("employees", None)
         record.pop("employee_name", None)
         return record
+
+    async def archive(self, db: AsyncSession, record: DfEngineApiKeys) -> DfEngineApiKeySnapshots:
+        """Copy `record` into `df_engine_api_key_snapshots` and repoint every generation made with it (the polymorphic
+        `sourceable_id`/`sourceable_type`) at the snapshot. The caller deletes `record` afterwards."""
+        snapshot = DfEngineApiKeySnapshots(
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            expires_at=record.expires_at,
+            limit=record.limit,
+            limit_reset=record.limit_reset,
+            uid=record.uid,
+            key=record.key,
+            hash=record.hash,
+            name=record.name,
+            description=record.description,
+            employee_id=record.employee_id,
+            employee_name=record.employee_name,
+            created_by=record.created_by,
+            updated_by=record.updated_by,
+        )
+        db.add(snapshot)
+        await db.flush()
+        await db.execute(
+            update(DfEngineGenerations)
+            .where(
+                DfEngineGenerations.sourceable_type == DfEngineApiKeys.__name__,  # type: ignore
+                DfEngineGenerations.sourceable_id == record.id,  # type: ignore
+            )
+            .values(sourceable_id=snapshot.id, sourceable_type=DfEngineApiKeySnapshots.__name__)
+        )
+        return snapshot

@@ -366,11 +366,19 @@ class GenerationsController(CoreDependencies):
         PROJECT_STATUS_ONGOING = 1
 
         try:
-            generated_files = await get_generation_files(
-                ctx, user_id=None if has_override(self.user["roles"]) else user_id, file_uids=[str(file_uid)]
-            )
-            if not generated_files:
-                raise DataNotFoundError(message="file_not_found", error={"file_uid": ["file_not_found"]})
+            can_override = has_override(self.user["roles"])
+            try:
+                generated_files = await get_generation_files(
+                    ctx, user_id=None if can_override else user_id, file_uids=[str(file_uid)]
+                )
+            except DataNotFoundError:
+                try:
+                    await get_generation_files(ctx, file_uids=[str(file_uid)])
+                except DataNotFoundError:
+                    raise DataNotFoundError(message="file_not_found", error={"file_uid": ["file_not_found"]})
+                raise DataValidationError(
+                    message="file_edit_not_permitted", error={"file_uid": ["file_edit_not_permitted"]}
+                )
             source_file = generated_files[0]
             edit_parent_id = source_file["parent_id"] or source_file["id"]
             prior = serialize(
@@ -1029,14 +1037,13 @@ class GenerationsController(CoreDependencies):
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
-        owner_id = user_id if my_task else None
         try:
             task = await get_project_task(ctx, task_uid)
             response.data = await get_generation_main_files(
-                ctx, user_id, task["id"], owner_id, search, has_override(self.user["roles"])
+                ctx, user_id, task["id"], my_task, search, has_override(self.user["roles"])
             )
             logging.info(
-                f"user={user_id} fetched user galleries task_uid={task_uid} owner_id={owner_id} "
+                f"user={user_id} fetched user galleries task_uid={task_uid} my_task={my_task} "
                 f"search={search} count={len(response.data)}"
             )
         except BaseError:

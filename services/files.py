@@ -242,6 +242,42 @@ async def call_udin_folder(
     return data.get("data")
 
 
+async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, user_id: int, path: str) -> None:
+    """Permanently delete (Udin + DB) every uploaded file under the `upload` folder `path`."""
+    rows = await query(
+        ctx.db,
+        DfEngineUploadFiles,
+        filters=(
+            DfEngineUploadFiles.type != UploadFileTypes.folder,  # type: ignore
+            DfEngineUploadFiles.path.startswith(path + "/", autoescape=True),  # type: ignore
+        ),
+    )
+    if not rows:
+        return
+    await call_udin_folder(
+        "DELETE",
+        "delete-files",
+        project_uid,
+        user_id,
+        {"sources": [r.path for r in rows]},
+        "files_delete_failed",
+        "delete-files",
+    )
+    for row in rows:
+        await ctx.redis.delete(ctx.key.user_file_detail(row.uid))  # type: ignore
+        await ctx.db.delete(row)
+    await ctx.db.flush()
+
+
+async def invalidate_generation_lists(ctx: ConnectionContext, project_id: int, user_ids: Any) -> None:
+    """Drop every user's cached result/archived/favourited lists of a project. The lists are keyed per viewer, so a
+    change made by an override user must also clear the file owners' (and a previous updater's) lists."""
+    for uid in {uid for uid in user_ids if uid is not None}:
+        await ctx.redis.delete(ctx.key.generation_files_result_list(uid, project_id))  # type: ignore
+        await ctx.redis.delete(ctx.key.generation_files_archived_list(uid, project_id))  # type: ignore
+        await ctx.redis.delete(ctx.key.generation_files_favourited_list(uid, project_id))  # type: ignore
+
+
 async def apply_folder_changes(
     ctx: ConnectionContext,
     project_task: dict[str, Any],
@@ -370,7 +406,15 @@ async def build_file_tree(
         song_id=project_task["id"] if is_song else None,
         user_id=user_id if my_task else None,
     )
-    generated = await get_generation_main_files(ctx, user_id, project_task["id"], user_id, None, has_override(roles))
+    generated = await get_generation_main_files(
+        ctx,
+        user_id,
+        project_task["id"],
+        my_task,
+        None,
+        has_override(roles),
+        project_id=project_task["project_id"],
+    )
     tree = format_file_tree(uploaded, generated, user_id, await get_folder_depth_limit(ctx), has_override(roles))
     logging.info(
         f"[file-tree] user={user_id} {'song_id' if is_song else 'task_id'}={project_task['id']} "

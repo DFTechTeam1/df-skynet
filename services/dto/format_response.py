@@ -42,7 +42,7 @@ class GenerationAction(BaseModel):
 
 def grant_generation_override(record: dict[str, Any]) -> None:
     """Widen a serialized generated-file record for an `OVERRIDE_FILE_ROLES` user: rename, move (unless archived)
-    and image-edit work on anyone's file. Archive/favourite/set-main stay owner-only. Pending records (no file yet)
+    image-edit, set-main, archive and favourite work on anyone's file. Pending records (no file yet)
     are left alone. Applied on the way out, never before caching, because cached lists are shared between viewers."""
     action = record.get("action")
     if record.get("file_uid") is None or not action:
@@ -50,6 +50,11 @@ def grant_generation_override(record: dict[str, Any]) -> None:
     action["can_rename"] = True
     action["can_choose_to_move"] = record.get("archieved_at") is None
     action["can_use_as_edit"] = action["can_use_as_reference"]
+    action["can_set_main"] = record.get("is_main") is False
+    action["can_archieve"] = record.get("archieved_at") is None and record.get("is_main") is False
+    action["can_unarchieve"] = record.get("archieved_at") is not None
+    action["can_favorited"] = record.get("favourited_at") is None
+    action["can_unfavorited"] = record.get("favourited_at") is not None
 
 
 class ReferenceAction(BaseModel):

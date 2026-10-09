@@ -62,9 +62,10 @@ async def test_archive_without_a_cached_result_list_skips_the_cache_patch(authed
 
 @pytest.mark.asyncio
 async def test_archive_with_a_cache_miss_still_updates_and_returns_the_archived_list(
-    authed_client, project_task, monkeypatch
+    authed_client, project_task, monkeypatch, as_roles
 ):
     """200 OK; archiving works when the cached result list is absent, only the cache patch is skipped."""
+    as_roles(["staff"])
     uid = str(uuid4())
     record = {
         "file_uid": uid,

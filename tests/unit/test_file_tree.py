@@ -206,13 +206,13 @@ class TestBuildFileTree:
         "is_song,upload_kwargs", [(False, {"task_id": 7, "song_id": None}), (True, {"task_id": None, "song_id": 7})]
     )
     async def test_scopes_uploads_by_task_or_song_and_my_task(self, monkeypatch, is_song, upload_kwargs):
-        """Uploads are queried by task_id or song_id; `my_task` narrows them to the caller while generated files do not follow it."""
+        """Uploads are queried by task_id or song_id; `my_task` narrows them to the caller and generated files are project-wide, narrowed to the caller only by `my_task`."""
         get_uploads = AsyncMock(return_value=[])
         monkeypatch.setattr(files, "get_user_uploaded_files", get_uploads)
         monkeypatch.setattr(files, "get_generation_main_files", AsyncMock(return_value=[]))
         monkeypatch.setattr(files, "get_admin_settings", AsyncMock(return_value={"folder_depth_limit": 3}))
 
-        tree = await files.build_file_tree(object(), {"id": 7, "is_song": is_song}, 5, my_task=True)
+        tree = await files.build_file_tree(object(), {"id": 7, "is_song": is_song, "project_id": 9}, 5, my_task=True)
         assert tree == {}
         get_uploads.assert_awaited_once_with(unittest_any(), user_id=5, **upload_kwargs)
 
@@ -228,7 +228,7 @@ class TestBuildFileTree:
             lambda up, gen, user_id, limit, override=False: seen.setdefault("limit", limit) and {},
         )
 
-        await files.build_file_tree(object(), {"id": 1, "is_song": False}, 1)
+        await files.build_file_tree(object(), {"id": 1, "is_song": False, "project_id": 9}, 1)
         assert seen["limit"] == 4
 
 
