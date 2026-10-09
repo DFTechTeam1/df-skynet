@@ -525,7 +525,8 @@ class GenerationsController(CoreDependencies):
             await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
             await delete_pattern(ctx.redis, ctx.key.user_galleries_pattern(user_id))
             await delete_pattern(ctx.redis, ctx.key.generation_file_detail_pattern(user_id))
-            await self.redis.delete(cache_key.generation_files_result_list(user_id, project["id"]))
+            for pattern in cache_key.generation_files_user_lists_patterns(user_id):
+                await delete_pattern(self.redis, pattern)
 
             generation_detail_key = cache_key.generation_detail(user_id, str(generation.uid))
             record = serialize(
@@ -786,7 +787,8 @@ class GenerationsController(CoreDependencies):
             await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
             await delete_pattern(ctx.redis, ctx.key.user_galleries_pattern(user_id))
             await delete_pattern(ctx.redis, ctx.key.generation_file_detail_pattern(user_id))
-            await self.redis.delete(cache_key.generation_files_result_list(user_id, project["id"]))
+            for pattern in cache_key.generation_files_user_lists_patterns(user_id):
+                await delete_pattern(self.redis, pattern)
 
             generation_detail_key = cache_key.generation_detail(user_id, str(generation.uid))
             cached_generation_detail = await get_json(ctx.redis, generation_detail_key)
@@ -1039,8 +1041,15 @@ class GenerationsController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
             task = await get_project_task(ctx, task_uid)
+            is_song = task.get("is_song")
             response.data = await get_generation_main_files(
-                ctx, user_id, task["id"], my_task, search, has_override(self.user["roles"])
+                ctx,
+                user_id,
+                None if is_song else task["id"],
+                my_task,
+                search,
+                has_override(self.user["roles"]),
+                task["id"] if is_song else None,
             )
             logging.info(
                 f"user={user_id} fetched user galleries task_uid={task_uid} my_task={my_task} "

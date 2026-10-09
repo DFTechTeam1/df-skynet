@@ -284,7 +284,8 @@ def udin_uploader(
                 delete_pattern_sync(redis, cache_key.global_references_picker_pattern(user_id))
                 delete_pattern_sync(redis, cache_key.user_files_pattern(task_id=task_id))
                 delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(task_id))
-                redis.delete(cache_key.generation_files_result_list(user_id, project_id))
+                for pattern in cache_key.generation_files_user_lists_patterns(user_id):
+                    delete_pattern_sync(redis, pattern)
                 delete_pattern_sync(redis, cache_key.generation_files_references_picker_pattern(user_id))
 
             if family_ids:
