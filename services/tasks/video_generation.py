@@ -7,7 +7,7 @@ from config.variables import USD_TO_IDR_RATE
 from services.api_caller import APICaller
 from services.celery_app import celery_app
 from services.dto import SyncedConnectionContext
-from services.mysql import get_sync_db
+from services.mysql import get_sync_db, get_usd_rate
 from services.mysql.model import DfEngineGenerations
 from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_json_sync, sync_client
@@ -119,6 +119,7 @@ def video_generation(
         generation.response = json.dumps({"polling_url": body["polling_url"]})  # type: ignore
         generation.status_code = response.status_code  # type: ignore
         generation.cost = usage.get("cost")  # type: ignore
+        generation.exchange_rate = get_usd_rate(db)  # type: ignore
         ctx.db.add(generation)
         generation_detail_key = ctx.key.generation_detail(user_id, str(generation.uid))  # type: ignore
         cached_generation_detail = get_json_sync(ctx.redis, generation_detail_key)

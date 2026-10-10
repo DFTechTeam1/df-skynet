@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import uuid4
 import pytest
 import pytest_asyncio
-from config.variables import USD_TO_IDR_RATE
+from decimal import Decimal
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
@@ -27,8 +27,13 @@ async def generation_fks(user_id) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_averages_only_recent_successful_generations(authed_client, user_id, generation_fks):
+async def test_averages_only_recent_successful_generations(authed_client, user_id, generation_fks, monkeypatch):
     """Avg should include only in-window `success` rows, excluding `failed` and stale rows."""
+
+    def fake_rate(db):
+        return Decimal("0.00005")  # 1 IDR = 0.00005 USD -> 20,000 IDR per USD
+
+    monkeypatch.setattr("apps.controller.generations.get_usd_rate", fake_rate)
     model = DfEngineModelOptionsFactory.create()
     common = dict(model_id=model.id, created_by=int(user_id), sourceable_id=1, **generation_fks)
 
@@ -46,7 +51,7 @@ async def test_averages_only_recent_successful_generations(authed_client, user_i
     assert resp.status_code == 200
     body = resp.json()["data"]
     assert body["usd"] == "USD 0.20"
-    assert body["idr"] == f"IDR {0.2 * float(USD_TO_IDR_RATE):,.0f}"
+    assert body["idr"] == "IDR 4.000"
 
 
 @pytest.mark.asyncio

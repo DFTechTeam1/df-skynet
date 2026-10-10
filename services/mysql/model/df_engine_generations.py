@@ -84,6 +84,9 @@ class DfEngineGenerations(SQLModel, table=True):
     status_code: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     token_usage: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     cost: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(12, 6), nullable=True))
+    exchange_rate: Decimal = Field(
+        default=Decimal("0"), sa_column=Column(DECIMAL(20, 8), nullable=False, server_default="0")
+    )
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
     )

@@ -12,7 +12,7 @@ from config.variables import USD_TO_IDR_RATE
 from schemas.response import PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
-from services.mysql import query
+from services.mysql import get_usd_rate, query
 from services.mysql.model import (
     DfEngineModelOptions,
     DfEngineGenerations,
@@ -149,11 +149,13 @@ class GenerationsController(CoreDependencies):
                 fetch_one=True,
             )
             avg_cost = Decimal(str(avg_cost)) if avg_cost is not None else Decimal(0)
+            usd_rate = await self.db.run_sync(get_usd_rate)
+            idr_cost = avg_cost / usd_rate if usd_rate > 0 else avg_cost * USD_TO_IDR_RATE
 
             logging.info(f"user={self.user['user_id']} fetched avg price model uid={model_uid}")
             response.data = {
                 "usd": "USD 0" if avg_cost == 0 else f"USD {avg_cost:.2f}",
-                "idr": f"IDR {avg_cost * USD_TO_IDR_RATE:,.0f}",
+                "idr": f"IDR {idr_cost:,.0f}".replace(",", "."),
             }
         except BaseError:
             raise

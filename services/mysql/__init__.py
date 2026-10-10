@@ -1,8 +1,9 @@
 from contextlib import contextmanager
+from decimal import Decimal
 from functools import lru_cache
 from typing import Any, AsyncGenerator, Generator, Optional
 from apps.secret import DB_ASYNC_URL, DB_SYNC_URL
-from sqlalchemy import Engine, create_engine, select
+from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
@@ -182,3 +183,12 @@ def query_sync(
     if fetch_one:
         return result.scalars().first() if scalar else result.first()
     return result.scalars().all() if scalar else result.all()
+
+
+def get_usd_rate(db: Session) -> Decimal:
+    """USD->base-currency rate from the `get_currency_rate` procedure; 0 if the call fails."""
+    try:
+        row = db.execute(text("CALL get_currency_rate('USD')")).fetchone()
+        return Decimal(str(row[0])) if row else Decimal("0")
+    except Exception:
+        return Decimal("0")

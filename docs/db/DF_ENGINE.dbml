@@ -448,6 +448,7 @@ Table df_engine_generations {
     status_code integer [default: null]
     token_usage integer [default: null]
     cost decimal(10, 2) [default: null]
+    exchange_rate decimal(20, 8) [not null, default: 0]
     created_by bigint [default: null]
     enhance_id bigint [default: null, note: "References df_engine_generations.id where kind = 'enhancer'. If filled (kind = 'image'), prompt is overridden by that row's own prompt/full_prompt"]
     x_min decimal(10, 2) [default: null, note: "kind = 'image' only"]

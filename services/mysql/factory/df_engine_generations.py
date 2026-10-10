@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import uuid4
 
 from apps.secret import DB_SYNC_URL
@@ -34,6 +35,7 @@ class DfEngineGenerationsFactory(SQLAlchemyModelFactory):
     status_code = None
     token_usage = None
     cost = None
+    exchange_rate = Decimal("0")
     created_by = None
     enhance_id = None
     x_min = None
