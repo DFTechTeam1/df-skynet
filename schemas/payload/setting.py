@@ -1,5 +1,5 @@
 from uuid import UUID
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -104,6 +104,33 @@ class ProjectSettingPayload(BaseModel):
     )
 
 
+PromptValidationType = Literal[
+    "prompt_enhancement",
+    "prompt_injection",
+    "nfsw",
+    "image_generation",
+    "video_generation",
+    "storyboard_generation",
+    "chat_assistant",
+    "element_generation",
+]
+
+
+class PromptValidation(BaseModel):
+    type: PromptValidationType = Field(description="Type of prompt validation to perform.")
+    threshold: float = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="Threshold for the prompt validation. If not provided 0 then no validation will be performed. If provided > 0, the prompt will be validated against this threshold.",
+    )
+    instruction: str = Field(
+        description="What the checker scores for this type. Required; only used when the threshold is above 0.",
+        min_length=1,
+        max_length=16_000,
+    )
+
+
 class AdminGlobalSettingPayload(BaseModel):
     """Workspace-wide DF Engine settings. This is a full replace — send the whole
     document, not just the fields you changed. Every field has a default so the
@@ -146,6 +173,24 @@ class AdminGlobalSettingPayload(BaseModel):
         ),
         examples=[None],
     )
+    prompt_guardrails: Optional[list[PromptValidation]] = Field(
+        default=None,
+        min_length=1,
+        max_length=len(PromptValidationType.__args__),
+        description=(
+            "Prompt guardrails checked before generating or enhancing. Each rule has a type, a "
+            "threshold (0 = off, above 0 = on) and the instruction the checker scores against. "
+            "Omit the field to keep the saved rules; send null to clear them (no guardrails run)."
+        ),
+    )
+
+    @field_validator("prompt_guardrails")
+    @classmethod
+    def dedupe_prompt_guardrails(cls, value: Optional[list[PromptValidation]]) -> Optional[list[PromptValidation]]:
+        """Collapse repeated validation types, keeping the last value given."""
+        if value is None:
+            return None
+        return list({item.type: item for item in value}.values())
 
     @field_validator("project_class_limitations")
     @classmethod

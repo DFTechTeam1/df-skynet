@@ -50,7 +50,7 @@ from services.generations import global_reference_sections, reference_sections
 from services.model_management import ModelManagement
 from utils import local_time
 from utils.serializer import serialize
-from validations.prompt import enhance_prompt, rank_prompt
+from validations.prompt import enhance_prompt, validate_prompt
 from validations.model import (
     validate_image_model_parameter,
     validate_video_model_parameter,
@@ -302,6 +302,9 @@ class GenerationsController(CoreDependencies):
 
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
+            await validate_prompt(
+                ctx, schema.prompt, enhancer_model["model_id"], api_key["key"], user_id, "prompt_enhancement"
+            )
             enhanced = await enhance_prompt(merged_prompt, enhancer_model["model_id"], api_key["key"], user_id)
 
             generation = DfEngineGenerations(
@@ -321,6 +324,7 @@ class GenerationsController(CoreDependencies):
                 status_code=enhanced["status_code"],
                 token_usage=enhanced["usage"].get("total_tokens"),
                 cost=enhanced["usage"].get("cost"),
+                exchange_rate=await self.db.run_sync(get_usd_rate),
                 created_by=user_id,
             )
             self.db.add(generation)
@@ -468,11 +472,8 @@ class GenerationsController(CoreDependencies):
 
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
-            await rank_prompt(
-                resolved_prompt,
-                ranking_model["model_id"],
-                api_key["key"],
-                GenerationKinds.image,
+            await validate_prompt(
+                ctx, resolved_prompt, ranking_model["model_id"], api_key["key"], user_id, "image_generation"
             )
 
             """Insert generation record"""
@@ -673,11 +674,13 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
-            await rank_prompt(
+            await validate_prompt(
+                ctx,
                 resolved_prompt,
                 ranking_model["model_id"],
                 api_key["key"],
-                GenerationKinds.image if schema.type == "image" else GenerationKinds.video,
+                user_id,
+                "image_generation" if schema.type == "image" else "video_generation",
             )
 
             """Insert generation record"""

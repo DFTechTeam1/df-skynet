@@ -229,11 +229,24 @@ class SettingController(CoreDependencies):
             }
             requested_limits = {pcl.id: pcl.model_dump(mode="json") for pcl in schema.project_class_limitations}
 
+            saved_guardrails = rows_by_key.get("prompt_guardrails")
+            if "prompt_guardrails" not in schema.model_fields_set:
+                prompt_guardrails = (
+                    json.loads(saved_guardrails.value) if saved_guardrails and saved_guardrails.value else None
+                )
+            else:
+                prompt_guardrails = (
+                    [v.model_dump(mode="json") for v in schema.prompt_guardrails]
+                    if schema.prompt_guardrails is not None
+                    else None
+                )
+
             incoming = {
                 "admin_view": schema.admin_view.model_dump(mode="json"),
                 "folder_depth_limit": schema.folder_depth_limit,
                 "enhancer_model": resolved_model["enhancer_model"],
                 "assistant_model": resolved_model["assistant_model"],
+                "prompt_guardrails": prompt_guardrails,
                 "project_class_limitations": [
                     {
                         **ProjectClassLimitations(id=pc.id).model_dump(mode="json"),
