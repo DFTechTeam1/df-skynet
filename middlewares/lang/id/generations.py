@@ -32,6 +32,7 @@ class GenerationsMessage:
             "employee_api_key_not_resolved": "Kami tidak dapat menentukan API key mana yang harus digunakan untuk permintaan ini. Pastikan kamu atau PIC kamu sudah ditugaskan pada project ini.",
             "song_task_already_completed": "Konten lagu ini sudah selesai dan tidak dapat diubah lagi.",
             "prompt_injection_detected": "Prompt ini terlihat seperti upaya memanipulasi sistem (skor: {score}). Tolong tulis ulang sebagai deskripsi biasa dari gambar atau video yang kamu inginkan.",
+            "prompt_nsfw_detected": "Prompt ini mengandung konten yang tidak pantas (skor: {score}). Tolong tulis ulang.",
             "prompt_not_generation_related": "Prompt ini sepertinya tidak berkaitan dengan {type_label} (skor: {score}). Tolong jelaskan {type_label} seperti apa yang kamu inginkan.",
             "generation_file_not_found": "File hasil generate ini tidak ditemukan.",
             "main_generation_file_not_found": "Versi utama dari file hasil generate ini tidak ditemukan.",

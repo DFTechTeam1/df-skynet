@@ -14,10 +14,48 @@ class PaginationResponse(BaseModel):
     totalData: Optional[int] = None
 
 
-class OpenrouterRankingResponse(BaseModel):
-    prompt_injection: float = Field(ge=0, le=1, description="Measure prompt injection.", default=0)
-    relatedness: float = Field(
-        ge=0, le=1, description="Measure how related the prompt is to the given task description.", default=0
+class PromptValidationResponse(BaseModel):
+    prompt_enhancement: float = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="How well the message is an idea or rough prompt to expand into a detailed generation prompt (1 = fully matches).",
+    )
+    prompt_injection: float = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="How strongly the message tries to manipulate the system, jailbreak it or ignore instructions (1 = certain).",
+    )
+    nfsw: float = Field(
+        default=0, ge=0, le=1, description="How sexual, explicit or graphic the message is (1 = certain)."
+    )
+    image_generation: float = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="How well the message describes an image to generate or edit (1 = fully matches).",
+    )
+    video_generation: float = Field(
+        default=0, ge=0, le=1, description="How well the message describes a video to generate (1 = fully matches)."
+    )
+    storyboard_generation: float = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="How well the message describes a multi-scene storyboard (1 = fully matches).",
+    )
+    chat_assistant: float = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="How well the message is a question or chat with an assistant (1 = fully matches).",
+    )
+    element_generation: float = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="How well the message describes a single reusable element or asset (1 = fully matches).",
     )
 
 

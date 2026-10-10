@@ -1,49 +1,69 @@
-from services.mysql.model.df_engine_generations import GenerationKinds
-from validations.prompt import PROMPT_INJECTION_THRESHOLD, RELATEDNESS_THRESHOLD, TASK_PROFILES
+import json
+from unittest.mock import AsyncMock
+import pytest
+from error import DataValidationError
+import validations.prompt as vp
 
 
-def _check(scores: dict, type: GenerationKinds) -> str | None:
-    """Mirrors the inline checks in rank_prompt, without the network call."""
-    if scores["prompt_injection"] >= PROMPT_INJECTION_THRESHOLD:
-        return "prompt_injection_detected"
-    if scores["relatedness"] < RELATEDNESS_THRESHOLD:
-        return "prompt_not_generation_related"
-    return None
+def _rules(**thresholds):
+    return [{"type": t, "threshold": v, "instruction": f"score {t}"} for t, v in thresholds.items()]
 
 
-def _scores(**overrides) -> dict:
-    base = dict(prompt_injection=0, relatedness=0)
-    base.update(overrides)
-    return base
+class _Resp:
+    def __init__(self, content):
+        self._content = content
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"choices": [{"message": {"content": self._content}}]}
 
 
-def test_high_prompt_injection_is_rejected_regardless_of_relatedness():
-    scores = _scores(prompt_injection=0.9, relatedness=0.9)
-    assert _check(scores, GenerationKinds.image) == "prompt_injection_detected"
+async def _run(monkeypatch, rules, content, type="image_generation"):
+    async def fake_settings(ctx):
+        return {"prompt_guardrails": rules}
+
+    async def fake_openrouter(self, method, url, user_id, **kwargs):
+        return _Resp(content if isinstance(content, str) else json.dumps(content))
+
+    monkeypatch.setattr(vp, "get_admin_settings", fake_settings)
+    monkeypatch.setattr(vp.APICaller, "openrouter", fake_openrouter)
+    await vp.validate_prompt(None, "a cat", "m", "k", 1, type)  # type: ignore
 
 
-def test_low_relatedness_is_rejected():
-    scores = _scores(relatedness=0.2)
-    assert _check(scores, GenerationKinds.storyboard) == "prompt_not_generation_related"
+@pytest.mark.asyncio
+async def test_no_active_rules_skips_call(monkeypatch):
+    spy = AsyncMock()
+
+    async def fake_settings(ctx):
+        return {"prompt_guardrails": _rules(nfsw=0, image_generation=0)}
+
+    monkeypatch.setattr(vp, "get_admin_settings", fake_settings)
+    monkeypatch.setattr(vp.APICaller, "openrouter", spy)
+    await vp.validate_prompt(None, "a cat", "m", "k", 1, "image_generation")  # type: ignore
+    spy.assert_not_called()
 
 
-def test_on_topic_prompt_passes():
-    scores = _scores(relatedness=0.9)
-    assert _check(scores, GenerationKinds.video) is None
+@pytest.mark.asyncio
+async def test_injection_rejected(monkeypatch):
+    with pytest.raises(DataValidationError) as e:
+        await _run(monkeypatch, _rules(prompt_injection=0.5), {"prompt_injection": 0.9})
+    assert e.value.message == "prompt_injection_detected"
 
 
-def test_threshold_boundaries():
-    assert _check(_scores(relatedness=0.5), GenerationKinds.chat) is None
-    assert _check(_scores(prompt_injection=0.5), GenerationKinds.chat) == "prompt_injection_detected"
+@pytest.mark.asyncio
+async def test_low_relatedness_rejected_and_other_type_ignored(monkeypatch):
+    rules = _rules(image_generation=0.5, video_generation=0.5)
+    with pytest.raises(DataValidationError) as e:
+        await _run(monkeypatch, rules, {"image_generation": 0.2})
+    assert e.value.message == "prompt_not_generation_related"
+    await _run(monkeypatch, rules, {"image_generation": 0.5})
 
 
-def test_task_profiles_cover_every_generation_kind_used_in_validation():
-    assert set(TASK_PROFILES) == {
-        GenerationKinds.image,
-        GenerationKinds.image_edit,
-        GenerationKinds.video,
-        GenerationKinds.element,
-        GenerationKinds.storyboard,
-        GenerationKinds.chat,
-        GenerationKinds.enhancer,
-    }
+@pytest.mark.asyncio
+async def test_missing_score_or_bad_json_fails_closed(monkeypatch):
+    for content in ({"nfsw": 0.0}, "not json"):
+        with pytest.raises(DataValidationError) as e:
+            await _run(monkeypatch, _rules(image_generation=0.5), content)
+        assert e.value.message == "prompt_ranking_failed"
