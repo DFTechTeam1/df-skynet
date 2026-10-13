@@ -2,7 +2,7 @@ import pytest
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineExternalApiCalls, Employees
+from services.mysql.model import DfEngineApiKeys, DfEngineExternalApiCalls, Employees
 from services.mysql.factory import DfEngineApiKeysFactory
 from tests.helpers import expected_user, find_by_name
 
@@ -42,7 +42,6 @@ async def test_create_success_returns_full_refreshed_list(authed_client, active_
             "description": "a desc",
             "limit": 50.0,
             "limit_reset": "monthly",
-            "is_main": False,
         },
     )
     assert resp.status_code == 200
@@ -59,7 +58,7 @@ async def test_create_defaults_optional_fields_none(authed_client, active_employ
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "employee_uid": active_employee_uid, "is_main": False},
+        json={"name": name, "employee_uid": active_employee_uid},
     )
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], name)
@@ -77,7 +76,7 @@ async def test_create_key_is_masked_in_response(authed_client, active_employee_u
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "employee_uid": active_employee_uid, "is_main": False},
+        json={"name": name, "employee_uid": active_employee_uid},
     )
     item = find_by_name(resp.json()["data"], name)
     assert "*" in item["key"]
@@ -92,7 +91,7 @@ async def test_create_sets_creater_to_authenticated_user(authed_client, db_sessi
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "employee_uid": active_employee_uid, "is_main": False},
+        json={"name": name, "employee_uid": active_employee_uid},
     )
     item = find_by_name(resp.json()["data"], name)
     assert item["creator"] == creator
@@ -108,7 +107,7 @@ async def test_create_sets_pic_from_employee_uid(authed_client, db_session, acti
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "employee_uid": active_employee_uid, "is_main": False},
+        json={"name": name, "employee_uid": active_employee_uid},
     )
     item = find_by_name(resp.json()["data"], name)
     assert item["pic"]["nickname"] == employee.nickname
@@ -121,7 +120,7 @@ async def test_create_logs_the_openrouter_call(authed_client, db_session, active
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "employee_uid": active_employee_uid, "is_main": False},
+        json={"name": name, "employee_uid": active_employee_uid},
     )
     assert resp.status_code == 200
 
@@ -132,28 +131,33 @@ async def test_create_logs_the_openrouter_call(authed_client, db_session, active
     assert log.error_message is None
 
 
+async def _is_main(db_session, name: str) -> bool:
+    await db_session.rollback()  # fresh snapshot of the API's committed writes
+    return (await db_session.execute(select(DfEngineApiKeys.is_main).where(DfEngineApiKeys.name == name))).scalar_one()
+
+
 @pytest.mark.asyncio
-async def test_create_second_main_key_for_same_employee_is_409(authed_client, db_session, user_id, active_employee_uid):
-    """409 employee_already_has_main_api_key when the PIC already holds a main key;
-    a non-main key for the same PIC still succeeds."""
+async def test_create_first_key_is_main_then_later_keys_are_secondary(authed_client, db_session, active_employee_uid):
+    """200 OK; the PIC's first key is main automatically, later keys are secondary and leave the main alone."""
+    first, second = f"First {uuid4().hex[:8]}", f"Second {uuid4().hex[:8]}"
+    await authed_client.call("POST", URL, json={"name": first, "employee_uid": active_employee_uid})
+    await authed_client.call("POST", URL, json={"name": second, "employee_uid": active_employee_uid})
+
+    assert await _is_main(db_session, first) is True
+    assert await _is_main(db_session, second) is False
+
+
+@pytest.mark.asyncio
+async def test_create_becomes_main_when_pic_has_keys_but_no_main(
+    authed_client, db_session, user_id, active_employee_uid
+):
+    """200 OK; a PIC whose keys are all secondary gets the new key as main."""
     employee = await _employee(db_session, active_employee_uid)
-    DfEngineApiKeysFactory.create(employee_id=employee.id, is_main=True, created_by=int(user_id))
+    DfEngineApiKeysFactory.create(employee_id=employee.id, is_main=False, created_by=int(user_id))
+    name = f"NoMain {uuid4().hex[:8]}"
 
-    second_main = await authed_client.call(
-        "POST",
-        URL,
-        json={"name": f"Main {uuid4().hex[:8]}", "employee_uid": active_employee_uid, "is_main": True},
-        raise_for_status=False,
-    )
-    assert second_main.status_code == 409
-    assert second_main.json()["message"] == resolve_message("employee_already_has_main_api_key", "en")
-
-    non_main = await authed_client.call(
-        "POST",
-        URL,
-        json={"name": f"Secondary {uuid4().hex[:8]}", "employee_uid": active_employee_uid, "is_main": False},
-    )
-    assert non_main.status_code == 200
+    await authed_client.call("POST", URL, json={"name": name, "employee_uid": active_employee_uid})
+    assert await _is_main(db_session, name) is True
 
 
 @pytest.mark.asyncio
@@ -192,12 +196,12 @@ async def test_create_past_expiry_is_rejected(authed_client, active_employee_uid
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "overrides",
-    [{"name": ""}, {"name": "x" * 256}, {"description": ""}, {"limit": -1}],
-    ids=["empty_name", "oversized_name", "empty_description", "negative_limit"],
+    [{"name": ""}, {"name": "x" * 256}, {"limit": -1}],
+    ids=["empty_name", "oversized_name", "negative_limit"],
 )
 async def test_create_validation_errors(authed_client, active_employee_uid, overrides):
     """422 for each individually invalid field."""
-    payload = {"name": f"Invalid {uuid4().hex[:8]}", "employee_uid": active_employee_uid, "is_main": False}
+    payload = {"name": f"Invalid {uuid4().hex[:8]}", "employee_uid": active_employee_uid}
     payload.update(overrides)
     resp = await authed_client.call("POST", URL, json=payload, raise_for_status=False)
     assert resp.status_code == 422
@@ -224,7 +228,7 @@ async def test_create_duplicate_name_same_employee_is_409(authed_client, db_sess
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "employee_uid": active_employee_uid, "is_main": False},
+        json={"name": name, "employee_uid": active_employee_uid},
         raise_for_status=False,
     )
     assert resp.status_code == 409

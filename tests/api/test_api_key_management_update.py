@@ -3,7 +3,7 @@ from datetime import timedelta
 from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
-from services.mysql.model import DfEngineExternalApiCalls, Employees
+from services.mysql.model import DfEngineApiKeys, DfEngineExternalApiCalls, Employees
 from services.mysql.factory import DfEngineApiKeysFactory
 from utils import local_time
 from tests.helpers import expected_user, find_by_name
@@ -117,8 +117,8 @@ async def test_update_changing_limit_calls_openrouter(authed_client, db_session,
 
 @pytest.mark.asyncio
 async def test_update_resaving_own_main_key_succeeds(authed_client, db_session, user_id, active_employee_uid):
-    """200 OK; re-saving a key that is *already* main with is_main=true doesn't false-positive
-    against itself (exclude-self on the single-main check)."""
+    """200 OK; re-saving a key that is *already* main with is_main=true stays main
+    and is a no-op."""
     employee = await _employee(db_session, active_employee_uid)
     row = _key(employee.id, user_id, is_main=True)
     resp = await authed_client.call(
@@ -127,24 +127,58 @@ async def test_update_resaving_own_main_key_succeeds(authed_client, db_session, 
     assert resp.status_code == 200
 
 
+async def _mains(db_session, employee_id) -> list[str]:
+    await db_session.rollback()  # fresh snapshot of the API's committed writes
+    rows = await db_session.execute(
+        select(DfEngineApiKeys.uid).where(DfEngineApiKeys.employee_id == employee_id, DfEngineApiKeys.is_main.is_(True))
+    )
+    return list(rows.scalars().all())
+
+
 @pytest.mark.asyncio
-async def test_update_promoting_to_main_when_another_exists_is_409(
-    authed_client, db_session, user_id, active_employee_uid
-):
-    """409 employee_already_has_main_api_key when setting is_main=true on one key while
-    another key already holds main for that PIC."""
+async def test_update_promoting_swaps_main(authed_client, db_session, user_id, active_employee_uid):
+    """200 OK; promoting a secondary key makes it the PIC's only main — every other key, not just the old main, is demoted."""
     employee = await _employee(db_session, active_employee_uid)
     _key(employee.id, user_id, is_main=True)
-    other = _key(employee.id, user_id, is_main=False)
+    _key(employee.id, user_id, is_main=False)
+    target = _key(employee.id, user_id, is_main=False)
+    target_uid, target_name = target.uid, target.name
 
     resp = await authed_client.call(
         "PATCH",
-        f"{URL}/{other.uid}",
-        json={"name": other.name, "employee_uid": active_employee_uid, "is_main": True},
-        raise_for_status=False,
+        f"{URL}/{target_uid}",
+        json={"name": target_name, "employee_uid": active_employee_uid, "is_main": True},
     )
-    assert resp.status_code == 409
-    assert resp.json()["message"] == resolve_message("employee_already_has_main_api_key", "en")
+    assert resp.status_code == 200
+    assert await _mains(db_session, employee.id) == [target_uid]
+
+
+@pytest.mark.asyncio
+async def test_update_demoting_the_only_main_is_allowed(authed_client, db_session, user_id, active_employee_uid):
+    """200 OK; setting is_main=false on the main key leaves the PIC with no main until one is promoted."""
+    employee = await _employee(db_session, active_employee_uid)
+    row = _key(employee.id, user_id, is_main=True)
+
+    resp = await authed_client.call(
+        "PATCH",
+        f"{URL}/{row.uid}",
+        json={"name": row.name, "employee_uid": active_employee_uid, "is_main": False},
+    )
+    assert resp.status_code == 200
+    assert await _mains(db_session, employee.id) == []
+
+
+@pytest.mark.asyncio
+async def test_list_can_set_to_main_for_secondary_key_with_main_sibling(
+    authed_client, db_session, user_id, active_employee_uid
+):
+    """200 OK; a secondary key is promotable even while a sibling holds main (promotion swaps)."""
+    employee = await _employee(db_session, active_employee_uid)
+    _key(employee.id, user_id, is_main=True)
+    secondary = _key(employee.id, user_id, is_main=False)
+
+    item = find_by_name((await authed_client.call("GET", URL)).json()["data"], secondary.name)
+    assert item["action"]["can_set_to_main"] is True
 
 
 @pytest.mark.asyncio

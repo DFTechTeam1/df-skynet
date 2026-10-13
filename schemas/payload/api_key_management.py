@@ -22,7 +22,6 @@ class CreateApiKeyPayload(BaseModel):
     )
     description: Optional[str] = Field(
         default=None,
-        min_length=1,
         description="Free-text explanation of what this key is used for.",
         examples=["Used for production video generation jobs."],
     )
@@ -41,11 +40,6 @@ class CreateApiKeyPayload(BaseModel):
         default=None,
         description="How often `limit_usage` resets.",
         examples=["monthly"],
-    )
-    is_main: bool = Field(
-        default=True,
-        description="Whether this key can currently be used for generation.",
-        examples=[True],
     )
     expires_at: Optional[datetime] = Field(
         default=None,
@@ -69,7 +63,6 @@ class UpdateApiKeyPayload(BaseModel):
     )
     description: Optional[str] = Field(
         default=None,
-        min_length=1,
         description="Free-text explanation of what this key is used for.",
         examples=["Used for production video generation jobs."],
     )

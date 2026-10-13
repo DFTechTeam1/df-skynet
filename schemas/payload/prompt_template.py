@@ -20,7 +20,6 @@ class PromptTemplatePayload(BaseModel):
     )
     description: Optional[str] = Field(
         default=None,
-        min_length=1,
         description="Free-text explanation of what this template is for and when it should be used.",
         examples=["Used to fine-tune the assistant's tone for onboarding conversations."],
     )

@@ -6,7 +6,6 @@ class ApiKeyManagementMessage:
             "employee_not_found": "Kami tidak menemukan employee yang cocok dengan PIC ini.",
             "employee_already_resigned": "Employee ini sudah resign dan tidak dapat ditugaskan sebagai PIC.",
             "employee_position_not_allowed": "Hanya Project Manager atau Assistant Project Manager yang dapat ditugaskan sebagai PIC.",
-            "employee_already_has_main_api_key": "Employee ini sudah memiliki main API key. Hanya satu main API key yang diperbolehkan per employee.",
             "cannot_delete_main_api_key": "Key ini sedang ditandai sebagai main dan tidak dapat dihapus. Ubah statusnya terlebih dahulu.",
             "api_key_missing_hash": "API key ini kehilangan informasi setup dari saat pembuatannya, sehingga tidak dapat diupdate. Key ini hanya dapat dihapus.",
             "api_key_expiry_too_soon": "Tanggal expired minimal 7 hari dari sekarang, agar key tetap berlaku hingga dirotasi secara otomatis.",
