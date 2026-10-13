@@ -4,6 +4,7 @@ from uuid import UUID
 from typing import Optional
 from fastapi import status, Path
 from fastapi_controller import controller
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
@@ -34,9 +35,9 @@ class APIKeyManagementController(CoreDependencies):
         description=(
             "Generates a brand-new API key on OpenRouter for a Project Manager or "
             "Assistant Project Manager. That person (the PIC) can hold several keys at "
-            'once, but only one of them can be marked as "main" at a time — trying to '
-            "add a second main key for the same PIC is rejected. Every attempt to reach "
-            "OpenRouter is recorded, whether it succeeds or fails. Returns the full, "
+            'once, but only one is "main" at a time: the first key for a PIC becomes main '
+            "automatically and later ones are secondary (promote one via update). Every "
+            "attempt to reach OpenRouter is recorded, whether it succeeds or fails. Returns the full, "
             "up-to-date list of API keys, including the one just created."
         ),
         status_code=status.HTTP_200_OK,
@@ -79,8 +80,8 @@ class APIKeyManagementController(CoreDependencies):
                 raise DataNotFoundError(message="employee_not_found")
             if (employee.position_name or "").strip().lower() not in ALLOWED_PIC_POSITIONS:
                 raise DataValidationError(message="employee_position_not_allowed")
-            if schema.is_main and employee.api_key is not None:
-                raise DataConflictError(message="employee_already_has_main_api_key")
+            # First key for a PIC (no main yet) becomes main; later ones are secondary.
+            is_main = employee.api_key is None
 
             name_taken = await query(
                 db=self.db,
@@ -131,7 +132,7 @@ class APIKeyManagementController(CoreDependencies):
                         limit_reset=schema.limit_reset.value if schema.limit_reset else None,
                         expires_at=schema.expires_at,
                         created_by=int(self.user["user_id"]),
-                        is_main=schema.is_main,
+                        is_main=is_main,
                     )
                 )
                 try:
@@ -168,7 +169,7 @@ class APIKeyManagementController(CoreDependencies):
 
             logging.info(
                 f"user={self.user['user_id']} created API key {schema.name!r} for employee {employee.id} "
-                f"(is_main={schema.is_main}) in {int((time.perf_counter() - started_at) * 1000)}ms"
+                f"(is_main={is_main}) in {int((time.perf_counter() - started_at) * 1000)}ms"
             )
             await delete_pattern(self.redis, cache_key.api_key_management_pattern())
             response.data = (await self.api_key_management_to_fetch_available_keys()).data
@@ -420,10 +421,7 @@ class APIKeyManagementController(CoreDependencies):
             )
 
             serialized = serialize(results)
-            employee_ids_with_main = {
-                r["employee_id"] for r in serialized if r["is_main"] and r["employee_id"] is not None
-            }
-            records = [api_key_service.format(record, employee_ids_with_main) for record in serialized]
+            records = [api_key_service.format(record) for record in serialized]
             await set_json(self.redis, api_keys_global_cache_key, records)
             logging.info(f"user={self.user['user_id']} listed {len(records)} API key(s) from database")
             response.data = records
@@ -613,7 +611,8 @@ class APIKeyManagementController(CoreDependencies):
             "key-update fields. OpenRouter is contacted only when the name, spending "
             "limit, or reset schedule actually changed; description and main-flag "
             "changes stay local. An expired key can't be updated (delete it and create "
-            'a new one). The same "only one main key per PIC" rule as creation applies. '
+            "a new one). Setting a key as main automatically demotes the PIC's previous "
+            "main, so there is only ever one. "
             "Returns the full, up-to-date list of API keys."
         ),
         status_code=status.HTTP_200_OK,
@@ -665,23 +664,6 @@ class APIKeyManagementController(CoreDependencies):
             if name_taken is not None:
                 raise DataConflictError(message="api_key_already_exists")
 
-            if schema.is_main and not record.is_main:
-                other_main = await query(
-                    db=self.db,
-                    table=DfEngineApiKeys,
-                    columns=(DfEngineApiKeys.id,),
-                    filters=(
-                        DfEngineApiKeys.employee_id == record.employee_id,
-                        DfEngineApiKeys.is_main.is_(True),  # type: ignore
-                        DfEngineApiKeys.id != record.id,
-                        DfEngineApiKeys.created_by.isnot(None),  # type: ignore
-                        DfEngineApiKeys.hash.isnot(None),  # type: ignore
-                    ),
-                    fetch_one=True,
-                )
-                if other_main is not None:
-                    raise DataConflictError(message="employee_already_has_main_api_key")
-
             new_limit = float(schema.limit) if schema.limit is not None else None
             new_limit_reset = schema.limit_reset.value if schema.limit_reset else None
             current_limit = float(record.limit) if record.limit is not None else None
@@ -726,6 +708,18 @@ class APIKeyManagementController(CoreDependencies):
                 )
 
             if not sync_failed:
+                if schema.is_main and not record.is_main:
+                    # One main per PIC: promoting this key demotes all the PIC's other active keys.
+                    await self.db.execute(
+                        update(DfEngineApiKeys)
+                        .where(
+                            DfEngineApiKeys.employee_id == record.employee_id,  # type: ignore
+                            DfEngineApiKeys.id != record.id,  # type: ignore
+                            DfEngineApiKeys.created_by.isnot(None),  # type: ignore
+                            DfEngineApiKeys.hash.isnot(None),  # type: ignore
+                        )
+                        .values(is_main=False)
+                    )
                 record.name = schema.name
                 record.description = schema.description
                 record.limit = schema.limit

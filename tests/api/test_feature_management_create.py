@@ -86,14 +86,13 @@ async def test_create_sets_creater_to_authenticated_user(authed_client, db_sessi
     [
         {"name": ""},
         {"name": "x" * 256},
-        {"description": ""},
         {"type": "not_a_real_type"},
         {"type": None},
     ],
-    ids=["empty_name", "oversized_name", "empty_description", "unknown_type", "null_type"],
+    ids=["empty_name", "oversized_name", "unknown_type", "null_type"],
 )
 async def test_create_validation_errors(authed_client, overrides):
-    """422 for each individually invalid field: empty name, oversized name, empty description, bad/missing type."""
+    """422 for each individually invalid field: empty name, oversized name, bad/missing type."""
     payload = {"name": f"Invalid {uuid4().hex[:8]}", "type": "generate_image"}
     payload.update(overrides)
     resp = await authed_client.call("POST", URL, json=payload, raise_for_status=False)
@@ -151,3 +150,15 @@ async def test_requires_auth(client):
         raise_for_status=False,
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("description", [None, ""], ids=["null", "empty"])
+async def test_create_accepts_null_or_empty_description(authed_client, description):
+    """200 OK; description has no minimum length, so null and "" are both accepted."""
+    name = f"Create Desc {uuid4().hex[:8]}"
+    resp = await authed_client.call(
+        "POST", URL, json={"name": name, "type": "generate_image", "description": description}
+    )
+    assert resp.status_code == 200
+    assert find_by_name(resp.json()["data"], name)["description"] == description

@@ -10,13 +10,11 @@ pytestmark = pytest.mark.usefixtures("mock_openrouter")
 
 @pytest.mark.asyncio
 async def test_full_lifecycle(authed_client, active_employee_uid):
-    """create as main -> copy (real key) -> rename (syncs to OpenRouter) -> limit change
+    """create (auto main) -> copy (real key) -> rename (syncs to OpenRouter) -> limit change
     (syncs) -> delete blocked while main -> demote -> delete -> gone from list and copy."""
     name = f"Journey {uuid4().hex[:8]}"
 
-    create_resp = await authed_client.call(
-        "POST", URL, json={"name": name, "employee_uid": active_employee_uid, "is_main": True}
-    )
+    create_resp = await authed_client.call("POST", URL, json={"name": name, "employee_uid": active_employee_uid})
     assert create_resp.status_code == 200
     created = find_by_name(create_resp.json()["data"], name)
     uid = created["uid"]
@@ -81,16 +79,18 @@ async def test_hard_delete_then_name_reuse_journey(authed_client, active_employe
     not a resurrection of the old one."""
     name = f"Reused {uuid4().hex[:8]}"
 
-    first_resp = await authed_client.call(
-        "POST", URL, json={"name": name, "employee_uid": active_employee_uid, "is_main": False}
-    )
+    first_resp = await authed_client.call("POST", URL, json={"name": name, "employee_uid": active_employee_uid})
     first_uid = find_by_name(first_resp.json()["data"], name)["uid"]
+
+    # the first key for a PIC is main, and a main key can't be deleted — demote it first
+    demote = await authed_client.call(
+        "PATCH", f"{URL}/{first_uid}", json={"name": name, "employee_uid": active_employee_uid, "is_main": False}
+    )
+    assert demote.status_code == 200
 
     assert (await authed_client.call("DELETE", f"{URL}/{first_uid}")).status_code == 200
 
-    second_resp = await authed_client.call(
-        "POST", URL, json={"name": name, "employee_uid": active_employee_uid, "is_main": False}
-    )
+    second_resp = await authed_client.call("POST", URL, json={"name": name, "employee_uid": active_employee_uid})
     assert second_resp.status_code == 200
     second_uid = find_by_name(second_resp.json()["data"], name)["uid"]
     assert second_uid != first_uid
@@ -104,24 +104,20 @@ async def test_duplicate_name_per_pic_is_rejected_on_create_and_update(authed_cl
     """A key name must be unique per PIC — enforced on create (409) and on a rename into a
     sibling's name (409)."""
     name = f"Dup {uuid4().hex[:8]}"
-    first = await authed_client.call(
-        "POST", URL, json={"name": name, "employee_uid": active_employee_uid, "is_main": False}
-    )
+    first = await authed_client.call("POST", URL, json={"name": name, "employee_uid": active_employee_uid})
     assert first.status_code == 200
 
     dup_create = await authed_client.call(
         "POST",
         URL,
-        json={"name": name, "employee_uid": active_employee_uid, "is_main": False},
+        json={"name": name, "employee_uid": active_employee_uid},
         raise_for_status=False,
     )
     assert dup_create.status_code == 409
     assert dup_create.json()["message"] == resolve_message("api_key_already_exists", "en")
 
     other_name = f"Other {uuid4().hex[:8]}"
-    other = await authed_client.call(
-        "POST", URL, json={"name": other_name, "employee_uid": active_employee_uid, "is_main": False}
-    )
+    other = await authed_client.call("POST", URL, json={"name": other_name, "employee_uid": active_employee_uid})
     other_uid = find_by_name(other.json()["data"], other_name)["uid"]
 
     rename_collision = await authed_client.call(
@@ -140,7 +136,7 @@ async def test_position_guard_blocks_a_non_pm_pic_on_create(authed_client, wrong
     resp = await authed_client.call(
         "POST",
         URL,
-        json={"name": f"Guard {uuid4().hex[:8]}", "employee_uid": wrong_position_employee_uid, "is_main": False},
+        json={"name": f"Guard {uuid4().hex[:8]}", "employee_uid": wrong_position_employee_uid},
         raise_for_status=False,
     )
     assert resp.status_code == 422

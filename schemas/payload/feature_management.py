@@ -42,7 +42,6 @@ class FeaturePayload(BaseModel):
     )
     description: Optional[str] = Field(
         default=None,
-        min_length=1,
         description="Free-text explanation of what this feature does.",
         examples=["Rewrites and expands the user prompt with the enhancer model."],
     )

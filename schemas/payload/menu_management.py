@@ -24,7 +24,6 @@ class MenuPayload(BaseModel):
     )
     description: Optional[str] = Field(
         default=None,
-        min_length=1,
         description="Free-text explanation of what this menu is for.",
         examples=["Main generation workspace."],
     )

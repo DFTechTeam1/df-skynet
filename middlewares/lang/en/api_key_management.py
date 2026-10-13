@@ -6,7 +6,6 @@ class ApiKeyManagementMessage:
             "employee_not_found": "We couldn't find an employee matching this PIC.",
             "employee_already_resigned": "This employee has already resigned and can't be assigned as PIC.",
             "employee_position_not_allowed": "Only a Project Manager or Assistant Project Manager can be assigned as PIC.",
-            "employee_already_has_main_api_key": "This employee already has a main API key. Only one main API key is allowed per employee.",
             "cannot_delete_main_api_key": "This key is currently marked as main and can't be deleted. Reassign or update it first.",
             "api_key_missing_hash": "This API key is missing setup information from when it was created, so it can't be updated. It can only be deleted.",
             "api_key_expiry_too_soon": "Expiry date must be at least 7 days from now, so the key survives until it's automatically rotated.",

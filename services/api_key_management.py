@@ -67,7 +67,7 @@ class ApiKeyManagement:
         record["created_at"] = format_datetime(record["created_at"])
         return record
 
-    def format(self, record: dict[str, Any], employee_ids_with_main: set[int]) -> dict[str, Any]:
+    def format(self, record: dict[str, Any]) -> dict[str, Any]:
         user_permissions = [
             "delete_df_engine_key_management",
             "update_df_engine_key_management",
@@ -96,8 +96,7 @@ class ApiKeyManagement:
             "can_set_to_main": "update_df_engine_key_management" in user_permissions
             and not is_expired
             and bool(record["hash"] and record["employee_id"])
-            and not record["is_main"]
-            and record["employee_id"] not in employee_ids_with_main,
+            and not record["is_main"],
         }
 
         record.pop("id", None)
