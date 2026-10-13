@@ -16,6 +16,7 @@ class DfEngineMenus(SQLModel, table=True):
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     name: str = Field(sa_column=Column(String(255), nullable=False, unique=True))
     description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    icon: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     is_active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     created_by: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=False))
     updated_by: Optional[int] = Field(

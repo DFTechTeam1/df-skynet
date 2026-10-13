@@ -222,3 +222,26 @@ async def test_update_invalidates_the_list_cache(authed_client, user_id):
     found = response_names(resp.json())
     assert renamed in found
     assert menu.name not in found
+
+
+@pytest.mark.asyncio
+async def test_update_replaces_icon_and_omitting_it_clears(authed_client, user_id):
+    """200 OK; PATCH is a full replace, so icon is set when given and reset to null when omitted."""
+    menu = _make_menu(user_id)
+
+    resp = await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": menu.name, "icon": "i-lucide-home"})
+    assert find_by_name(resp.json()["data"], menu.name)["icon"] == "i-lucide-home"
+
+    resp = await authed_client.call("PATCH", f"{URL}/{menu.uid}", json={"name": menu.name})
+    assert find_by_name(resp.json()["data"], menu.name)["icon"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("icon", ["", "x" * 256], ids=["empty_icon", "oversized_icon"])
+async def test_update_icon_validation_errors(authed_client, user_id, icon):
+    """422 when icon is empty or longer than 255 characters."""
+    menu = _make_menu(user_id)
+    resp = await authed_client.call(
+        "PATCH", f"{URL}/{menu.uid}", json={"name": menu.name, "icon": icon}, raise_for_status=False
+    )
+    assert resp.status_code == 422

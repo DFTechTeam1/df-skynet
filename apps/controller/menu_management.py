@@ -184,6 +184,7 @@ class MenuManagementController(CoreDependencies):
             menu = DfEngineMenus(
                 name=schema.name,
                 description=schema.description,
+                icon=schema.icon,
                 is_active=schema.is_active,
                 created_by=int(self.user["user_id"]),
             )
@@ -299,6 +300,7 @@ class MenuManagementController(CoreDependencies):
 
             menu.name = schema.name
             menu.description = schema.description
+            menu.icon = schema.icon
             menu.is_active = schema.is_active
             menu.updated_by = int(self.user["user_id"])
             menu.updated_at = local_time()

@@ -28,12 +28,14 @@ async def test_full_menu_lifecycle(authed_client, db_session):
         json={
             "name": menu_name,
             "description": "v1 desc",
+            "icon": "i-lucide-star",
             "feature_uids": [feature_a_uid, feature_b_uid],
         },
     )
     assert create_resp.status_code == 200
     created = find_by_name(create_resp.json()["data"], menu_name)
     menu_uid = created["uid"]
+    assert created["icon"] == "i-lucide-star"
     assert {f["feature_uid"] for f in created["features"]} == {
         feature_a_uid,
         feature_b_uid,
@@ -55,6 +57,7 @@ async def test_full_menu_lifecycle(authed_client, db_session):
         json={
             "name": renamed,
             "description": "v2 desc",
+            "icon": "i-lucide-moon",
             "is_active": False,
             "feature_uids": [feature_a_uid],
         },
@@ -63,6 +66,7 @@ async def test_full_menu_lifecycle(authed_client, db_session):
     updated = find_by_name(update_resp.json()["data"], renamed)
     assert updated["is_active"] is False
     assert updated["description"] == "v2 desc"
+    assert updated["icon"] == "i-lucide-moon"
     # deactivating the menu doesn't touch its feature links — B was dropped by
     # the feature_uids diff, A stays linked.
     assert {f["feature_uid"] for f in updated["features"]} == {feature_a_uid}
