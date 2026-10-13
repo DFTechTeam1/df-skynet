@@ -25,6 +25,8 @@ class FilesMessage:
             "file_edit_not_permitted": "You can only edit images you generated or uploaded yourself.",
             "file_edit_image_only": "Only image files can be edited.",
             "file_edit_task_required": "This upload isn't linked to a task or song, so it can't be edited.",
+            "invalid_file_name": "File name can only contain letters, numbers, underscores and spaces, and must not include an extension (e.g. .png).",
+            "invalid_folder_name": "Folder name can only contain letters, numbers, underscores and spaces.",
             "folder_create_failed": "Folder could not be created.",
             "folder_delete_failed": "Folder could not be deleted.",
             "files_delete_failed": "One or more files could not be deleted.",

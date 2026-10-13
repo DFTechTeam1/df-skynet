@@ -355,6 +355,7 @@ class FolderAction(BaseModel):
     can_delete: bool = False
     can_choose_to_move: bool = False
     can_receive_move: bool = False
+    can_upload_file: bool = True  # set False outside upload/<type> (generated, project and storage folders)
 
 
 class FileAction(BaseModel):

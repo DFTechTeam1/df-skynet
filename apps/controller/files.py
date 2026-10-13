@@ -594,6 +594,7 @@ class FilesController(CoreDependencies):
         task_uid: UUID = Path(..., description="Task UID (project task or song)."),
         path: Optional[str] = Query(
             None,
+            max_length=1024,
             description="Existing folder to upload into (a path from the file tree). Defaults to the type root: "
             "`upload/images` or `upload/videos`.",
         ),
@@ -605,10 +606,12 @@ class FilesController(CoreDependencies):
             project_task = await get_project_task(ctx, task_uid)
             project_uid = project_task["project"]["uid"]
             is_song = project_task["is_song"]
-            if path and not find_folder(
-                await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), path
-            ):
-                raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
+            if path:
+                folder = find_folder(await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), path)
+                if not folder:
+                    raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
+                if not folder["action"]["can_upload_file"]:
+                    raise DataValidationError(message="invalid_folder_scope", error={"path": ["invalid_folder_scope"]})
             logging.info(
                 f"[upload-files] user={user_id} task_uid={task_uid} start is_song={is_song} "
                 f"project_id={project_task['project_id']}"
@@ -742,6 +745,8 @@ class FilesController(CoreDependencies):
         task_uid: UUID = Path(..., description="Task UID (project task or song)."),
         path: str = Query(
             ...,
+            min_length=1,
+            max_length=1024,
             description="Full folder path, matching a `path` value from the file tree (e.g. storage/DF-Engine/<name>/upload/images).",
         ),
         my_task: bool = Query(
@@ -966,6 +971,8 @@ class FilesController(CoreDependencies):
         task_uid: UUID = Path(..., description="Task UID (project task or song)."),
         path: str = Query(
             ...,
+            min_length=1,
+            max_length=1024,
             description="Full folder path, matching a `path` value from the file tree (e.g. storage/DF-Engine/<name>/upload/images/drafts).",
         ),
     ) -> Response:
@@ -1126,7 +1133,7 @@ class FilesController(CoreDependencies):
     @controller.patch(
         "/files/{source}/{file_uid}",
         summary="Rename file.",
-        description="Rename a generated or uploaded file (the extension is always kept). Only the creator or a user with an override role can do this. Returns the refreshed file tree.",
+        description="Rename a generated or uploaded file. Pass the name only, without extension (the extension is always kept); letters, numbers, underscore and space only. Only the creator or a user with an override role can do this. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,

@@ -66,6 +66,19 @@ class TestFolderAction:
         assert files.folder_action(0, 3) == FolderAction()
 
 
+class TestNamePayloads:
+    def test_rename_rejects_extension_and_special_chars(self):
+        from pydantic import ValidationError
+        from schemas.payload.files import FolderPayload, RenameFilePayload
+
+        assert RenameFilePayload(name=" final_render 2 ").name == "final_render 2"
+        for bad in ("a.png", "a/b", "a-b", "..", "x" * 101):
+            with pytest.raises(ValidationError):
+                RenameFilePayload(name=bad)
+            with pytest.raises(ValidationError):
+                FolderPayload(path="p", name=bad)
+
+
 class TestFormatFileTree:
     def test_empty_inputs_return_empty_dict(self):
         """No files at all means no project folder, so the result is `{}`."""

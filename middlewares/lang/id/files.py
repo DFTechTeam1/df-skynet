@@ -25,6 +25,8 @@ class FilesMessage:
             "file_edit_not_permitted": "Anda hanya dapat mengedit gambar yang Anda buat atau unggah sendiri.",
             "file_edit_image_only": "Hanya file gambar yang dapat diedit.",
             "file_edit_task_required": "Unggahan ini tidak terhubung ke task atau lagu, sehingga tidak dapat diedit.",
+            "invalid_file_name": "Nama file hanya boleh berisi huruf, angka, garis bawah, dan spasi, serta tidak boleh menyertakan ekstensi (mis. .png).",
+            "invalid_folder_name": "Nama folder hanya boleh berisi huruf, angka, garis bawah, dan spasi.",
             "folder_create_failed": "Folder gagal dibuat.",
             "folder_delete_failed": "Folder gagal dihapus.",
             "files_delete_failed": "Satu atau lebih file gagal dihapus.",
