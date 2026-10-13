@@ -373,29 +373,62 @@ class GenerationsController(CoreDependencies):
 
         try:
             can_override = has_override(self.user["roles"])
-            try:
-                generated_files = await get_generation_files(
-                    ctx, user_id=None if can_override else user_id, file_uids=[str(file_uid)]
+            is_upload_source = schema.source == "upload"
+            if is_upload_source:
+                source_upload = serialize(
+                    await query(
+                        db=self.db,
+                        columns=(
+                            DfEngineUploadFiles.type,
+                            DfEngineUploadFiles.created_by,
+                            DfEngineUploadFiles.task_id,
+                            DfEngineUploadFiles.song_id,
+                        ),
+                        table=DfEngineUploadFiles,
+                        filters=(DfEngineUploadFiles.uid == str(file_uid),),
+                        fetch_one=True,
+                    )
                 )
-            except DataNotFoundError:
-                try:
-                    await get_generation_files(ctx, file_uids=[str(file_uid)])
-                except DataNotFoundError:
+                if not source_upload:
                     raise DataNotFoundError(message="file_not_found", error={"file_uid": ["file_not_found"]})
-                raise DataValidationError(
-                    message="file_edit_not_permitted", error={"file_uid": ["file_edit_not_permitted"]}
+                if source_upload["type"] != UploadFileTypes.image:
+                    raise DataValidationError(
+                        message="file_edit_image_only", error={"file_uid": ["file_edit_image_only"]}
+                    )
+                if not can_override and source_upload["created_by"] != user_id:
+                    raise DataValidationError(
+                        message="file_edit_not_permitted", error={"file_uid": ["file_edit_not_permitted"]}
+                    )
+                if source_upload["task_id"] is None and source_upload["song_id"] is None:
+                    raise DataValidationError(
+                        message="file_edit_task_required", error={"file_uid": ["file_edit_task_required"]}
+                    )
+                edit_parent_id = None
+                prior = source_upload
+            else:
+                try:
+                    generated_files = await get_generation_files(
+                        ctx, user_id=None if can_override else user_id, file_uids=[str(file_uid)]
+                    )
+                except DataNotFoundError:
+                    try:
+                        await get_generation_files(ctx, file_uids=[str(file_uid)])
+                    except DataNotFoundError:
+                        raise DataNotFoundError(message="file_not_found", error={"file_uid": ["file_not_found"]})
+                    raise DataValidationError(
+                        message="file_edit_not_permitted", error={"file_uid": ["file_edit_not_permitted"]}
+                    )
+                source_file = generated_files[0]
+                edit_parent_id = source_file["parent_id"] or source_file["id"]
+                prior = serialize(
+                    await query(
+                        db=self.db,
+                        columns=(DfEngineGenerations.task_id, DfEngineGenerations.song_id),
+                        table=DfEngineGenerations,
+                        filters=(DfEngineGenerations.uid == generated_files[0]["generation_uid"],),
+                        fetch_one=True,
+                    )
                 )
-            source_file = generated_files[0]
-            edit_parent_id = source_file["parent_id"] or source_file["id"]
-            prior = serialize(
-                await query(
-                    db=self.db,
-                    columns=(DfEngineGenerations.task_id, DfEngineGenerations.song_id),
-                    table=DfEngineGenerations,
-                    filters=(DfEngineGenerations.uid == generated_files[0]["generation_uid"],),
-                    fetch_one=True,
-                )
-            )
 
             task = await get_project_task(ctx, task_id=prior["task_id"], song_id=prior["song_id"])
             # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
@@ -453,11 +486,18 @@ class GenerationsController(CoreDependencies):
                 raise DataValidationError(message="ranking_model_not_configured")
 
             generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "generated"]
-            generated_file_uids.append(str(file_uid))
             uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "upload"]
+            if is_upload_source:
+                # the edited upload goes first so it stays the primary image sent to the model
+                uploaded_file_uids = list(dict.fromkeys([str(file_uid), *uploaded_file_uids]))
+            else:
+                generated_file_uids.append(str(file_uid))
 
             uploaded_files = await get_uploaded_files(ctx, uploaded_file_uids)
-            generated_files = await get_generation_files(ctx, file_uids=generated_file_uids)
+            uploaded_files.sort(key=lambda record: uploaded_file_uids.index(record["file_uid"]))
+            generated_files = (
+                await get_generation_files(ctx, file_uids=generated_file_uids) if generated_file_uids else []
+            )
 
             diva_references = [str(ref.diva_url) for ref in schema.references if ref.type == "diva"]
             uploaded_file_references = [record["path"] for record in uploaded_files]
@@ -478,7 +518,7 @@ class GenerationsController(CoreDependencies):
 
             """Insert generation record"""
             generation = DfEngineGenerations(
-                kind=GenerationKinds.image_edit,
+                kind=GenerationKinds.image if is_upload_source else GenerationKinds.image_edit,
                 model_id=generation_model["id"],
                 menu_id=menu["id"],  # type: ignore
                 feature_id=matched_feature["id"],
