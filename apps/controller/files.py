@@ -1,4 +1,5 @@
 import mimetypes
+from contextlib import AsyncExitStack
 from pathlib import PurePosixPath
 import traceback
 from typing import Any, AsyncIterator, Optional, Literal
@@ -7,6 +8,7 @@ from uuid import UUID
 from fastapi import Path, Request, status, Query
 from httpx import Timeout, TimeoutException
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from fastapi_controller import controller
 from apps.controller.core import CoreDependencies
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
@@ -304,32 +306,50 @@ class FilesController(CoreDependencies):
 
     @controller.get(
         "/files/download/{file_uid}",
-        summary="Download generated file.",
-        description="Downloads a generated image, edited image or video to your device. Any signed-in user can download any generated file.",
+        summary="Download a file.",
+        description=(
+            "Downloads a file to your device. Use `source=generated` (default) for a generated image, "
+            "edited image or video, or `source=upload` for a file uploaded to a project. "
+            "Any signed-in user can download any file."
+        ),
         tags=["Files"],
     )
     async def files_with_file_uid_to_download_generated_file(
-        self, file_uid: UUID = Path(..., description="File UID.")
+        self,
+        file_uid: UUID = Path(..., description="File UID."),
+        source: Literal["upload", "generated"] = Query("generated", description="Where `file_uid` comes from."),
     ) -> StreamingResponse:
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         user_id = int(self.user["user_id"])
         try:
-            generation_files = await get_generation_files(ctx, file_uids=[str(file_uid)])  # not owner-scoped
-            record = generation_files[0]
+            if source == "upload":
+                record = await get_user_uploaded_file(ctx, file_uid)
+            else:
+                record = (await get_generation_files(ctx, file_uids=[str(file_uid)]))[0]  # not owner-scoped
             content_type = mimetypes.guess_type(record["name"])[0] or "application/octet-stream"
+            source_url = record["url"] if source == "upload" else record["path"]
+            stack = AsyncExitStack()
+            try:
+                caller = await stack.enter_async_context(APICaller(headers={"X-API-Key": UDIN_API_KEY}))
+                upstream = await stack.enter_async_context(caller.stream("GET", source_url))
+                upstream.raise_for_status()
+            except BaseException:
+                await stack.aclose()
+                raise
 
             async def body() -> AsyncIterator[bytes]:
-                async with APICaller(headers={"X-API-Key": UDIN_API_KEY}) as caller:
-                    async with caller.stream("GET", record["path"]) as upstream:
-                        upstream.raise_for_status()
-                        async for chunk in upstream.aiter_bytes():
-                            yield chunk
+                try:
+                    async for chunk in upstream.aiter_bytes():
+                        yield chunk
+                finally:
+                    await stack.aclose()
 
             logging.info(f"[download-file] user={user_id} file_uid={file_uid} streaming name={record['name']}")
             return StreamingResponse(
                 body(),
                 media_type=content_type,
                 headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(record['name'])}"},
+                background=BackgroundTask(stack.aclose),
             )
         except BaseError:
             raise

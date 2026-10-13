@@ -362,6 +362,7 @@ class FileAction(BaseModel):
     can_delete: bool = False
     can_choose_to_move: bool = False
     can_use_as_reference: bool = True
+    can_download: bool = True
 
     @classmethod
     def for_upload(cls, is_owner: bool, can_override: bool = False) -> "FileAction":

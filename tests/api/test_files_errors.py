@@ -38,6 +38,16 @@ async def test_download_turns_unexpected_errors_into_500(authed_client, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_download_upload_source_turns_unexpected_errors_into_500(authed_client, monkeypatch):
+    """500; a non-BaseError while resolving an uploaded file to download becomes a generic ServiceError."""
+    monkeypatch.setattr("apps.controller.files.get_user_uploaded_file", _aboom)
+    resp = await authed_client.call(
+        "GET", f"/api/files/download/{uuid4()}", params={"source": "upload"}, raise_for_status=False
+    )
+    assert resp.status_code == 500
+
+
+@pytest.mark.asyncio
 async def test_set_main_turns_unexpected_errors_into_500(authed_client, monkeypatch):
     """500; a non-BaseError while resolving the variants becomes a generic ServiceError."""
     monkeypatch.setattr("apps.controller.files.get_generation_main_variants", _aboom)
