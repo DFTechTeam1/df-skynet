@@ -35,13 +35,14 @@ async def test_create_success_returns_full_refreshed_list(authed_client):
 
 @pytest.mark.asyncio
 async def test_create_defaults_is_active_true_and_no_features_required(authed_client):
-    """200 OK; omitting is_active/description/feature_uids falls back to active, null desc, no features."""
+    """200 OK; omitting is_active/description/feature_uids falls back to active, null desc, null icon, no features."""
     name = f"Create Defaults {uuid4().hex[:8]}"
     resp = await authed_client.call("POST", URL, json={"name": name})
     assert resp.status_code == 200
     item = find_by_name(resp.json()["data"], name)
     assert item["is_active"] is True
     assert item["description"] is None
+    assert item["icon"] is None
     assert item["features"] == []
 
 
@@ -82,11 +83,13 @@ async def test_create_sets_creater_to_authenticated_user(authed_client, db_sessi
         {"name": ""},
         {"name": "x" * 256},
         {"description": ""},
+        {"icon": ""},
+        {"icon": "x" * 256},
     ],
-    ids=["empty_name", "oversized_name", "empty_description"],
+    ids=["empty_name", "oversized_name", "empty_description", "empty_icon", "oversized_icon"],
 )
 async def test_create_validation_errors(authed_client, overrides):
-    """422 for each individually invalid field: empty name, oversized name, empty description."""
+    """422 for each individually invalid field: empty name, oversized name, empty description, empty icon, oversized icon."""
     payload = {"name": f"Invalid {uuid4().hex[:8]}"}
     payload.update(overrides)
     resp = await authed_client.call("POST", URL, json=payload, raise_for_status=False)
@@ -143,3 +146,12 @@ async def test_requires_auth(client):
         raise_for_status=False,
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_create_with_icon(authed_client):
+    """200 OK; the given icon is stored and returned on the new menu."""
+    name = f"Create Icon {uuid4().hex[:8]}"
+    resp = await authed_client.call("POST", URL, json={"name": name, "icon": "i-lucide-sparkles"})
+    assert resp.status_code == 200
+    assert find_by_name(resp.json()["data"], name)["icon"] == "i-lucide-sparkles"

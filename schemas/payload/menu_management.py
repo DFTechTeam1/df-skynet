@@ -15,8 +15,6 @@ class MenuPayload(BaseModel):
     features, or with one or many, all in the same call.
     """
 
-    # TODO: add icon that accept string data, mandatory, min length 1
-
     name: str = Field(
         ...,
         min_length=1,
@@ -29,6 +27,13 @@ class MenuPayload(BaseModel):
         min_length=1,
         description="Free-text explanation of what this menu is for.",
         examples=["Main generation workspace."],
+    )
+    icon: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Icon identifier shown next to this menu. Omit or pass null for no icon.",
+        examples=["i-lucide-sparkles"],
     )
     is_active: bool = Field(
         default=True,
