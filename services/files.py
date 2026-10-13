@@ -27,7 +27,7 @@ from services.dto.format_response import FileAction, FolderAction, GenerationAct
 FOLDER_TIMEOUT = Timeout(connect=10, read=60, write=30, pool=10)
 
 
-def folder_action(depth: int, depth_limit: int) -> FolderAction:
+def folder_action(depth: int, depth_limit: int, can_upload: bool = True) -> FolderAction:
     """`depth` = folders below the project folder (upload=1, upload/images=2, upload/images/x=3...).
     Mirrors Udin: the type root (upload/<type>) is fixed; only subfolders below it can be renamed, deleted or
     moved, and a folder can take another subfolder only while its chain is under the admin `folder_depth_limit`."""
@@ -39,6 +39,7 @@ def folder_action(depth: int, depth_limit: int) -> FolderAction:
         can_rename=chain >= 1,
         can_delete=chain >= 1,
         can_choose_to_move=chain >= 1,
+        can_upload_file=can_upload,
     )
 
 
@@ -64,7 +65,11 @@ def format_file_tree(
     def node(path: str, depth: int) -> TreeFolder:
         if path in nodes:
             return nodes[path]
-        folder = TreeFolder(name=path.rsplit("/", 1)[-1], path=path, action=folder_action(depth, depth_limit))
+        folder = TreeFolder(
+            name=path.rsplit("/", 1)[-1],
+            path=path,
+            action=folder_action(depth, depth_limit, folder_scope(path)[:1] == ("upload",) and depth >= 2),
+        )
         nodes[path] = folder
         parent, _, _ = path.rpartition("/")
         if depth == 0:

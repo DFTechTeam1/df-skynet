@@ -1,16 +1,29 @@
-from typing import Any
+import re
+from typing import Annotated, Any
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
+
+NAME_RE = re.compile(r"[A-Za-z0-9_ ]+")  # letters, digits, underscore, space; no dot, so no extension
+NAME_MAX = 100  # Udin has no limit of its own; the filesystem caps a name at 255 bytes, a path at 4096
+PATH_MAX = 1024
+PathStr = Annotated[str, Field(min_length=1, max_length=PATH_MAX)]
 
 
 class FolderPayload(BaseModel):
     path: str = Field(
         ...,
         min_length=1,
+        max_length=PATH_MAX,
         description="POST: parent folder to create the new folder under. PATCH: folder to rename. Full path as shown in the file tree.",
         examples=["storage/DF-Engine/Wedding_7b804b30/upload/images"],
     )
-    name: str = Field(..., min_length=1, description="Folder name (no `/` or `\\`).", examples=["references"])
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=NAME_MAX,
+        description="Folder name. Letters, numbers, underscore and space only.",
+        examples=["references"],
+    )
 
     @field_validator("path", mode="after")
     @classmethod
@@ -21,7 +34,7 @@ class FolderPayload(BaseModel):
     @classmethod
     def valid_name(cls, value: str) -> str:
         value = value.strip()
-        if not value or value in (".", "..") or "/" in value or "\\" in value:
+        if not NAME_RE.fullmatch(value):
             raise ValueError("invalid_folder_name")
         return value
 
@@ -30,6 +43,7 @@ class DeleteFilesPayload(BaseModel):
     file_uids: list[UUID] = Field(
         ...,
         min_length=1,
+        max_length=100,
         description="File `uid`s to delete.",
         examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
     )
@@ -42,14 +56,18 @@ class DeleteFilesPayload(BaseModel):
 
 class RenameFilePayload(BaseModel):
     name: str = Field(
-        ..., min_length=1, description="New name (extension is always preserved).", examples=["final_render"]
+        ...,
+        min_length=1,
+        max_length=NAME_MAX,
+        description="New name without extension (the extension is always preserved). Letters, numbers, underscore and space only.",
+        examples=["final_render"],
     )
 
     @field_validator("name", mode="after")
     @classmethod
     def valid_name(cls, value: str) -> str:
         value = value.strip()
-        if not value or value in (".", "..") or "/" in value or "\\" in value:
+        if not NAME_RE.fullmatch(value):
             raise ValueError("invalid_file_name")
         return value
 
@@ -58,12 +76,14 @@ class MoveFilesPayload(BaseModel):
     file_uids: list[UUID] = Field(
         ...,
         min_length=1,
+        max_length=100,
         description="File `uid`s to move.",
         examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
     )
     destination: str = Field(
         ...,
         min_length=1,
+        max_length=PATH_MAX,
         description="Full path of the destination folder.",
         examples=["storage/DF-Engine/Wedding_7b804b30/upload/images/approved"],
     )
@@ -80,15 +100,17 @@ class MoveFilesPayload(BaseModel):
 
 
 class MoveFoldersPayload(BaseModel):
-    folder_paths: list[str] = Field(
+    folder_paths: list[PathStr] = Field(
         ...,
         min_length=1,
+        max_length=50,
         description="Full paths of the folders to move. Must share the destination's storage (upload or generated) and type (images or videos).",
         examples=[["storage/DF-Engine/Wedding_7b804b30/upload/images/drafts"]],
     )
     destination: str = Field(
         ...,
         min_length=1,
+        max_length=PATH_MAX,
         description="Full path of the destination folder.",
         examples=["storage/DF-Engine/Wedding_7b804b30/upload/images/approved"],
     )
@@ -108,6 +130,7 @@ class SetArchivedPayload(BaseModel):
     file_uids: list[UUID] = Field(
         ...,
         min_length=1,
+        max_length=100,
         description="File `uid`s to archive/unarchive.",
         examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
     )
@@ -123,6 +146,7 @@ class SetFavoritedPayload(BaseModel):
     file_uids: list[UUID] = Field(
         ...,
         min_length=1,
+        max_length=100,
         description="File `uid`s to favorite/unfavorite.",
         examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
     )

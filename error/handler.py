@@ -22,7 +22,7 @@ def _error_page(filename: str, status_code: int) -> FileResponse:
 
 class CustomError:
     def pydantic_handler(self):
-        async def handler(_: Request, exc: Exception) -> JSONResponse:
+        async def handler(request: Request, exc: Exception) -> JSONResponse:
             if not isinstance(exc, RequestValidationError):
                 return JSONResponse(
                     status_code=500,
@@ -31,6 +31,8 @@ class CustomError:
 
             error: dict[str, Any] = {}
             status_code = 422
+            lang = getattr(request.state, "lang", DEFAULT_LANG)
+            message = "Malformed JSON."
 
             try:
                 for err in exc.errors():
@@ -49,7 +51,13 @@ class CustomError:
                         )
                     else:
                         key = loc[-1]
-                        error[key] = [err.get("msg", None)]
+                        # `ValueError("some_key")` raised in a validator: show the translated key, not "Value error, some_key"
+                        msg = err.get("msg", None)
+                        if err.get("type") == "value_error" and "error" in err.get("ctx", {}):
+                            msg = resolve_message(str(err["ctx"]["error"]), lang)
+                            if message == "Malformed JSON.":
+                                message = msg  # first translated validator error doubles as the headline
+                        error[key] = [msg]
 
             except IndexError as e:
                 error["unknown"] = [str(e)]
@@ -57,7 +65,7 @@ class CustomError:
             return JSONResponse(
                 status_code=status_code,
                 content={
-                    "message": "Malformed JSON.",
+                    "message": message,
                     "error": error,
                 },
             )
