@@ -1,17 +1,20 @@
 from uuid import uuid4
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_api_keys import DfEngineApiKeysFactory
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
+from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
-from services.mysql.model.df_engine_model_options import ModelUsageTypes
+from services.mysql.model import DfEngineGenerationReferences, DfEngineGenerations, DfEngineUploadFileReferences
+from services.mysql.model.df_engine_model_options import DfEngineModelOptions, ModelUsageTypes
+from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
 from services.mysql.model.df_engine_settings import DfEngineSettings
 from services.mysql.model.employees import Employees
@@ -468,7 +471,7 @@ async def test_editing_someone_elses_file_without_override_role_is_refused(
         "POST", _url(foreign_source.uid), json=_payload(menu, feature, image_model), raise_for_status=False
     )
     assert resp.status_code == 422
-    assert resp.json()["error"] == {"file_uid": ["You can only edit images you generated yourself."]}
+    assert resp.json()["error"] == {"file_uid": ["You can only edit images you generated or uploaded yourself."]}
     assert fake_generation_backends == []
 
 
@@ -509,3 +512,155 @@ async def test_editing_someone_elses_file_with_override_role_belongs_to_the_edit
     body = resp.json()["data"]
     assert body["parent_id"] == foreign_source.id and body["kind"] == "image_edit"
     assert body["creator"]["user_id"] == int(user_id)
+
+
+@pytest_asyncio.fixture
+async def image_model_two_refs(db_session, image_model):
+    image_model.supported_parameters = {"input_references": {"max": 2}}
+    await db_session.execute(
+        update(DfEngineModelOptions)
+        .where(DfEngineModelOptions.id == image_model.id)
+        .values(supported_parameters=image_model.supported_parameters)
+    )
+    await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def make_upload(project_task, user_id, other_user_id):
+    def _make(owner="me", **overrides):
+        data = {
+            "project_id": project_task.project_id,
+            "task_id": project_task.id,
+            "created_by": int(user_id) if owner == "me" else other_user_id,
+            **overrides,
+        }
+        return DfEngineUploadFilesFactory.create(**data)
+
+    return _make
+
+
+@pytest.mark.asyncio
+async def test_editing_an_upload_starts_a_new_plain_generation_with_the_upload_as_reference(
+    authed_client,
+    image_model_two_refs,
+    make_upload,
+    source_root,
+    generation_menu_feature,
+    image_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    db_session,
+):
+    """200 OK; upload source -> kind `image`, parent_id None, upload stored in upload references and extra generated refs in generation references."""
+    upload = make_upload()
+    menu, feature = generation_menu_feature
+    payload = _payload(
+        menu,
+        feature,
+        image_model,
+        source="upload",
+        references=[{"type": "generated", "file_uid": str(source_root.uid)}],
+    )
+    resp = await authed_client.call("POST", _url(upload.uid), json=payload, raise_for_status=False)
+    assert resp.status_code == 200, resp.text
+    assert len(fake_generation_backends) == 1
+    body = resp.json()["data"]
+    assert body["parent_id"] is None and body["kind"] == "image"
+
+    generation = (
+        (await db_session.execute(select(DfEngineGenerations).where(DfEngineGenerations.uid == body["generation_uid"])))
+        .scalars()
+        .one()
+    )
+    upload_refs = (
+        (
+            await db_session.execute(
+                select(DfEngineUploadFileReferences.file_id).where(
+                    DfEngineUploadFileReferences.generation_id == generation.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    generated_refs = (
+        (
+            await db_session.execute(
+                select(DfEngineGenerationReferences.result_id).where(
+                    DfEngineGenerationReferences.generation_id == generation.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert list(upload_refs) == [upload.id] and list(generated_refs) == [source_root.id]
+
+
+@pytest.mark.asyncio
+async def test_editing_someone_elses_upload_without_override_role_is_refused(
+    authed_client, make_upload, generation_menu_feature, image_model, as_roles, fake_generation_backends
+):
+    """422 file_edit_not_permitted; nothing is dispatched."""
+    as_roles(["staff"])
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST",
+        _url(make_upload(owner="other").uid),
+        json=_payload(menu, feature, image_model, source="upload"),
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422
+    assert "file_uid" in resp.json()["error"]
+    assert fake_generation_backends == []
+
+
+@pytest.mark.asyncio
+async def test_editing_someone_elses_upload_with_override_role_is_allowed(
+    authed_client,
+    make_upload,
+    generation_menu_feature,
+    image_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    as_roles,
+):
+    as_roles(["director"])
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST",
+        _url(make_upload(owner="other").uid),
+        json=_payload(menu, feature, image_model, source="upload"),
+        raise_for_status=False,
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(fake_generation_backends) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("overrides", [{"task_id": None}, {"type": UploadFileTypes.folder}])
+async def test_upload_without_task_or_not_an_image_is_rejected(
+    authed_client, make_upload, generation_menu_feature, image_model, fake_generation_backends, overrides
+):
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST",
+        _url(make_upload(**overrides).uid),
+        json=_payload(menu, feature, image_model, source="upload"),
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422
+    assert fake_generation_backends == []
+
+
+@pytest.mark.asyncio
+async def test_editing_a_missing_upload_is_404(authed_client, generation_menu_feature, image_model):
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST", _url(uuid4()), json=_payload(menu, feature, image_model, source="upload"), raise_for_status=False
+    )
+    assert resp.status_code == 404

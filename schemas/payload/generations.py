@@ -15,6 +15,10 @@ class FrameImageReferences(GenerationReferences):
 
 
 class EditImageGenerationPayload(BaseModel):
+    source: Literal["upload", "generated"] = Field(
+        default="generated",
+        description="Where `file_uid` comes from: `generated` (a generation result, chained as a new version) or `upload` (an uploaded image, starts a new generation).",
+    )
     prompt: str = Field(min_length=1, description="User prompts.")
     enhance_uid: Optional[UUID] = Field(None, description="Enhancer UID.")
     model_uid: UUID = Field(default=UUID("e440a822-5ada-4ea5-99d9-92f0d38edf96"), description="Model UID.")
