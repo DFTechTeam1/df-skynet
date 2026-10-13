@@ -4,7 +4,7 @@ from typing import Any
 from celery.exceptions import SoftTimeLimitExceeded
 from httpx import HTTPStatusError, NetworkError, Timeout, TimeoutException
 from sqlalchemy import or_
-from apps.secret import OPENROUTER_API_KEY, UDIN_API_KEY, UDIN_BASE_URL
+from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
 from services.api_caller import APICaller
 from services.celery_app import celery_app
@@ -12,6 +12,8 @@ from services.dto import SyncedConnectionContext
 from services.dto.synced.projects import get_project
 from services.mysql import get_sync_db
 from services.mysql.model import (
+    DfEngineApiKeys,
+    DfEngineApiKeySnapshots,
     DfEngineGenerationReconciliationIssues,
     DfEngineGenerationReferences,
     DfEngineGenerationResults,
@@ -86,6 +88,12 @@ def udin_uploader(
             raise GenerationStageError("linked project not found", source="udin", final=True)
 
         project_uid = project["uid"]
+        # OpenRouter jobs are only visible to the key that created them: Udin must poll with the generation's own key
+        key_model = (
+            DfEngineApiKeys if generation.sourceable_type == DfEngineApiKeys.__name__ else DfEngineApiKeySnapshots
+        )
+        source_key = db.get(key_model, generation.sourceable_id)
+        openrouter_api_key = source_key.key if source_key else None
         generation_uid = str(generation.uid)
         task_id = generation.task_id
         project_id = generation.project_id
@@ -138,12 +146,14 @@ def udin_uploader(
     try:
         if generation.kind == GenerationKinds.video:
             if 1 not in uploaded_versions:
+                if not openrouter_api_key:
+                    raise GenerationStageError("generation api key not found", source="udin", final=True)
                 try:
                     response = caller.udin_sync(
                         "POST",
                         f"/engine/storage/upload-generated-video/{project_uid}",
                         user_id=user_id,
-                        json={"polling_url": job["polling_url"], "openrouter_api_key": OPENROUTER_API_KEY},  # type: ignore
+                        json={"polling_url": job["polling_url"], "openrouter_api_key": openrouter_api_key},  # type: ignore
                     )
                 except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
                     stage_error = classify_error(exc, source="udin")
