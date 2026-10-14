@@ -1,12 +1,29 @@
 import re
+import unicodedata
 from typing import Annotated, Any
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
-NAME_RE = re.compile(r"[A-Za-z0-9_ ]+")  # letters, digits, underscore, space; no dot, so no extension
+NAME_RE = re.compile(r"[A-Za-z0-9_ .\-#()@&]+")  # ASCII letters, digits, space and _ - . # ( ) @ &
+MEDIA_EXT_RE = re.compile(r"\.(jpe?g|png|webp|gif|mp4|mov|webm|avi|mkv)$", re.IGNORECASE)
 NAME_MAX = 100  # Udin has no limit of its own; the filesystem caps a name at 255 bytes, a path at 4096
 PATH_MAX = 1024
 PathStr = Annotated[str, Field(min_length=1, max_length=PATH_MAX)]
+
+
+def clean_name(value: str, kind: str, strip_ext: bool = False) -> str:
+    """Normalize a user-typed name: NFC, trim spaces and dots (`report.` -> `report`, `.png` -> `png`). For files
+    `strip_ext` also drops one trailing media extension, since the real one always comes from the stored row.
+    `kind` is `file` or `folder` and picks the error key."""
+    trim = " ."
+    value = unicodedata.normalize("NFC", value).strip(trim)
+    if strip_ext:
+        value = MEDIA_EXT_RE.sub("", value).strip(trim)
+    if not value:
+        raise ValueError(f"{kind}_name_empty")
+    if not NAME_RE.fullmatch(value):
+        raise ValueError(f"invalid_{kind}_name")
+    return value
 
 
 class FolderPayload(BaseModel):
@@ -21,8 +38,8 @@ class FolderPayload(BaseModel):
         ...,
         min_length=1,
         max_length=NAME_MAX,
-        description="Folder name. Letters, numbers, underscore and space only.",
-        examples=["references"],
+        description="Folder name. Letters, numbers, spaces and _ - . # ( ) @ & only. Leading/trailing dots are removed.",
+        examples=["Ms. Shinta (2026) & Co"],
     )
 
     @field_validator("path", mode="after")
@@ -33,10 +50,7 @@ class FolderPayload(BaseModel):
     @field_validator("name", mode="after")
     @classmethod
     def valid_name(cls, value: str) -> str:
-        value = value.strip()
-        if not NAME_RE.fullmatch(value):
-            raise ValueError("invalid_folder_name")
-        return value
+        return clean_name(value, "folder")
 
 
 class DeleteFilesPayload(BaseModel):
@@ -59,17 +73,14 @@ class RenameFilePayload(BaseModel):
         ...,
         min_length=1,
         max_length=NAME_MAX,
-        description="New name without extension (the extension is always preserved). Letters, numbers, underscore and space only.",
-        examples=["final_render"],
+        description="New file name. Letters, numbers, spaces and _ - . # ( ) @ & only. A typed media extension is ignored: the file's real extension is always kept.",
+        examples=["standby v.1 (final) & edit"],
     )
 
     @field_validator("name", mode="after")
     @classmethod
     def valid_name(cls, value: str) -> str:
-        value = value.strip()
-        if not NAME_RE.fullmatch(value):
-            raise ValueError("invalid_file_name")
-        return value
+        return clean_name(value, "file", strip_ext=True)
 
 
 class MoveFilesPayload(BaseModel):
