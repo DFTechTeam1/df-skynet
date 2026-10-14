@@ -17,6 +17,7 @@ from services.dto import ConnectionContext
 from log import logging
 from middlewares.lang import current_lang, resolve_message
 from schemas.payload.files import (
+    NAME_MAX,
     DeleteFilesPayload,
     FolderPayload,
     MoveFilesPayload,
@@ -870,7 +871,7 @@ class FilesController(CoreDependencies):
             is_song = project_task["is_song"]
             self.db.add(
                 DfEngineUploadFiles(
-                    name=schema.name,
+                    name=created["path"].rsplit("/", 1)[-1],  # Udin's answer is the source of truth
                     type=UploadFileTypes.folder,
                     path=created["path"],
                     size=0,
@@ -930,6 +931,11 @@ class FilesController(CoreDependencies):
                 raise DataValidationError(
                     message="folder_rename_not_permitted", error={"path": ["folder_rename_not_permitted"]}
                 )
+
+            if schema.name == folder["name"]:  # nothing to rename
+                response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+                response.message = resolve_message("folder_renamed", current_lang.get())
+                return response
 
             pairs = await call_udin_folder(
                 "PATCH",
@@ -1133,7 +1139,7 @@ class FilesController(CoreDependencies):
     @controller.patch(
         "/files/{source}/{file_uid}",
         summary="Rename file.",
-        description="Rename a generated or uploaded file. Pass the name only, without extension (the extension is always kept); letters, numbers, underscore and space only. Only the creator or a user with an override role can do this. Returns the refreshed file tree.",
+        description="Rename a generated or uploaded file. A typed media extension is ignored: the file's real extension is always kept. Letters, numbers, spaces and _ - . # ( ) @ & only; leading/trailing dots are removed. Only the creator or a user with an override role can do this. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -1152,14 +1158,20 @@ class FilesController(CoreDependencies):
         try:
             rows, project_task = await resolve_files(ctx, source, [file_uid], user_id, self.user["roles"])
             project = await get_project(ctx, project_id=project_task["project_id"])
+            # Udin keeps only `Path(name).stem` + the real extension, so always send the stored one last
+            new_name = schema.name + PurePosixPath(rows[0].path).suffix
+            if len(new_name) > NAME_MAX:
+                raise DataValidationError(message="file_name_too_long", error={"name": ["file_name_too_long"]})
+            if new_name == PurePosixPath(rows[0].path).name:  # nothing to rename
+                response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+                response.message = resolve_message("file_renamed", current_lang.get())
+                return response
             pairs = await call_udin_folder(
                 "PATCH",
                 "rename-file",
                 project["uid"],
                 user_id,
-                # Udin keeps only `Path(name).stem` + the file's extension, so a dot in the user's name would be eaten
-                # as an "extension"; append the real one so the name is used literally
-                {"filepath": rows[0].path, "name": schema.name + PurePosixPath(rows[0].path).suffix},
+                {"filepath": rows[0].path, "name": new_name},
                 "file_rename_failed",
                 "rename-file",
             )

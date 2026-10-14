@@ -379,3 +379,30 @@ async def test_delete_generated_folder_promotes_generation_results(
     ).scalar_one()
     assert row.path == new
     assert _folder(resp.json()["data"], folder) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "typed,sent", [("Ms. Shinta", "Ms. Shinta"), ("A&B #1 (x)@y.", "A&B #1 (x)@y"), (".refs", "refs")]
+)
+async def test_create_folder_follows_rename_name_rules(authed_client, project_task, mock_udin, typed, sent):
+    """Create formats the name exactly like rename: allowed symbols and dots kept, leading/trailing dots trimmed."""
+    parent = f"{_root(project_task)}/upload/images"
+    mock_udin.set("new-folder", 200, {"data": {"name": None, "path": f"{parent}/{sent}", "size": 0, "md5": None}})
+    resp = await authed_client.call(
+        "POST", _url(project_task.uid), json={"path": parent, "name": typed}, raise_for_status=False
+    )
+    assert resp.status_code == 201, resp.text
+    assert mock_udin.calls[-1][2]["name"] == sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["a/b", "café", "100%", ".."])
+async def test_create_folder_rejects_bad_names_like_rename(authed_client, project_task, mock_udin, bad):
+    resp = await authed_client.call(
+        "POST",
+        _url(project_task.uid),
+        json={"path": f"{_root(project_task)}/upload/images", "name": bad},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422 and mock_udin.calls == []

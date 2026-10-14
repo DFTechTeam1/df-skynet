@@ -67,12 +67,20 @@ class TestFolderAction:
 
 
 class TestNamePayloads:
-    def test_rename_rejects_extension_and_special_chars(self):
+    def test_names_are_normalized_and_validated(self):
         from pydantic import ValidationError
         from schemas.payload.files import FolderPayload, RenameFilePayload
 
         assert RenameFilePayload(name=" final_render 2 ").name == "final_render 2"
-        for bad in ("a.png", "a/b", "a-b", "..", "x" * 101):
+        assert RenameFilePayload(name="testing-rename.rantom.ad.ad.png").name == "testing-rename.rantom.ad.ad"
+        assert RenameFilePayload(name="standby v.1").name == "standby v.1"
+        assert RenameFilePayload(name="report.").name == "report"
+        assert RenameFilePayload(name=".png").name == "png"
+        assert RenameFilePayload(name="A&B #1 (x)@y").name == "A&B #1 (x)@y"
+        assert RenameFilePayload(name="CON").name == "CON"  # reserved on Windows only; storage is Ubuntu
+        assert FolderPayload(path="p", name="Ms. Shinta").name == "Ms. Shinta"
+        assert FolderPayload(path="p", name="photos.png").name == "photos.png"  # folders keep what is typed
+        for bad in ("a/b", "a\\b", "..", "caf\u00e9", "100%", "x" * 101):
             with pytest.raises(ValidationError):
                 RenameFilePayload(name=bad)
             with pytest.raises(ValidationError):
