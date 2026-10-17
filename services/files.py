@@ -319,7 +319,14 @@ async def ensure_task_assigned(ctx: ConnectionContext, project_task: dict[str, A
 
 
 async def call_udin_folder(
-    method: str, operation: str, project_uid: str, user_id: int, body: dict[str, Any], failed_message: str, tag: str
+    method: str,
+    operation: str,
+    project_uid: str,
+    project_name: str,
+    user_id: int,
+    body: dict[str, Any],
+    failed_message: str,
+    tag: str,
 ) -> Any:
     """One Udin folder call: 504 on timeout, Udin's error surfaced under `failed_message`, `data` returned on success."""
     try:
@@ -327,7 +334,11 @@ async def call_udin_folder(
             base_url=UDIN_BASE_URL, headers={"X-API-Key": UDIN_API_KEY}, timeout=FOLDER_TIMEOUT
         ) as caller:  # type: ignore
             upstream = await caller.udin(
-                method, f"/engine/storage/{operation}/{project_uid}", user_id=user_id, json=body
+                method,
+                f"/engine/storage/{operation}/{project_uid}",
+                user_id=user_id,
+                json=body,
+                params={"project_name": project_name},
             )  # type: ignore
     except TimeoutException:
         logging.error(f"[{tag}] user={user_id} udin timed out")
@@ -346,7 +357,9 @@ async def call_udin_folder(
     return data.get("data")
 
 
-async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, user_id: int, path: str) -> list[str]:
+async def delete_upload_files_under(
+    ctx: ConnectionContext, project_uid: str, project_name: str, user_id: int, path: str
+) -> list[str]:
     """Permanently delete (Udin + DB) every uploaded file under the `upload` folder `path`. Returns the uids of the
     deleted image files, the only uploads that are indexed."""
     rows = await query(
@@ -363,6 +376,7 @@ async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, us
         "DELETE",
         "delete-files",
         project_uid,
+        project_name,
         user_id,
         {"sources": [r.path for r in rows]},
         "files_delete_failed",

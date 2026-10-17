@@ -161,6 +161,7 @@ def udin_uploader(
                         "POST",
                         f"/engine/storage/upload-generated-video/{project_uid}",
                         user_id=user_id,
+                        params={"project_name": project["name"]},
                         json={"polling_url": job["polling_url"], "openrouter_api_key": openrouter_api_key},  # type: ignore
                     )
                 except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
@@ -209,6 +210,7 @@ def udin_uploader(
                         "POST",
                         f"/engine/storage/upload-generated-image/{project_uid}",
                         user_id=user_id,
+                        params={"project_name": project["name"]},
                         json={"b64_json": b64_json, "media_type": "image/png"},
                         timeout=IMAGE_UPLOAD_TIMEOUT,
                     )

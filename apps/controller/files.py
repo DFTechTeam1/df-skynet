@@ -696,7 +696,7 @@ class FilesController(CoreDependencies):
                         "POST",
                         f"/engine/storage/upload-files/{project_uid}",
                         user_id=user_id,
-                        params={"path": path} if path else None,
+                        params={"project_name": project_task["project"]["name"], **({"path": path} if path else {})},
                         content=request.stream(),
                     )
             except TimeoutException:
@@ -948,6 +948,7 @@ class FilesController(CoreDependencies):
                 "POST",
                 "new-folder",
                 project["uid"],
+                project["name"],
                 user_id,
                 {"current_path": schema.path, "name": schema.name},
                 "folder_create_failed",
@@ -1029,6 +1030,7 @@ class FilesController(CoreDependencies):
                 "PATCH",
                 "rename-folder",
                 project["uid"],
+                project["name"],
                 user_id,
                 {"path": schema.path, "name": schema.name},
                 "folder_rename_failed",
@@ -1097,12 +1099,15 @@ class FilesController(CoreDependencies):
 
             deleted_upload_uids: list[str] = []
             if folder_scope(path)[:1] == ("upload",):
-                deleted_upload_uids = await delete_upload_files_under(ctx, project["uid"], user_id, path)
+                deleted_upload_uids = await delete_upload_files_under(
+                    ctx, project["uid"], project["name"], user_id, path
+                )
 
             pairs = await call_udin_folder(
                 "DELETE",
                 "delete-folder",
                 project["uid"],
+                project["name"],
                 user_id,
                 {"path": path},
                 "folder_delete_failed",
@@ -1197,6 +1202,7 @@ class FilesController(CoreDependencies):
                 "PATCH",
                 "move-folders",
                 project["uid"],
+                project["name"],
                 user_id,
                 {"sources": sources, "destination": schema.destination},
                 "folders_move_failed",
@@ -1264,6 +1270,7 @@ class FilesController(CoreDependencies):
                 "PATCH",
                 "rename-file",
                 project["uid"],
+                project["name"],
                 user_id,
                 {"filepath": rows[0].path, "name": new_name},
                 "file_rename_failed",
@@ -1336,6 +1343,7 @@ class FilesController(CoreDependencies):
                 "PATCH",
                 "move-files",
                 project["uid"],
+                project["name"],
                 user_id,
                 {"sources": [row.path for row in rows], "destination": schema.destination},
                 "files_move_failed",
@@ -1378,6 +1386,7 @@ class FilesController(CoreDependencies):
                 "DELETE",
                 "delete-files",
                 project["uid"],
+                project["name"],
                 user_id,
                 {"sources": [row.path for row in rows]},
                 "files_delete_failed",
