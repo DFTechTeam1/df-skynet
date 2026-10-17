@@ -50,6 +50,7 @@ from services.files import (
     get_folder_depth_limit,
     has_override,
     resolve_files,
+    project_root_path,
 )
 from services.dto.asynced.projects import get_project, get_project_task
 from services.dto.asynced.files import (
@@ -798,7 +799,9 @@ class FilesController(CoreDependencies):
                 uploaded, generated = await search_project_files(
                     str(project_uid), search, ("image", "image_edit", "video", "folder"), user_id, can_override, my_task
                 )
-                response.data = format_file_tree_refactored(uploaded, generated, await get_folder_depth_limit(ctx))
+                response.data = format_file_tree_refactored(
+                    uploaded, generated, await get_folder_depth_limit(ctx), project_root_path(project)
+                )
             else:
                 response.data = await build_file_tree_refactored(
                     ctx, project["id"], user_id, task_uid, my_task=my_task, can_override=can_override

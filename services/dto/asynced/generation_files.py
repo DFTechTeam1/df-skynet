@@ -219,6 +219,7 @@ async def get_generation_main_refactored(
             source_generation = source["generation"]
             references.append(
                 GenerationReference(
+                    id=source["id"],
                     kind=source_generation["kind"],
                     file_uid=source["uid"],
                     task=(source_generation.get("task") or source_generation.get("song") or {}).get("name"),
@@ -239,6 +240,7 @@ async def get_generation_main_refactored(
             file = ref["file"]
             references.append(
                 GenerationReference(
+                    id=file["id"],
                     kind=file["type"],
                     type="uploaded",
                     file_uid=file["uid"],
@@ -258,6 +260,7 @@ async def get_generation_main_refactored(
                 variant_generation = variant.get("generation") or {}
                 variants.append(
                     GenerationVariant(
+                        id=variant["id"],
                         kind=variant_generation.get("kind") or record["kind"],
                         file_uid=variant["uid"],
                         generation_uid=variant_generation.get("uid"),
@@ -288,6 +291,7 @@ async def get_generation_main_refactored(
 
             files.append(
                 UserGeneratedFile(
+                    id=result.get("id"),
                     kind=record["kind"],
                     file_uid=result.get("uid"),
                     generation_uid=record["uid"],

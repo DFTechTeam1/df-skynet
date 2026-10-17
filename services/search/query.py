@@ -104,7 +104,6 @@ _PICKER_HIDDEN_GENERATION = {
     "version",
     "parent_id",
     "parameter",
-    "action",
     "cost_usd",
     "cost_idr",
     "status",
@@ -120,11 +119,7 @@ def group_reference_picker(generations: list[dict[str, Any]], uploads: list[dict
             for generation in generations
             if generation["kind"] != "video"
         ],
-        "Image Uploads": [
-            {key: value for key, value in file.items() if key != "action"}
-            for file in uploads
-            if file["kind"] not in ("video", "folder")
-        ],
+        "Image Uploads": [dict(file) for file in uploads if file["kind"] not in ("video", "folder")],
     }
     return [
         {"type": group, "total": len(files_by_group.get(group, [])), "files": files_by_group.get(group, [])}

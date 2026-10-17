@@ -42,6 +42,7 @@ def test_load_options_are_built():
 
 def test_build_generation_doc_is_flat_with_null_action(monkeypatch):
     row = {
+        "id": 7,
         "uid": "r1",
         "parent_id": None,
         "name": "a.png",
@@ -78,6 +79,7 @@ def test_build_generation_doc_is_flat_with_null_action(monkeypatch):
 
 def test_build_upload_doc_falls_back_to_song_name(monkeypatch):
     row = {
+        "id": 9,
         "uid": "u1",
         "name": "a.png",
         "path": "storage/x/upload/images/a.png",
@@ -93,7 +95,13 @@ def test_build_upload_doc_falls_back_to_song_name(monkeypatch):
     }
     monkeypatch.setattr(docs, "serialize", lambda _: row)
     doc = docs.build_upload_doc(object())
-    assert doc["objectID"] == "u1" and doc["song_uid"] == "s1" and doc["task"] == "Song" and doc["action"] is None
+    assert (
+        doc["id"] == 9
+        and doc["objectID"] == "u1"
+        and doc["song_uid"] == "s1"
+        and doc["task"] == "Song"
+        and doc["action"] is None
+    )
 
 
 # --- tasks -------------------------------------------------------------------------------------------------------
@@ -343,7 +351,7 @@ async def test_search_task_generations(monkeypatch):
     assert len(await query.search_task_generations("t1", "cat", 7, False, personal_file=True)) == 1
 
 
-def test_group_reference_picker_drops_videos_folders_and_hidden_fields():
+def test_group_reference_picker_keeps_action_and_drops_videos_folders_and_hidden_fields():
     groups = query.group_reference_picker(
         [{"kind": "image", "prompt": "x", "action": {}, "name": "a"}, {"kind": "video", "name": "v"}],
         [
@@ -353,5 +361,9 @@ def test_group_reference_picker_drops_videos_folders_and_hidden_fields():
         ],
     )
     assert [g["type"] for g in groups] == ["Image Generations", "Image Uploads", "Elements", "Shared"]
-    assert groups[0] == {"type": "Image Generations", "total": 1, "files": [{"kind": "image", "name": "a"}]}
-    assert groups[1]["files"] == [{"kind": "image", "name": "u"}] and groups[2]["total"] == 0
+    assert groups[0] == {
+        "type": "Image Generations",
+        "total": 1,
+        "files": [{"kind": "image", "action": {}, "name": "a"}],
+    }
+    assert groups[1]["files"] == [{"kind": "image", "action": {}, "name": "u"}] and groups[2]["total"] == 0
