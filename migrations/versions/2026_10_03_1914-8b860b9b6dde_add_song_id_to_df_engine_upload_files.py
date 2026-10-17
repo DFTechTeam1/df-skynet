@@ -32,4 +32,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    # the FK was created unnamed, so MySQL auto-named it (`<table>_ibfk_N`, N varies per database): look it up
+    for fk in sa.inspect(op.get_bind()).get_foreign_keys(TABLE_NAME):
+        if fk["constrained_columns"] == ["song_id"]:
+            op.drop_constraint(fk["name"], TABLE_NAME, type_="foreignkey")
     op.drop_column(TABLE_NAME, "song_id")

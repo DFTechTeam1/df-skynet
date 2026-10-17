@@ -1,3 +1,4 @@
+from uuid import UUID
 from typing import Any, Optional
 from urllib.parse import unquote
 from fastapi import status
@@ -10,18 +11,20 @@ from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from config.variables import OVERRIDE_FILE_ROLES
 from services.api_caller import APICaller
 from services.dto import ConnectionContext
-from services.dto.asynced.admin_settings import get_admin_settings
+from services.dto.asynced.admin_settings import get_admin_settings, get_folder_depth_limit
 from services.dto.asynced.employees import get_employee
-from services.dto.asynced.projects import get_project_task, get_user_tasks
+from services.dto.asynced.projects import get_project, get_project_task, get_user_tasks
 from services.mysql import query
 from services.mysql.model import DfEngineGenerationResults, DfEngineUploadFiles
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.mysql.model.entertainment_task_songs import EntertainmentTaskSongs
-from services.redis import delete_pattern
+from services.redis import delete_pattern, invalidate_project_files
 from utils import local_time
-from services.dto.asynced.files import get_user_uploaded_files
-from services.dto.asynced.generation_files import get_generation_main_files
-from schemas.payload.setting import AdminGlobalSettingPayload
+from services.dto.asynced.files import get_user_uploaded_files, get_user_uploaded_files_refactored
+from services.dto.asynced.generation_files import get_generation_main_files, get_generation_main_refactored
+from services.search.dispatch import dispatch_search_sync
+from schemas.format.action import FolderAction as FolderActionSchema, GeneratedFileAction, UploadedFileAction
+from schemas.format.files import TreeFileRefactored, TreeFolderRefactored
 from services.dto.format_response import FileAction, FolderAction, GenerationAction, TreeFile, TreeFolder
 
 FOLDER_TIMEOUT = Timeout(connect=10, read=60, write=30, pool=10)
@@ -139,6 +142,109 @@ def format_file_tree(
     return next((folder.model_dump(mode="json") for folder in roots.values()), {})
 
 
+def format_file_tree_refactored(
+    uploaded_files: list[dict[str, Any]],
+    main_generations: list[dict[str, Any]],
+    depth_limit: int,
+) -> dict[str, Any]:
+    """Same tree as `format_file_tree`, built from the already formatted output of
+    `get_user_uploaded_files_refactored` and `get_generation_main_refactored`, so every permission is taken as given.
+
+    Folder rows (`kind == "folder"`) create their node and keep their own action. Folders that only exist as part of a
+    path have no row, so `folder_action` (with `depth_limit`) decides what they allow. Uploads are placed by their
+    storage `path`; generated files carry the udin url in `path`, so the storage path is recovered from it."""
+    roots: dict[str, TreeFolderRefactored] = {}
+    nodes: dict[str, TreeFolderRefactored] = {}
+
+    def node(path: str, depth: int) -> TreeFolderRefactored:
+        if path in nodes:
+            return nodes[path]
+        can_upload = folder_scope(path)[:1] == ("upload",) and depth >= 2
+        folder = TreeFolderRefactored(
+            name=path.rsplit("/", 1)[-1],
+            path=path,
+            action=FolderActionSchema(**folder_action(depth, depth_limit, can_upload).model_dump()),
+        )
+        nodes[path] = folder
+        if depth == 0:
+            roots[path] = folder
+        else:
+            node(path.rpartition("/")[0], depth - 1).children.append(folder)
+        return folder
+
+    def place(path: str, tree_file: TreeFileRefactored) -> None:
+        depth = len(path.split("/")) - 1 - 3  # folders below `storage/DF-Engine/<project>`
+        if depth >= 0:
+            node(path.rpartition("/")[0], depth).files.append(tree_file)
+
+    for file in uploaded_files:
+        if file["kind"] == "folder":
+            depth = len(file["path"].split("/")) - 3
+            if depth >= 0:
+                folder = node(file["path"], depth)
+                folder.action = FolderActionSchema(
+                    **{
+                        **file["action"],
+                        "can_upload_file": folder_scope(file["path"])[:1] == ("upload",) and depth >= 2,
+                    },
+                )
+                folder.creator = file.get("creator")
+                folder.updater = file.get("updater")
+            continue
+        place(
+            file["path"],
+            TreeFileRefactored(
+                file_uid=file["file_uid"],
+                name=file["name"],
+                path=file["path"],
+                url=file["url"],
+                type="upload",
+                kind=file["kind"],
+                icon=file["icon"],
+                color=file["color"],
+                size=file["size"],
+                task_uid=file.get("task_uid"),
+                song_uid=file.get("song_uid"),
+                task=file.get("task"),
+                created_at=file["created_at"],
+                updated_at=file.get("updated_at"),
+                creator=file.get("creator"),
+                updater=file.get("updater"),
+                action=UploadedFileAction.model_validate(file["action"]),
+            ),
+        )
+
+    for file in main_generations:
+        url = file.get("path")
+        if not url:
+            continue
+        path = unquote(url.removeprefix(f"{UDIN_BASE_URL}/"))
+        place(
+            path,
+            TreeFileRefactored(
+                file_uid=file["file_uid"],
+                name=file["name"],
+                path=path,
+                url=url,
+                type="generated",
+                kind=file["kind"],
+                icon=file["icon"],
+                color=file["color"],
+                size=file["size"],
+                task_uid=file.get("task_uid"),
+                song_uid=file.get("song_uid"),
+                task=file.get("task"),
+                created_at=file["created_at"],
+                updated_at=file.get("updated_at"),
+                creator=file.get("creator"),
+                updater=file.get("updater"),
+                action=GeneratedFileAction.model_validate(file["action"]),
+            ),
+        )
+
+    return next((folder.model_dump(mode="json") for folder in roots.values()), {})
+
+
 async def resolve_files(
     ctx: ConnectionContext, source: str, file_uids: list[Any], user_id: int, roles: Optional[list[str]]
 ) -> tuple[list[Any], dict[str, Any]]:
@@ -185,13 +291,6 @@ async def resolve_files(
     task_id, song_id = scopes.pop()
     project_task = await get_project_task(ctx, task_id=task_id, song_id=song_id)
     return [found[uid] for uid in uids], project_task
-
-
-async def get_folder_depth_limit(ctx: ConnectionContext) -> int:
-    admin_setting = await get_admin_settings(ctx)
-    return (
-        admin_setting.get("folder_depth_limit") or AdminGlobalSettingPayload.model_fields["folder_depth_limit"].default
-    )
 
 
 def folder_scope(path: str) -> tuple[str, ...]:
@@ -247,8 +346,9 @@ async def call_udin_folder(
     return data.get("data")
 
 
-async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, user_id: int, path: str) -> None:
-    """Permanently delete (Udin + DB) every uploaded file under the `upload` folder `path`."""
+async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, user_id: int, path: str) -> list[str]:
+    """Permanently delete (Udin + DB) every uploaded file under the `upload` folder `path`. Returns the uids of the
+    deleted image files, the only uploads that are indexed."""
     rows = await query(
         ctx.db,
         DfEngineUploadFiles,
@@ -258,7 +358,7 @@ async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, us
         ),
     )
     if not rows:
-        return
+        return []
     await call_udin_folder(
         "DELETE",
         "delete-files",
@@ -272,6 +372,7 @@ async def delete_upload_files_under(ctx: ConnectionContext, project_uid: str, us
         await ctx.redis.delete(ctx.key.user_file_detail(row.uid))  # type: ignore
         await ctx.db.delete(row)
     await ctx.db.flush()
+    return [row.uid for row in rows if row.type == UploadFileTypes.image]
 
 
 def task_scope(project_task: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
@@ -285,6 +386,20 @@ async def invalidate_generation_lists(ctx: ConnectionContext, user_ids: Any) -> 
     for uid in {uid for uid in user_ids if uid is not None}:
         for pattern in ctx.key.generation_files_user_lists_patterns(uid):
             await delete_pattern(ctx.redis, pattern)
+
+
+async def resolve_project_scope(
+    ctx: ConnectionContext, project_uid: UUID, task_uid: Optional[UUID] = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`(project, scope)` for the project-level folder endpoints. `scope` has the shape `apply_folder_changes` expects:
+    the task/song named by the optional `task_uid` (must belong to the project), else a project-wide one (`id=None`)."""
+    project = await get_project(ctx, project_uid=project_uid)
+    if not task_uid:
+        return project, {"id": None, "is_song": False, "project_id": project["id"]}
+    project_task = await get_project_task(ctx, task_uid)
+    if project_task["project_id"] != project["id"]:
+        raise DataNotFoundError(message="project_task_not_found")
+    return project, project_task
 
 
 async def apply_folder_changes(
@@ -304,10 +419,12 @@ async def apply_folder_changes(
     is_song = project_task["is_song"]
     now = local_time()
     scopes = {(None if is_song else project_task["id"], project_task["id"] if is_song else None)}
-    generation_task_ids = {project_task["id"]}
+    generation_task_ids = {project_task["id"]} - {None}
     creators: set[Optional[int]] = {user_id}
     upload_uids: set[str] = set()
     result_uids: set[str] = set()
+    index_uploads: set[str] = set()
+    index_generations: set[str] = set()
     to_by_from = {pair["from"]["path"]: pair["to"] for pair in pairs}
 
     if to_by_from:
@@ -325,6 +442,8 @@ async def apply_folder_changes(
             scopes.add((row.task_id, row.song_id))
             creators.add(row.created_by)
             upload_uids.add(row.uid)
+            if row.type == UploadFileTypes.image:
+                index_uploads.add(row.uid)
             ctx.db.add(row)
         results = await query(
             ctx.db,
@@ -339,6 +458,8 @@ async def apply_folder_changes(
                 generation_task_ids.add(row.generation.task_id)
             creators.add(row.created_by)
             result_uids.add(row.uid)
+            if row.is_main:
+                index_generations.add(row.uid)
             ctx.db.add(row)
 
     async def folder_rows(prefix: str) -> Any:
@@ -370,6 +491,9 @@ async def apply_folder_changes(
             upload_uids.add(row.uid)
             await ctx.db.delete(row)
     await ctx.db.flush()
+
+    await dispatch_search_sync(ctx.db, generations=index_generations, uploads=index_uploads)
+    await invalidate_project_files(ctx.redis, ctx.key, project_task["project_id"])
 
     creators.discard(None)
     for task_id, song_id in scopes:
@@ -416,6 +540,50 @@ async def build_file_tree(
     tree = format_file_tree(uploaded, generated, user_id, await get_folder_depth_limit(ctx), has_override(roles))
     logging.info(
         f"[file-tree] user={user_id} {'song_id' if is_song else 'task_id'}={project_task['id']} "
+        f"uploaded={len(uploaded)} generated={len(generated)} root={tree.get('path')}"
+    )
+    return tree
+
+
+async def build_file_tree_refactored(
+    ctx: ConnectionContext,
+    project_id: int,
+    user_id: int,
+    task_uid: Optional[UUID] = None,
+    my_task: bool = False,
+    can_override: bool = False,
+) -> dict[str, Any]:
+    """The `GET /files/{project_uid}` payload: the whole project's file tree. Each source is cached by its own getter
+    (uploads, generations, admin settings), so after an invalidation this repopulates only what was cleared."""
+    song_id = None
+    task_id = None
+
+    if task_uid:
+        project_task = await get_project_task(ctx=ctx, task_uid=task_uid)
+        song_id = project_task["id"] if project_task["is_song"] is True else None
+        task_id = project_task["id"] if project_task["is_song"] is False else None
+
+    uploaded = await get_user_uploaded_files_refactored(
+        ctx=ctx,
+        viewer_id=user_id,
+        project_id=project_id,
+        task_id=task_id,
+        song_id=song_id,
+        personal_file=my_task,
+        has_override=can_override,
+    )
+    generated = await get_generation_main_refactored(
+        ctx=ctx,
+        viewer_id=user_id,
+        project_id=project_id,
+        task_id=task_id,
+        song_id=song_id,
+        personal_file=my_task,
+        has_override=can_override,
+    )
+    tree = format_file_tree_refactored(uploaded, generated, await get_folder_depth_limit(ctx))
+    logging.info(
+        f"[file-tree] user={user_id} project_id={project_id} my_task={my_task} "
         f"uploaded={len(uploaded)} generated={len(generated)} root={tree.get('path')}"
     )
     return tree

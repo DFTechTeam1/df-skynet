@@ -9,6 +9,8 @@ class FilesMessage:
             "task_already_finished": "You cannot upload files because this task has already finished.",
             "project_not_ongoing": "Files can only be uploaded while the project is ongoing.",
             "folder_not_found": "We couldn't find that folder.",
+            "folder_path_not_found": "This folder path doesn't belong to this project. Choose a folder from this project's file tree.",
+            "invalid_upload_path": "Files can only be uploaded into the upload/images or upload/videos folder of this project, or a folder inside them.",
             "file_not_found": "We couldn't find that file.",
             "folder_action_not_permitted": "You don't have permission to modify this folder.",
             "folder_delete_not_permitted": "You don't have permission to delete this folder.",

@@ -231,7 +231,7 @@ class TestBuildFileTree:
         get_uploads = AsyncMock(return_value=[])
         monkeypatch.setattr(files, "get_user_uploaded_files", get_uploads)
         monkeypatch.setattr(files, "get_generation_main_files", AsyncMock(return_value=[]))
-        monkeypatch.setattr(files, "get_admin_settings", AsyncMock(return_value={"folder_depth_limit": 3}))
+        monkeypatch.setattr(files, "get_folder_depth_limit", AsyncMock(return_value=3))
 
         tree = await files.build_file_tree(object(), {"id": 7, "is_song": is_song, "project_id": 9}, 5, my_task=True)
         assert tree == {}
@@ -242,7 +242,7 @@ class TestBuildFileTree:
         seen = {}
         monkeypatch.setattr(files, "get_user_uploaded_files", AsyncMock(return_value=[]))
         monkeypatch.setattr(files, "get_generation_main_files", AsyncMock(return_value=[]))
-        monkeypatch.setattr(files, "get_admin_settings", AsyncMock(return_value={}))
+        monkeypatch.setattr(files, "get_folder_depth_limit", AsyncMock(return_value=4))
         monkeypatch.setattr(
             files,
             "format_file_tree",

@@ -9,6 +9,8 @@ class FilesMessage:
             "task_already_finished": "Anda tidak dapat mengunggah file karena tugas ini sudah selesai.",
             "project_not_ongoing": "File hanya dapat diunggah selama proyek masih berjalan.",
             "folder_not_found": "Folder tidak ditemukan.",
+            "folder_path_not_found": "Path folder ini bukan milik proyek ini. Pilih folder dari file tree proyek ini.",
+            "invalid_upload_path": "File hanya dapat diunggah ke folder upload/images atau upload/videos milik proyek ini, atau folder di dalamnya.",
             "file_not_found": "File tidak ditemukan.",
             "folder_action_not_permitted": "Anda tidak memiliki izin untuk mengubah folder ini.",
             "folder_delete_not_permitted": "Anda tidak memiliki izin untuk menghapus folder ini.",

@@ -27,6 +27,7 @@ class DfEngineUploadFiles(SQLModel, table=True):
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+    indexed_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
     name: str = Field(sa_column=Column(String(255), nullable=False))
     type: UploadFileTypes = Field(
@@ -54,6 +55,9 @@ class DfEngineUploadFiles(SQLModel, table=True):
     )
     task: Optional["ProjectTasks"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineUploadFiles.task_id]"}
+    )
+    song: Optional["ProjectSongLists"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineUploadFiles.song_id]"}
     )
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineUploadFiles.created_by]"}

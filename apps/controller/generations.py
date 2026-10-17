@@ -26,9 +26,10 @@ from services.mysql.model import (
 )
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR, GenerationKinds, GenerationStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
-from services.redis import get_json, set_json, delete_pattern, CacheKeys
+from services.redis import get_json, set_json, delete_pattern, invalidate_project_files, CacheKeys
 from services.dto.asynced.projects import get_project, get_project_task
 from services.dto.asynced.employees import get_employee
+from services.dto.asynced.files import get_user_uploaded_files_refactored
 from services.dto.asynced.generation_files import (
     get_generation_main_files,
     get_upload_references,
@@ -37,6 +38,7 @@ from services.dto.asynced.generation_files import (
     get_generation_main_variants,
     get_generation_files,
     get_enhance_prompt,
+    get_generation_main_refactored,
 )
 from services.dto.asynced.generation_files import _build_references
 from services.dto.asynced.uploaded_files import get_uploaded_files
@@ -47,6 +49,7 @@ from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhan
 from services.files import has_override
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from services.generations import global_reference_sections, reference_sections
+from services.search.query import group_reference_picker, search_project_files, search_task_generations
 from services.model_management import ModelManagement
 from utils import local_time
 from utils.serializer import serialize
@@ -179,8 +182,11 @@ class GenerationsController(CoreDependencies):
         self,
         project_uid: UUID = Path(..., description="Project UID."),
         search: Optional[str] = Query(
-            None, min_length=1, description="Search by file name (starts with). Leave empty to include all files."
+            None,
+            min_length=1,
+            description="Search by file name, file path, task name. Leave empty to include all files.",
         ),
+        my_task: bool = Query(False, description="Filtered only creator files"),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
@@ -189,59 +195,35 @@ class GenerationsController(CoreDependencies):
             project = await get_project(ctx, project_uid=project_uid)
             project_id = project["id"]
 
-            upload_rows = await get_upload_references(ctx, user_id, project_id=project_id, search=search)
-            generation_rows = await get_generation_references(
-                ctx, user_id, project_id=project_id, search=search, can_override=has_override(self.user["roles"])
-            )
+            if search:
+                uploaded_files, main_generations = await search_project_files(
+                    str(project_uid),
+                    search,
+                    ("image", "image_edit"),
+                    user_id,
+                    has_override(self.user["roles"]),
+                    my_task,
+                )
+            else:
+                main_generations = await get_generation_main_refactored(
+                    ctx=ctx, viewer_id=user_id, project_id=project_id, personal_file=my_task
+                )
+                uploaded_files = await get_user_uploaded_files_refactored(
+                    ctx=ctx, viewer_id=user_id, project_id=project_id, personal_file=my_task
+                )
 
-            response.data = reference_sections(upload_rows, generation_rows)
-            section_counts = {section["type"]: section["total_data"] for section in response.data}
+            response.data = group_reference_picker(main_generations, uploaded_files)
             logging.info(
-                f"user={user_id} listed reference picker project_id={project_id} search={search} "
-                f"uploads={len(upload_rows)} generations={len(generation_rows)} sections={section_counts}"
+                f"user={user_id} listed reference picker project_id={project_id} my_task={my_task} search={search} "
+                f"generations={len(main_generations)} uploads={len(uploaded_files)} (videos excluded from the payload)"
             )
         except BaseError:
             raise
         except Exception:
-            logging.error(traceback.format_exc())
-            raise ServiceError()
-        return response
-
-    @controller.get(
-        "/references-picker",
-        summary="Browse every project's files for picking references.",
-        description=(
-            "Shows your uploaded and generated files across all your projects, in the same image uploads, "
-            "image generations and elements sections, each grouped by project then task, so you can pick one "
-            "to reuse. You can search by project or file name."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["Generations"],
-        response_model=Response,
-    )
-    async def generation_to_fetch_global_references_picker(
-        self,
-        search: Optional[str] = Query(None, min_length=1),
-    ) -> Response:
-        response = Response()
-        user_id = int(self.user["user_id"])
-        ctx = ConnectionContext(self.db, self.redis, cache_key)
-        try:
-            upload_rows = await get_upload_references(ctx, user_id, search=search)
-            generation_rows = await get_generation_references(
-                ctx, user_id, search=search, can_override=has_override(self.user["roles"])
+            logging.error(
+                f"user={user_id} failed to list reference picker project_uid={project_uid} my_task={my_task}\n"
+                f"{traceback.format_exc()}"
             )
-
-            response.data = global_reference_sections(upload_rows, generation_rows)
-            section_counts = {section["type"]: section["total_data"] for section in response.data}
-            logging.info(
-                f"user={user_id} listed global reference picker search={search} "
-                f"uploads={len(upload_rows)} generations={len(generation_rows)} sections={section_counts}"
-            )
-        except BaseError:
-            raise
-        except Exception:
-            logging.error(traceback.format_exc())
             raise ServiceError()
         return response
 
@@ -565,8 +547,7 @@ class GenerationsController(CoreDependencies):
 
             """Invalidate cache related to is_main listings, same as set-main"""
             await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(task["id"]))
-            await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
-            await delete_pattern(ctx.redis, ctx.key.user_galleries_pattern(user_id))
+            await invalidate_project_files(self.redis, cache_key, project["id"])
             await delete_pattern(ctx.redis, ctx.key.generation_file_detail_pattern(user_id))
             for pattern in cache_key.generation_files_user_lists_patterns(user_id):
                 await delete_pattern(self.redis, pattern)
@@ -829,8 +810,7 @@ class GenerationsController(CoreDependencies):
 
             """Invalidate cache related to is_main listings, same as set-main"""
             await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(task["id"]))
-            await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
-            await delete_pattern(ctx.redis, ctx.key.user_galleries_pattern(user_id))
+            await invalidate_project_files(self.redis, cache_key, project["id"])
             await delete_pattern(ctx.redis, ctx.key.generation_file_detail_pattern(user_id))
             for pattern in cache_key.generation_files_user_lists_patterns(user_id):
                 await delete_pattern(self.redis, pattern)
@@ -1083,22 +1063,38 @@ class GenerationsController(CoreDependencies):
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
+        can_override = has_override(self.user["roles"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            task = await get_project_task(ctx, task_uid)
-            is_song = task.get("is_song")
-            response.data = await get_generation_main_files(
-                ctx,
-                user_id,
-                None if is_song else task["id"],
-                my_task,
-                search,
-                has_override(self.user["roles"]),
-                task["id"] if is_song else None,
-            )
+            project_task = await get_project_task(ctx, task_uid)
+            task_id = project_task["id"] if project_task["is_song"] is False else None
+            song_id = project_task["id"] if project_task["is_song"] is True else None
+
+            if search:
+                main_generations = await search_task_generations(str(task_uid), search, user_id, can_override, my_task)
+            else:
+                main_generations = await get_generation_main_refactored(
+                    ctx=ctx,
+                    viewer_id=user_id,
+                    project_id=project_task["project_id"],  # keeps the cache key under the project-wide invalidation
+                    task_id=task_id,
+                    song_id=song_id,
+                    personal_file=my_task,
+                    has_override=can_override,
+                )
+            for generation in main_generations:
+                generation.pop("references", None)
+                generation.pop("variants", None)
+                generation.pop("is_main", None)
+                generation.pop("full_prompt", None)
+                generation.pop("prompt", None)
+                generation.pop("version", None)
+                generation.pop("parent_id", None)
+
+            response.data = main_generations
             logging.info(
                 f"user={user_id} fetched user galleries task_uid={task_uid} my_task={my_task} "
-                f"search={search} count={len(response.data)}"
+                f"search={search} count={len(main_generations)}"
             )
         except BaseError:
             raise

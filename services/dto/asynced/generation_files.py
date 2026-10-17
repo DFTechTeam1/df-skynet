@@ -13,21 +13,318 @@ from services.mysql.model import (
     Users,
     Employees,
     Projects,
+    ProjectSongLists,
     ProjectTasks,
 )
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from log import logging
 from error import DataNotFoundError, DataValidationError
 from services.mysql import query
-from utils.formatter import format_user_employees
+from config.variables import USD_TO_IDR_RATE
+from schemas.format.action import GeneratedFileAction
+from utils.formatter import format_idr, format_usd, format_user_employees
 from utils.serializer import serialize
 from services.dto import ConnectionContext
+from schemas.format.files import GenerationReference, GenerationVariant, UserGeneratedFile
 from services.dto.format_response import (
     grant_generation_override,
     GenerationResultRecord,
     GenerationReferenceRecord,
     UploadedReferenceRecord,
 )
+
+
+async def get_generation_main_refactored(
+    ctx: ConnectionContext,
+    viewer_id: int,
+    project_id: Optional[int] = None,
+    task_id: Optional[int] = None,
+    song_id: Optional[int] = None,
+    personal_file: bool = False,
+    has_override: bool = False,
+) -> list[dict[str, Any]]:
+    main_generation_key = ctx.key.main_generations_refactored(
+        viewer_id,
+        project_id,
+        task_id,
+        song_id,
+        personal_file,
+        has_override,
+    )
+    main_generation = await get_json(ctx.redis, main_generation_key)
+    if main_generation:
+        return main_generation
+
+    filters = [
+        DfEngineGenerations.status.in_([GenerationStatuses.processing, GenerationStatuses.success]),  # type: ignore
+        DfEngineGenerations.kind.in_(["image", "image_edit", "video"]),  # type: ignore
+        or_(
+            DfEngineGenerations.results.any(DfEngineGenerationResults.is_main.is_(True)),  # type: ignore
+            ~DfEngineGenerations.results.any(),  # type: ignore
+        ),
+    ]
+
+    if personal_file:
+        filters.append(DfEngineGenerations.created_by == viewer_id)
+    if project_id:
+        filters.append(DfEngineGenerations.project_id == project_id)
+    if task_id:
+        filters.append(DfEngineGenerations.task_id == task_id)
+    if song_id:
+        filters.append(DfEngineGenerations.song_id == song_id)
+
+    options = [
+        selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+        selectinload(DfEngineGenerations.results.and_(DfEngineGenerationResults.is_main.is_(True)))  # type: ignore
+        .selectinload(DfEngineGenerationResults.created_by_user)  # type: ignore
+        .load_only(Users.image)  # type: ignore
+        .selectinload(Users.employees)  # type: ignore
+        .load_only(Employees.nickname),  # type: ignore
+        selectinload(DfEngineGenerations.results.and_(DfEngineGenerationResults.is_main.is_(True)))  # type: ignore
+        .selectinload(DfEngineGenerationResults.updated_by_user)  # type: ignore
+        .load_only(Users.image)  # type: ignore
+        .selectinload(Users.employees)  # type: ignore
+        .load_only(Employees.nickname),  # type: ignore
+        selectinload(DfEngineGenerations.generation_references)  # type: ignore
+        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+        .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+        .load_only(
+            DfEngineGenerations.uid,  # type: ignore
+            DfEngineGenerations.kind,  # type: ignore
+            DfEngineGenerations.prompt,  # type: ignore
+            DfEngineGenerations.full_prompt,  # type: ignore
+            DfEngineGenerations.parameter,  # type: ignore
+            DfEngineGenerations.task_id,  # type: ignore
+            DfEngineGenerations.song_id,  # type: ignore
+        ),
+        selectinload(DfEngineGenerations.generation_references)  # type: ignore
+        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+        .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+        .selectinload(DfEngineGenerations.model_option)  # type: ignore
+        .load_only(DfEngineModelOptions.name),  # type: ignore
+        selectinload(DfEngineGenerations.generation_references)  # type: ignore
+        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+        .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+        .selectinload(DfEngineGenerations.task)  # type: ignore
+        .load_only(ProjectTasks.name),  # type: ignore
+        selectinload(DfEngineGenerations.generation_references)  # type: ignore
+        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+        .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+        .selectinload(DfEngineGenerations.song)  # type: ignore
+        .load_only(ProjectSongLists.name),  # type: ignore
+        selectinload(DfEngineGenerations.generation_references)  # type: ignore
+        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+        .selectinload(DfEngineGenerationResults.created_by_user)  # type: ignore
+        .load_only(Users.image)  # type: ignore
+        .selectinload(Users.employees)  # type: ignore
+        .load_only(Employees.nickname),  # type: ignore
+        selectinload(DfEngineGenerations.generation_references)  # type: ignore
+        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+        .selectinload(DfEngineGenerationResults.updated_by_user)  # type: ignore
+        .load_only(Users.image)  # type: ignore
+        .selectinload(Users.employees)  # type: ignore
+        .load_only(Employees.nickname),  # type: ignore
+        selectinload(DfEngineGenerations.upload_file_references)  # type: ignore
+        .selectinload(DfEngineUploadFileReferences.file)  # type: ignore
+        .selectinload(DfEngineUploadFiles.created_by_user)  # type: ignore
+        .load_only(Users.image)  # type: ignore
+        .selectinload(Users.employees)  # type: ignore
+        .load_only(Employees.nickname),  # type: ignore
+        selectinload(DfEngineGenerations.upload_file_references)  # type: ignore
+        .selectinload(DfEngineUploadFileReferences.file)  # type: ignore
+        .selectinload(DfEngineUploadFiles.updated_by_user)  # type: ignore
+        .load_only(Users.image)  # type: ignore
+        .selectinload(Users.employees)  # type: ignore
+        .load_only(Employees.nickname),  # type: ignore
+        selectinload(DfEngineGenerations.upload_file_references)  # type: ignore
+        .selectinload(DfEngineUploadFileReferences.file)  # type: ignore
+        .selectinload(DfEngineUploadFiles.task)  # type: ignore
+        .load_only(ProjectTasks.name),  # type: ignore
+        selectinload(DfEngineGenerations.upload_file_references)  # type: ignore
+        .selectinload(DfEngineUploadFileReferences.file)  # type: ignore
+        .selectinload(DfEngineUploadFiles.song)  # type: ignore
+        .load_only(ProjectSongLists.name),  # type: ignore
+    ]
+    if task_id or not song_id:
+        options.append(selectinload(DfEngineGenerations.task).load_only(ProjectTasks.uid, ProjectTasks.name))  # type: ignore
+    if song_id or not task_id:
+        options.append(selectinload(DfEngineGenerations.song).load_only(ProjectSongLists.uid, ProjectSongLists.name))  # type: ignore
+
+    generations = await query(
+        ctx.db,
+        DfEngineGenerations,
+        options=tuple(options),
+        filters=tuple(filters),
+        order_by=(
+            DfEngineGenerations.created_at.desc(),  # type: ignore
+            DfEngineGenerations.created_by.desc(),  # type: ignore
+        ),
+    )
+    records = serialize(generations)
+
+    families = {}
+    roots = {result["parent_id"] or result["id"] for record in records for result in record["results"]}
+    if roots:
+        variant_rows = await query(
+            ctx.db,
+            DfEngineGenerationResults,
+            filters=(
+                or_(
+                    DfEngineGenerationResults.id.in_(roots),  # type: ignore
+                    DfEngineGenerationResults.parent_id.in_(roots),  # type: ignore
+                ),
+                DfEngineGenerationResults.archieved_at.is_(None),  # type: ignore
+            ),
+            options=(
+                selectinload(DfEngineGenerationResults.generation).load_only(  # type: ignore
+                    DfEngineGenerations.uid,  # type: ignore
+                    DfEngineGenerations.kind,  # type: ignore
+                    DfEngineGenerations.status,  # type: ignore
+                    DfEngineGenerations.prompt,  # type: ignore
+                    DfEngineGenerations.full_prompt,  # type: ignore
+                    DfEngineGenerations.parameter,  # type: ignore
+                    DfEngineGenerations.cost,  # type: ignore
+                    DfEngineGenerations.task_id,  # type: ignore
+                    DfEngineGenerations.song_id,  # type: ignore
+                ),
+                selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                .selectinload(DfEngineGenerations.model_option)  # type: ignore
+                .load_only(DfEngineModelOptions.name),  # type: ignore
+                selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                .selectinload(DfEngineGenerations.task)  # type: ignore
+                .load_only(ProjectTasks.uid),  # type: ignore
+                selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                .selectinload(DfEngineGenerations.song)  # type: ignore
+                .load_only(ProjectSongLists.uid),  # type: ignore
+                selectinload(DfEngineGenerationResults.created_by_user)  # type: ignore
+                .load_only(Users.image)  # type: ignore
+                .selectinload(Users.employees)  # type: ignore
+                .load_only(Employees.nickname),  # type: ignore
+                selectinload(DfEngineGenerationResults.updated_by_user)  # type: ignore
+                .load_only(Users.image)  # type: ignore
+                .selectinload(Users.employees)  # type: ignore
+                .load_only(Employees.nickname),  # type: ignore
+            ),
+            order_by=(DfEngineGenerationResults.version.asc(),),  # type: ignore
+        )
+        for variant in serialize(variant_rows):
+            families.setdefault(variant["parent_id"] or variant["id"], []).append(variant)
+
+    files = []
+    for record in records:
+        task = (record.get("task") or record.get("song") or {}).get("name")
+        references = []
+        for ref in record["generation_references"]:
+            source = ref["result"]
+            source_generation = source["generation"]
+            references.append(
+                GenerationReference(
+                    kind=source_generation["kind"],
+                    file_uid=source["uid"],
+                    task=(source_generation.get("task") or source_generation.get("song") or {}).get("name"),
+                    name=source["name"],
+                    path=source["path"],
+                    size=source["size"],
+                    version=source["version"],
+                    created_at=source["created_at"],
+                    model=(source_generation.get("model_option") or {}).get("name"),
+                    prompt=source_generation.get("prompt"),
+                    full_prompt=source_generation.get("full_prompt"),
+                    parameter=source_generation.get("parameter"),
+                    creator=format_user_employees(source.get("created_by_user")),
+                    updater=format_user_employees(source.get("updated_by_user")),
+                )
+            )
+        for ref in record["upload_file_references"]:
+            file = ref["file"]
+            references.append(
+                GenerationReference(
+                    kind=file["type"],
+                    type="uploaded",
+                    file_uid=file["uid"],
+                    task=(file.get("task") or file.get("song") or {}).get("name"),
+                    name=file["name"],
+                    path=file["path"],
+                    size=file["size"],
+                    created_at=file["created_at"],
+                    creator=format_user_employees(file.get("created_by_user")),
+                    updater=format_user_employees(file.get("updated_by_user")),
+                )
+            )
+
+        for result in record["results"] or [{}]:
+            variants = []
+            for variant in families.get(result.get("parent_id") or result.get("id"), []):
+                variant_generation = variant.get("generation") or {}
+                variants.append(
+                    GenerationVariant(
+                        kind=variant_generation.get("kind") or record["kind"],
+                        file_uid=variant["uid"],
+                        generation_uid=variant_generation.get("uid"),
+                        parent_id=variant["parent_id"],
+                        name=variant["name"],
+                        path=variant["path"],
+                        size=variant["size"],
+                        is_main=variant["is_main"],
+                        version=variant["version"],
+                        status=variant_generation.get("status"),
+                        task_uid=(variant_generation.get("task") or {}).get("uid"),
+                        song_uid=(variant_generation.get("song") or {}).get("uid"),
+                        task=task,
+                        created_at=variant["created_at"],
+                        updated_at=variant["updated_at"],
+                        favourited_at=variant["favourited_at"],
+                        archieved_at=variant["archieved_at"],
+                        cost_usd=format_usd(variant_generation.get("cost")),
+                        cost_idr=format_idr(variant_generation.get("cost"), USD_TO_IDR_RATE),
+                        model=(variant_generation.get("model_option") or {}).get("name"),
+                        prompt=variant_generation.get("prompt"),
+                        full_prompt=variant_generation.get("full_prompt"),
+                        parameter=variant_generation.get("parameter"),
+                        creator=format_user_employees(variant.get("created_by_user")),
+                        updater=format_user_employees(variant.get("updated_by_user")),
+                    )
+                )
+
+            files.append(
+                UserGeneratedFile(
+                    kind=record["kind"],
+                    file_uid=result.get("uid"),
+                    generation_uid=record["uid"],
+                    parent_id=result.get("parent_id"),
+                    name=result.get("name"),
+                    path=result.get("path"),
+                    size=result.get("size"),
+                    is_main=result.get("is_main", False),
+                    version=result.get("version"),
+                    status=record["status"],
+                    task_uid=(record.get("task") or {}).get("uid"),
+                    song_uid=(record.get("song") or {}).get("uid"),
+                    task=task,
+                    created_at=result.get("created_at") or record["created_at"],
+                    updated_at=result.get("updated_at"),
+                    favourited_at=result.get("favourited_at"),
+                    archieved_at=result.get("archieved_at"),
+                    cost_usd=format_usd(record["cost"]),
+                    cost_idr=format_idr(record["cost"], USD_TO_IDR_RATE),
+                    model=(record["model_option"] or {}).get("name"),
+                    prompt=record["prompt"],
+                    full_prompt=record["full_prompt"],
+                    parameter=record["parameter"],
+                    references=references,
+                    variants=variants,
+                    action=(
+                        GeneratedFileAction.action(result["created_by"] == viewer_id, has_override, result)
+                        if result
+                        else GeneratedFileAction.disabled()
+                    ),
+                    creator=format_user_employees(result.get("created_by_user")),
+                    updater=format_user_employees(result.get("updated_by_user")),
+                ).model_dump(mode="json")
+            )
+
+    await set_json(ctx.redis, main_generation_key, files)
+    return files
 
 
 def _scope(task_id: Optional[int], song_id: Optional[int]) -> Any:
@@ -222,9 +519,9 @@ async def get_archieved_files(
                 DfEngineGenerations.created_by == user_id,  # type: ignore
                 DfEngineGenerations.results.any(  # type: ignore
                     and_(
-                        DfEngineGenerationResults.archieved_at.is_not(None),
-                        DfEngineGenerationResults.updated_by == user_id,
-                    )  # type: ignore
+                        DfEngineGenerationResults.archieved_at.is_not(None),  # type: ignore
+                        DfEngineGenerationResults.updated_by == user_id,  # type: ignore
+                    )
                 ),
             ),
             DfEngineGenerations.results.any(DfEngineGenerationResults.archieved_at.is_not(None)),  # type: ignore
@@ -391,9 +688,9 @@ async def get_favourited_files(
                 DfEngineGenerations.created_by == user_id,  # type: ignore
                 DfEngineGenerations.results.any(  # type: ignore
                     and_(
-                        DfEngineGenerationResults.favourited_at.is_not(None),
-                        DfEngineGenerationResults.updated_by == user_id,
-                    )  # type: ignore
+                        DfEngineGenerationResults.favourited_at.is_not(None),  # type: ignore
+                        DfEngineGenerationResults.updated_by == user_id,  # type: ignore
+                    )
                 ),
             ),
             DfEngineGenerations.results.any(DfEngineGenerationResults.favourited_at.is_not(None)),  # type: ignore

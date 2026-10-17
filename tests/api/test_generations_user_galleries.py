@@ -162,23 +162,32 @@ async def test_main_result_listed_regardless_of_archieved_at(authed_client, proj
 
 
 @pytest.mark.asyncio
-async def test_search_matches_file_name_or_prompt_prefix(authed_client, project_task, user_id, generation_fks):
-    """200 OK; `search` matches either the result's file name or the generation's prompt, as a starts-with prefix."""
-    prefix = f"gallery-{uuid4().hex[:8]}"
-    by_name = _make_generation(project_task, user_id, generation_fks, prompt="unrelated prompt")
-    by_name_result = _make_result(by_name, user_id, is_main=True, name=f"{prefix}-name.png")
+async def test_search_is_scoped_to_the_task_and_served_from_the_index(authed_client, project_task, monkeypatch):
+    """200 OK; with `search` the list comes from the search index, scoped to this task or song uid, and the hits are
+    returned in the gallery shape (no prompt/variants/references). Matching itself is the engine's job (covered in
+    tests/unit/test_search_provider.py), so the engine is stubbed here."""
+    seen = []
 
-    by_prompt = _make_generation(project_task, user_id, generation_fks, prompt=f"{prefix} a scenic mountain")
-    by_prompt_result = _make_result(by_prompt, user_id, is_main=True)
+    async def fake_search(requests):
+        seen.extend(requests)
+        hit = {
+            "file_uid": "g1",
+            "name": "gallery-name.png",
+            "path": "p/g.png",
+            "kind": "image",
+            "prompt": "x",
+            "is_main": True,
+            "creator": {"user_id": 1},
+        }
+        return [[hit]]
 
-    non_matching = _make_generation(project_task, user_id, generation_fks, prompt="totally different")
-    non_matching_result = _make_result(non_matching, user_id, is_main=True, name="unrelated.png")
-
-    resp = await authed_client.call("GET", _url(project_task.uid), params={"search": prefix})
-    uids = [e["file_uid"] for e in resp.json()["data"]]
-    assert str(by_name_result.uid) in uids
-    assert str(by_prompt_result.uid) in uids
-    assert str(non_matching_result.uid) not in uids
+    monkeypatch.setattr("services.search.query._search", fake_search)
+    resp = await authed_client.call("GET", _url(project_task.uid), params={"search": "gallery"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert [e["file_uid"] for e in data] == ["g1"]
+    assert "prompt" not in data[0] and "variants" not in data[0]
+    assert seen[0].query == "gallery" and str(project_task.uid) in repr(seen[0].filter)
 
 
 @pytest.mark.asyncio

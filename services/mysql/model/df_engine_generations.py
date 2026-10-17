@@ -119,6 +119,9 @@ class DfEngineGenerations(SQLModel, table=True):
     task: Optional["ProjectTasks"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.task_id]"}
     )
+    song: Optional["ProjectSongLists"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.song_id]"}
+    )
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.created_by]"}
     )

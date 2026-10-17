@@ -371,6 +371,19 @@ class FileAction(BaseModel):
         return cls(can_rename=allowed, can_delete=allowed, can_choose_to_move=allowed)
 
 
+class UploadedFileAction(BaseModel):
+    can_rename: bool = False
+    can_delete: bool = False
+    can_choose_to_move: bool = False
+    can_use_as_reference: bool = True
+    can_download: bool = True
+
+    @classmethod
+    def action(cls, is_owner: bool, can_override: bool) -> "UploadedFileAction":
+        allowed = is_owner or can_override
+        return cls(can_rename=allowed, can_delete=allowed, can_choose_to_move=allowed)
+
+
 class TreeFile(BaseModel):
     file_uid: Optional[Any] = None
     name: str
@@ -382,9 +395,10 @@ class TreeFile(BaseModel):
     color: Optional[str] = None
     size: Optional[str] = None
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
     creator: Optional[dict[str, Any]] = None
     updater: Optional[dict[str, Any]] = None
-    action: Union[GenerationAction, FileAction]
+    action: Union[GenerationAction, FileAction, UploadedFileAction]
 
 
 class TreeFolder(BaseModel):

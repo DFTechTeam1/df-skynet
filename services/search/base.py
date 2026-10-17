@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Optional, Protocol, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class SearchHit(BaseModel):
@@ -55,13 +55,15 @@ class SearchRequest:
             server-side; never take that filter from client input.
         limit: results per page; None = provider default (Algolia: 20).
         page: 0-based page number; None = first page.
+        restrict_attributes: only match the query against these fields; None = all searchable fields.
     """
 
     index: str
-    query: str
-    filter: Optional[Filter] = Field(default=None)
-    limit: Optional[int] = Field(default=None)
-    page: Optional[int] = Field(default=None)
+    query: str = ""
+    filter: Optional[Filter] = None
+    limit: Optional[int] = None
+    page: Optional[int] = None
+    restrict_attributes: Optional[list[str]] = None
 
 
 class SearchProvider(Protocol):
@@ -93,9 +95,14 @@ class SearchProvider(Protocol):
             print(hit.id, hit.data)
     """
 
+    def configure_index(self, index: str, searchable: list[str], filterable: list[str]) -> None:
+        """Set which fields free text is matched against (in ranking order) and which fields filters may use.
+        Idempotent. Must run before the first search that restricts attributes or filters."""
+        ...
+
     def upsert(self, index: str, docs: list[dict[str, Any]]) -> None:
-        """Insert or replace documents. Each doc must contain an "id" key;
-        the adapter maps it to the engine's own id field. Writes are async on
+        """Insert or replace documents. Each doc must contain an "id" key
+        (or "objectID", used as-is); the adapter maps it to the engine's own id field. Writes are async on
         the engine side, so an immediate search may not see them yet."""
         ...
 
