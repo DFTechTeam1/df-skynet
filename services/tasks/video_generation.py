@@ -10,7 +10,14 @@ from services.dto import SyncedConnectionContext
 from services.mysql import get_sync_db, get_usd_rate
 from services.mysql.model import DfEngineGenerations
 from services.mysql.model.df_engine_generations import GenerationStatuses
-from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_json_sync, sync_client
+from services.redis import (
+    CacheKeys,
+    delete_pattern_sync,
+    get_json_sync,
+    invalidate_project_files_sync,
+    set_json_sync,
+    sync_client,
+)
 from services.tasks.base import (
     GenerationStageError,
     GenerationTask,
@@ -61,6 +68,7 @@ def video_generation(
             ctx.db.add(generation)
             if generation.task_id is not None:
                 delete_pattern_sync(ctx.redis, ctx.key.generation_files_main_list_pattern(generation.task_id))
+            invalidate_project_files_sync(ctx.redis, ctx.key, generation.project_id)
         generation_detail_key = ctx.key.generation_detail(user_id, str(generation.uid))
         cached_generation_detail = get_json_sync(ctx.redis, generation_detail_key)
         if cached_generation_detail is not None:

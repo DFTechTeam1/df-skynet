@@ -71,10 +71,14 @@ async def test_create_folder_inserts_row_with_creator_and_shows_in_tree(
     """201; Udin gets the parent path + name, a folder row is stored with created_by (updated_by stays null) and the empty folder is in the returned tree."""
     parent = f"{_root(project_task)}/upload/images"
     new = f"{parent}/refs_{uuid4().hex[:6]}"
+    _upload(project_task, user_id, f"{parent}/seed.jpg")  # the project tree only lists folders that hold something
     mock_udin.set("new-folder", 200, {"data": {"name": None, "path": new, "size": 0, "md5": None}})
 
     resp = await authed_client.call(
-        "POST", _url(project_task.uid), json={"path": parent, "name": new.rsplit("/", 1)[-1]}, raise_for_status=False
+        "POST",
+        _url(project_task.project.uid),
+        json={"path": parent, "name": new.rsplit("/", 1)[-1]},
+        raise_for_status=False,
     )
     assert resp.status_code == 201, resp.text
     assert mock_udin.calls[-1][2] == {"current_path": parent, "name": new.rsplit("/", 1)[-1]}
@@ -94,7 +98,7 @@ async def test_create_folder_in_protected_parent_is_refused(authed_client, proje
     _upload(project_task, user_id, f"{_root(project_task)}/upload/images/a.jpg")
     resp = await authed_client.call(
         "POST",
-        _url(project_task.uid),
+        _url(project_task.project.uid),
         json={"path": f"{_root(project_task)}/upload", "name": "x"},
         raise_for_status=False,
     )
@@ -106,7 +110,7 @@ async def test_create_folder_in_protected_parent_is_refused(authed_client, proje
 async def test_create_folder_name_with_slash_is_422(authed_client, project_task):
     """422 from payload validation when the name contains a path separator."""
     resp = await authed_client.call(
-        "POST", _url(project_task.uid), json={"path": "a/b", "name": "x/y"}, raise_for_status=False
+        "POST", _url(project_task.project.uid), json={"path": "a/b", "name": "x/y"}, raise_for_status=False
     )
     assert resp.status_code == 422
 
@@ -118,7 +122,7 @@ async def test_create_folder_udin_timeout_is_504(authed_client, project_task, us
     _upload(project_task, user_id, f"{parent}/a.jpg")
     mock_udin.raise_on_udin(TimeoutException("slow"))
     resp = await authed_client.call(
-        "POST", _url(project_task.uid), json={"path": parent, "name": "x"}, raise_for_status=False
+        "POST", _url(project_task.project.uid), json={"path": parent, "name": "x"}, raise_for_status=False
     )
     assert resp.status_code == 504
 
@@ -143,7 +147,10 @@ async def test_rename_by_a_coworker_rewrites_files_and_updated_by(
     )
 
     resp = await authed_client.call(
-        "PATCH", _url(project_task.uid), json={"path": old, "name": new.rsplit("/", 1)[-1]}, raise_for_status=False
+        "PATCH",
+        _url(project_task.project.uid),
+        json={"path": old, "name": new.rsplit("/", 1)[-1]},
+        raise_for_status=False,
     )
     assert resp.status_code == 200, resp.text
     assert mock_udin.calls[-1][2] == {"path": old, "name": new.rsplit("/", 1)[-1]}
@@ -162,7 +169,7 @@ async def test_rename_type_root_is_refused(authed_client, project_task, user_id,
     root = f"{_root(project_task)}/upload/images"
     _upload(project_task, user_id, f"{root}/a.jpg")
     resp = await authed_client.call(
-        "PATCH", _url(project_task.uid), json={"path": root, "name": "x"}, raise_for_status=False
+        "PATCH", _url(project_task.project.uid), json={"path": root, "name": "x"}, raise_for_status=False
     )
     assert resp.status_code == 422
     assert mock_udin.calls == []
@@ -174,7 +181,7 @@ async def test_rename_unknown_folder_is_404(authed_client, project_task, user_id
     _upload(project_task, user_id, f"{_root(project_task)}/upload/images/a.jpg")
     resp = await authed_client.call(
         "PATCH",
-        _url(project_task.uid),
+        _url(project_task.project.uid),
         json={"path": f"{_root(project_task)}/upload/images/nope", "name": "x"},
         raise_for_status=False,
     )
@@ -191,7 +198,9 @@ async def test_delete_upload_folder_deletes_its_files(authed_client, project_tas
     file_row = _upload(project_task, user_id, f"{folder}/inner/a.jpg")
     outside_row = _upload(project_task, user_id, f"{base}/keep.jpg")
 
-    resp = await authed_client.call("DELETE", _url(project_task.uid), params={"path": folder}, raise_for_status=False)
+    resp = await authed_client.call(
+        "DELETE", _url(project_task.project.uid), params={"path": folder}, raise_for_status=False
+    )
     assert resp.status_code == 200, resp.text
     assert any(
         c[0] == "DELETE" and "delete-files" in c[1] and c[2] == {"sources": [file_row.path]} for c in mock_udin.calls
@@ -210,7 +219,9 @@ async def test_delete_generated_folder_keeps_files_and_skips_delete_files(
     folder = f"{_root(project_task)}/generated/images/gone_{uuid4().hex[:5]}"
     folder_row = _upload(project_task, user_id, folder, type=UploadFileTypes.folder, size=0)
 
-    resp = await authed_client.call("DELETE", _url(project_task.uid), params={"path": folder}, raise_for_status=False)
+    resp = await authed_client.call(
+        "DELETE", _url(project_task.project.uid), params={"path": folder}, raise_for_status=False
+    )
     assert resp.status_code == 200, resp.text
     assert not any("delete-files" in c[1] for c in mock_udin.calls)
     assert await _reload(db_session, folder_row) == [None]
@@ -221,7 +232,10 @@ async def test_delete_type_root_is_refused(authed_client, project_task, user_id,
     """422 folder_action_not_permitted for `upload`; Udin is never called."""
     _upload(project_task, user_id, f"{_root(project_task)}/upload/images/a.jpg")
     resp = await authed_client.call(
-        "DELETE", _url(project_task.uid), params={"path": f"{_root(project_task)}/upload"}, raise_for_status=False
+        "DELETE",
+        _url(project_task.project.uid),
+        params={"path": f"{_root(project_task)}/upload"},
+        raise_for_status=False,
     )
     assert resp.status_code == 422
     assert mock_udin.calls == []
@@ -234,7 +248,9 @@ async def test_delete_udin_rejection_is_forwarded(authed_client, project_task, u
     folder = f"{base}/x_{uuid4().hex[:5]}"
     _upload(project_task, user_id, f"{folder}/a.jpg")
     mock_udin.set("delete-folder", 422, {"error": {"path": ["Invalid folder path."]}})
-    resp = await authed_client.call("DELETE", _url(project_task.uid), params={"path": folder}, raise_for_status=False)
+    resp = await authed_client.call(
+        "DELETE", _url(project_task.project.uid), params={"path": folder}, raise_for_status=False
+    )
     assert resp.status_code == 422
 
 
@@ -263,7 +279,7 @@ async def test_move_folders_rewrites_prefixes_in_one_call(authed_client, project
 
     resp = await authed_client.call(
         "PATCH",
-        _url(project_task.uid, "folders/move"),
+        _url(project_task.project.uid, "folders/move"),
         json={"folder_paths": [a, b, a], "destination": dest},
         raise_for_status=False,
     )
@@ -284,7 +300,7 @@ async def test_move_between_upload_and_generated_is_refused(authed_client, proje
     _upload(project_task, user_id, dest, type=UploadFileTypes.folder, size=0)
     resp = await authed_client.call(
         "PATCH",
-        _url(project_task.uid, "folders/move"),
+        _url(project_task.project.uid, "folders/move"),
         json={"folder_paths": [src], "destination": dest},
         raise_for_status=False,
     )
@@ -310,7 +326,7 @@ async def test_move_images_into_videos_into_itself_and_type_root_are_refused(
     ):
         resp = await authed_client.call(
             "PATCH",
-            _url(project_task.uid, "folders/move"),
+            _url(project_task.project.uid, "folders/move"),
             json={"folder_paths": sources, "destination": dest},
             raise_for_status=False,
         )
@@ -333,7 +349,7 @@ async def test_move_udin_errors_use_folder_paths_keys(authed_client, project_tas
     )
     resp = await authed_client.call(
         "PATCH",
-        _url(project_task.uid, "folders/move"),
+        _url(project_task.project.uid, "folders/move"),
         json={"folder_paths": [src], "destination": dest},
         raise_for_status=False,
     )
@@ -370,7 +386,9 @@ async def test_delete_generated_folder_promotes_generation_results(
         {"data": [{"from": {"name": "g.png", "path": old}, "to": {"name": "g.png", "path": new}}]},
     )
 
-    resp = await authed_client.call("DELETE", _url(project_task.uid), params={"path": folder}, raise_for_status=False)
+    resp = await authed_client.call(
+        "DELETE", _url(project_task.project.uid), params={"path": folder}, raise_for_status=False
+    )
     assert resp.status_code == 200, resp.text
     assert await _reload(db_session, folder_row) == [None]
     await db_session.commit()
@@ -390,7 +408,7 @@ async def test_create_folder_follows_rename_name_rules(authed_client, project_ta
     parent = f"{_root(project_task)}/upload/images"
     mock_udin.set("new-folder", 200, {"data": {"name": None, "path": f"{parent}/{sent}", "size": 0, "md5": None}})
     resp = await authed_client.call(
-        "POST", _url(project_task.uid), json={"path": parent, "name": typed}, raise_for_status=False
+        "POST", _url(project_task.project.uid), json={"path": parent, "name": typed}, raise_for_status=False
     )
     assert resp.status_code == 201, resp.text
     assert mock_udin.calls[-1][2]["name"] == sent
@@ -401,8 +419,24 @@ async def test_create_folder_follows_rename_name_rules(authed_client, project_ta
 async def test_create_folder_rejects_bad_names_like_rename(authed_client, project_task, mock_udin, bad):
     resp = await authed_client.call(
         "POST",
-        _url(project_task.uid),
+        _url(project_task.project.uid),
         json={"path": f"{_root(project_task)}/upload/images", "name": bad},
         raise_for_status=False,
     )
     assert resp.status_code == 422 and mock_udin.calls == []
+
+
+async def test_unknown_project_uid_is_404(authed_client):
+    resp = await authed_client.call("POST", _url(uuid4()), json={"path": "a/b", "name": "x"}, raise_for_status=False)
+    assert resp.status_code == 404
+
+
+async def test_task_from_another_project_is_404(authed_client, project_task):
+    resp = await authed_client.call(
+        "POST",
+        _url(project_task.project.uid),
+        params={"task_uid": str(uuid4())},
+        json={"path": "a/b", "name": "x"},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 404

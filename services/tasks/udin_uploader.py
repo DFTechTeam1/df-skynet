@@ -25,9 +25,17 @@ from services.mysql.model import (
 from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from services.pusher import broadcast_generation_status
-from services.redis import CacheKeys, delete_pattern_sync, get_json_sync, set_json_sync, sync_client
+from services.redis import (
+    CacheKeys,
+    delete_pattern_sync,
+    invalidate_project_files_sync,
+    get_json_sync,
+    set_json_sync,
+    sync_client,
+)
 from error import DataNotFoundError
 from utils import local_time
+from services.tasks.search_sync import search_upsert
 from services.tasks.base import (
     GenerationStageError,
     GenerationTask,
@@ -274,13 +282,14 @@ def udin_uploader(
                 generation.status = GenerationStatuses.success  # type: ignore
                 db.add(generation)
 
-                result_ids = [
-                    result.id
-                    for result in db.query(DfEngineGenerationResults)
+                results = (
+                    db.query(DfEngineGenerationResults)
                     .filter_by(generation_id=generation_id)
                     .order_by(DfEngineGenerationResults.version)  # type: ignore
                     .all()
-                ]
+                )
+                result_ids = [result.id for result in results]
+                result_uids = [result.uid for result in results]
 
             redis = sync_client()
             cache_key = CacheKeys()
@@ -288,15 +297,12 @@ def udin_uploader(
             cached_generation_detail = get_json_sync(redis, generation_detail_key)
             if cached_generation_detail is not None:
                 set_json_sync(redis, generation_detail_key, {**cached_generation_detail, "status": generation.status})  # type: ignore
+            invalidate_project_files_sync(redis, cache_key, project_id)
             if task_id is not None:
-                delete_pattern_sync(redis, cache_key.user_galleries_pattern(user_id))
-                delete_pattern_sync(redis, cache_key.references_picker_pattern(user_id))
-                delete_pattern_sync(redis, cache_key.global_references_picker_pattern(user_id))
                 delete_pattern_sync(redis, cache_key.user_files_pattern(task_id=task_id))
                 delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(task_id))
                 for pattern in cache_key.generation_files_user_lists_patterns(user_id):
                     delete_pattern_sync(redis, pattern)
-                delete_pattern_sync(redis, cache_key.generation_files_references_picker_pattern(user_id))
 
             if family_ids:
                 with get_sync_db() as db:
@@ -307,11 +313,15 @@ def udin_uploader(
                         .all()
                     )
                 for family_uid, family_task_id in family_rows:
+                    search_upsert.delay("generation", family_uid)  # type: ignore  # demoted main leaves the index
                     redis.delete(cache_key.generation_files_main_detail(family_uid))
                     redis.delete(cache_key.generation_files_variant_detail(family_uid))
                     redis.delete(cache_key.generation_files_variants_detail(family_uid))
                     if family_task_id is not None:
                         delete_pattern_sync(redis, cache_key.generation_files_main_list_pattern(family_task_id))
+
+            for result_uid in result_uids:
+                search_upsert.delay("generation", result_uid)  # type: ignore
 
             if task_uid is not None and user_uid is not None:
                 broadcast_generation_status(project_uid, task_uid, user_uid, generation_uid, "success")

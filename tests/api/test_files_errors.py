@@ -129,7 +129,9 @@ async def test_upload_into_unknown_folder_is_rejected_before_udin(authed_client,
     resp = await authed_client.call(
         "POST",
         f"/api/files/{project_task.uid}/uploads",
-        params={"path": "storage/DF-Engine/nope/upload/images/missing"},
+        params={
+            "path": f"storage/DF-Engine-DEV/{project_task.project.name}_{project_task.project.uid[:8]}/upload/images/missing"
+        },
         headers={"content-type": "multipart/form-data; boundary=x"},
         content=b"x",
         raise_for_status=False,

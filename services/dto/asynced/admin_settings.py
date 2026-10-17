@@ -3,6 +3,7 @@ from typing import Any, Optional, Union
 from uuid import UUID
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
+from schemas.payload.setting import AdminGlobalSettingPayload
 from services.mysql import query
 from services.mysql.model import (
     DfEngineMenus,
@@ -245,3 +246,10 @@ async def get_model(ctx: ConnectionContext, model_uid: UUID, type: ModelUsageTyp
     await set_json(ctx.redis, model_key, model)
     logging.info(f"model option cache set key={model_key}")
     return model
+
+
+async def get_folder_depth_limit(ctx: ConnectionContext) -> int:
+    admin_setting = await get_admin_settings(ctx)
+    return (
+        admin_setting.get("folder_depth_limit") or AdminGlobalSettingPayload.model_fields["folder_depth_limit"].default
+    )

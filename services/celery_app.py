@@ -11,6 +11,7 @@ celery_app = Celery(
         "services.tasks.video_generation",
         "services.tasks.udin_uploader",
         "services.tasks.udin_sweep",
+        "services.tasks.search_sync",
     ],
 )
 
@@ -29,8 +30,12 @@ celery_app.conf.update(
         "df_engine.video_generation": {"queue": "video_generation"},
         "df_engine.udin_uploader": {"queue": "udin_uploads"},
         "df_engine.udin_sweep": {"queue": "udin_uploads"},
+        "df_engine.search_upsert": {"queue": "search_sync"},
+        "df_engine.search_delete": {"queue": "search_sync"},
+        "df_engine.search_backfill": {"queue": "search_sync"},
     },
     beat_schedule={
         "udin-sweep-every-5-minutes": {"task": "df_engine.udin_sweep", "schedule": 300.0},
+        "search-backfill-hourly": {"task": "df_engine.search_backfill", "schedule": 3600.0},
     },
 )

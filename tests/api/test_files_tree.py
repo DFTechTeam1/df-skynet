@@ -21,6 +21,14 @@ def _folders_url(task_uid):
     return f"/api/files/{task_uid}/folders"
 
 
+# Udin's storage root currently carries an environment suffix (DEV, later STG/PROD); the upload handler hardcodes it.
+UDIN_ROOT = "storage/DF-Engine-DEV"
+
+
+def _udin_root(project_task):
+    return f"{UDIN_ROOT}/{project_task.project.name}_{project_task.project.uid[:8]}"
+
+
 def _uploads_url(task_uid):
     return f"/api/files/{task_uid}/uploads"
 
@@ -73,7 +81,7 @@ async def test_tree_is_a_single_folder_dict_with_folder_metadata(authed_client, 
     """200 OK; `data` is one folder object (not a list) carrying kind/icon/color, nested folders and files."""
     upload = _make_upload(project_task, user_id, "upload/images")
 
-    resp = await authed_client.call("GET", _tree_url(project_task.uid))
+    resp = await authed_client.call("GET", _tree_url(project_task.project.uid))
     assert resp.status_code == 200
     tree = resp.json()["data"]
     assert isinstance(tree, dict)
@@ -87,8 +95,8 @@ async def test_tree_second_call_reads_the_cached_upload_list(authed_client, proj
     """200 OK; calling the tree twice returns the same data, the second time served from the uploads cache."""
     upload = _make_upload(project_task, user_id, "upload/images")
 
-    first = (await authed_client.call("GET", _tree_url(project_task.uid))).json()["data"]
-    second = (await authed_client.call("GET", _tree_url(project_task.uid))).json()["data"]
+    first = (await authed_client.call("GET", _tree_url(project_task.project.uid))).json()["data"]
+    second = (await authed_client.call("GET", _tree_url(project_task.project.uid))).json()["data"]
     assert _find_file(first, upload.uid)[1] and _find_file(second, upload.uid)[1]
 
 
@@ -98,24 +106,26 @@ async def test_tree_my_task_hides_other_users_uploads(authed_client, project_tas
     mine = _make_upload(project_task, user_id, "upload/images")
     theirs = _make_upload(project_task, other_user_id, "upload/images")
 
-    everyone = (await authed_client.call("GET", _tree_url(project_task.uid))).json()["data"]
-    only_mine = (await authed_client.call("GET", _tree_url(project_task.uid), params={"my_task": True})).json()["data"]
+    everyone = (await authed_client.call("GET", _tree_url(project_task.project.uid))).json()["data"]
+    only_mine = (await authed_client.call("GET", _tree_url(project_task.project.uid), params={"my_task": True})).json()[
+        "data"
+    ]
     assert _find_file(everyone, mine.uid)[1] and _find_file(everyone, theirs.uid)[1]
     assert _find_file(only_mine, mine.uid)[1] and _find_file(only_mine, theirs.uid)[1] is None
 
 
 @pytest.mark.asyncio
-async def test_tree_unknown_task_is_404(authed_client):
-    """404 project_task_not_found for a uid that matches neither a task nor a song."""
+async def test_tree_unknown_project_is_404(authed_client):
+    """404 project_not_found for a uid that matches no project."""
     resp = await authed_client.call("GET", _tree_url(uuid4()), raise_for_status=False)
     assert resp.status_code == 404
-    assert resp.json()["message"] == resolve_message("project_task_not_found", "en")
+    assert resp.json()["message"] == resolve_message("project_not_found", "en")
 
 
 @pytest.mark.asyncio
 async def test_tree_requires_auth(client, project_task):
     """401 when the request carries no bearer token."""
-    resp = await client.call("GET", _tree_url(project_task.uid), raise_for_status=False)
+    resp = await client.call("GET", _tree_url(project_task.project.uid), raise_for_status=False)
     assert resp.status_code == 401
 
 
@@ -126,8 +136,8 @@ async def test_tree_unexpected_error_is_500(authed_client, project_task, monkeyp
     async def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("apps.controller.files.build_file_tree", boom)
-    resp = await authed_client.call("GET", _tree_url(project_task.uid), raise_for_status=False)
+    monkeypatch.setattr("apps.controller.files.build_file_tree_refactored", boom)
+    resp = await authed_client.call("GET", _tree_url(project_task.project.uid), raise_for_status=False)
     assert resp.status_code == 500
 
 
@@ -149,7 +159,7 @@ async def test_tree_generated_file_keeps_its_real_kind(authed_client, project_ta
         path=f"{_root(project_task)}/generated/images/{uuid4().hex[:6]}.png",
     )
 
-    tree = (await authed_client.call("GET", _tree_url(project_task.uid))).json()["data"]
+    tree = (await authed_client.call("GET", _tree_url(project_task.project.uid))).json()["data"]
     _, file = _find_file(tree, result.uid)
     assert file["kind"] == GenerationKinds.image_edit
 
@@ -160,7 +170,7 @@ async def test_folder_details_returns_the_matching_node(authed_client, project_t
     upload = _make_upload(project_task, user_id, "upload/images")
     folder_path = upload.path.rsplit("/", 1)[0]
 
-    resp = await authed_client.call("GET", _folders_url(project_task.uid), params={"path": folder_path})
+    resp = await authed_client.call("GET", _folders_url(project_task.project.uid), params={"path": folder_path})
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["path"] == folder_path
@@ -183,7 +193,7 @@ async def test_folder_details_accepts_surrounding_slashes_and_my_task(
     folder_path = mine.path.rsplit("/", 1)[0]
 
     resp = await authed_client.call(
-        "GET", _folders_url(project_task.uid), params={"path": f"/{folder_path}/", "my_task": True}
+        "GET", _folders_url(project_task.project.uid), params={"path": f"/{folder_path}/", "my_task": True}
     )
     uids = [f["file_uid"] for f in resp.json()["data"]["files"]]
     assert mine.uid in uids and theirs.uid not in uids
@@ -194,7 +204,7 @@ async def test_folder_details_unknown_path_is_404(authed_client, project_task, u
     """404 folder_not_found when no node in the tree has that path."""
     _make_upload(project_task, user_id, "upload/images")
     resp = await authed_client.call(
-        "GET", _folders_url(project_task.uid), params={"path": "storage/DF-Engine/nope"}, raise_for_status=False
+        "GET", _folders_url(project_task.project.uid), params={"path": "storage/DF-Engine/nope"}, raise_for_status=False
     )
     assert resp.status_code == 404
     assert resp.json()["message"] == resolve_message("folder_not_found", "en")
@@ -203,7 +213,7 @@ async def test_folder_details_unknown_path_is_404(authed_client, project_task, u
 @pytest.mark.asyncio
 async def test_folder_details_requires_path(authed_client, project_task):
     """422 when the required `path` query parameter is missing."""
-    resp = await authed_client.call("GET", _folders_url(project_task.uid), raise_for_status=False)
+    resp = await authed_client.call("GET", _folders_url(project_task.project.uid), raise_for_status=False)
     assert resp.status_code == 422
 
 
@@ -214,8 +224,10 @@ async def test_folder_details_unexpected_error_is_500(authed_client, project_tas
     async def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("apps.controller.files.build_file_tree", boom)
-    resp = await authed_client.call("GET", _folders_url(project_task.uid), params={"path": "x"}, raise_for_status=False)
+    monkeypatch.setattr("apps.controller.files.build_file_tree_refactored", boom)
+    resp = await authed_client.call(
+        "GET", _folders_url(project_task.project.uid), params={"path": "x"}, raise_for_status=False
+    )
     assert resp.status_code == 500
 
 
@@ -266,9 +278,9 @@ async def test_uploaded_file_detail_unexpected_error_is_500(authed_client, monke
 
 
 @pytest.mark.asyncio
-async def test_upload_saves_rows_and_returns_the_tree(authed_client, project_task, user_id, mock_udin):
-    """200 OK; every file Udin reports is stored as an upload row and the tree comes back as a dict."""
-    folder = f"{_root(project_task)}/upload"
+async def test_upload_saves_rows(authed_client, project_task, user_id, mock_udin, db_session):
+    """200 OK; every file Udin reports is stored as an upload row (the handler returns only the message)."""
+    folder = f"{_udin_root(project_task)}/upload"
     mock_udin.set(
         "upload-files",
         200,
@@ -289,11 +301,22 @@ async def test_upload_saves_rows_and_returns_the_tree(authed_client, project_tas
     assert resp.status_code == 200
     body = resp.json()
     assert body["message"] == "Files successfully uploaded."
-    assert isinstance(body["data"], dict)
-    kinds = {
-        f["name"]: f["kind"] for node in _walk(body["data"]) for f in node["files"] if f["name"] in ("a.jpg", "b.mp4")
-    }
-    assert kinds == {"a.jpg": "image", "b.mp4": "video"}
+    from sqlalchemy import select
+    from services.mysql.model import DfEngineUploadFiles
+
+    await db_session.commit()  # end the fixture's snapshot so the request's committed rows are visible
+    rows = (
+        (
+            await db_session.execute(
+                select(DfEngineUploadFiles).where(
+                    DfEngineUploadFiles.path.in_([f"{folder}/images/a.jpg", f"{folder}/videos/b.mp4"])
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {r.name: r.type for r in rows} == {"a.jpg": UploadFileTypes.image, "b.mp4": UploadFileTypes.video}
     assert any(call[1].endswith(project_task.project.uid) for call in mock_udin.calls)
 
 
@@ -400,26 +423,22 @@ async def test_upload_requires_auth(client, project_task):
 
 @pytest.mark.asyncio
 async def test_upload_invalidates_the_references_picker_cache(authed_client, project_task, mock_udin):
-    """200 OK; a picker response cached before an upload is dropped, so both the project and the global picker list
-    the new image straight away instead of serving the pre-upload result until the cache expires."""
+    """200 OK; a picker response cached before an upload is dropped, so the project picker lists the new image
+    straight away instead of serving the pre-upload result until the cache expires."""
     picker = f"/api/references-picker/{project_task.project.uid}"
-    global_picker = "/api/references-picker"
     name = f"picker-{uuid4().hex[:8]}.jpg"
 
     def uploads(resp):
         section = next(s for s in resp.json()["data"] if s["type"] == "Image Uploads")
-        if "projects" in section:  # global picker: projects -> tasks -> files
-            return [f for p in section["projects"] for t in p["tasks"] for f in t["files"]]
         return section["files"]
 
-    # warm (and cache) both pickers before the upload
+    # warm (and cache) the picker before the upload
     assert name not in [f["name"] for f in uploads(await authed_client.call("GET", picker))]
-    assert name not in [f["name"] for f in uploads(await authed_client.call("GET", global_picker))]
 
     mock_udin.set(
         "upload-files",
         200,
-        {"data": [{"name": name, "path": f"{_root(project_task)}/upload/images/{name}", "size": 5}]},
+        {"data": [{"name": name, "path": f"{_udin_root(project_task)}/upload/images/{name}", "size": 5}]},
     )
     resp = await authed_client.call(
         "POST",
@@ -430,4 +449,3 @@ async def test_upload_invalidates_the_references_picker_cache(authed_client, pro
     assert resp.status_code == 200
 
     assert name in [f["name"] for f in uploads(await authed_client.call("GET", picker))]
-    assert name in [f["name"] for f in uploads(await authed_client.call("GET", global_picker))]

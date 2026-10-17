@@ -96,6 +96,8 @@ async def _clear_all_redis_caches():
         "user_galleries:*",
         "generation_file_detail:*",
         "generation_files:*",
+        "main_generations:*",
+        "user_uploaded_files:*",
     ):
         await delete_pattern(redis, pattern)
     yield

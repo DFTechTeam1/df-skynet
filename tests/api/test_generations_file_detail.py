@@ -281,13 +281,15 @@ async def test_file_lists_are_scoped_to_the_task_not_the_project(
     assert str(my_fav.uid) in fav and str(my_arch.uid) in arch
     assert str(other_fav.uid) not in fav and str(other_arch.uid) not in arch
 
-    tree = (await authed_client.call("GET", base)).json()["data"]
-    tree_uids = set()
-
-    def walk(node):
+    # the tree is project-wide; `task_uid` narrows it to this task, so the sibling task's files stay out
+    tree = (
+        await authed_client.call(
+            "GET", f"/api/files/{project_task.project.uid}", params={"task_uid": str(project_task.uid)}
+        )
+    ).json()["data"]
+    tree_uids, stack = set(), [tree]
+    while stack:
+        node = stack.pop()
         tree_uids.update(f["file_uid"] for f in node.get("files") or [])
-        for child in node.get("children") or []:
-            walk(child)
-
-    walk(tree)
+        stack.extend(node.get("children") or [])
     assert str(other_fav.uid) not in tree_uids

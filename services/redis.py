@@ -142,6 +142,21 @@ def set_json_sync(redis: SyncRedis, key: str, value: Any, ttl: int = 86400) -> N
     redis.set(key, json.dumps(value), ex=ttl)
 
 
+def project_file_patterns(key: "CacheKeys", project_id: Optional[int]) -> list[str]:
+    """The project-wide file caches (tree, references picker, user galleries) that any file or generation change stales."""
+    return [key.main_generations_project_pattern(project_id), key.user_uploaded_files_project_pattern(project_id)]
+
+
+def invalidate_project_files_sync(redis: SyncRedis, key: "CacheKeys", project_id: Optional[int]) -> None:
+    for pattern in project_file_patterns(key, project_id):
+        delete_pattern_sync(redis, pattern)
+
+
+async def invalidate_project_files(redis: Redis, key: "CacheKeys", project_id: Optional[int]) -> None:
+    for pattern in project_file_patterns(key, project_id):
+        await delete_pattern(redis, pattern)
+
+
 async def delete_pattern(redis: Redis, pattern: str) -> None:
     """Delete all Redis keys matching the specified pattern.
 
@@ -262,6 +277,22 @@ class CacheKeys:
         """Every cached file list (all `my_task` variants) for one task or song."""
         return f"user_files:task_id={task_id}:song_id={song_id}:*"
 
+    def user_uploaded_files_refactored(
+        self,
+        viewer_id: int,
+        project_id: Optional[int] = None,
+        task_id: Optional[int] = None,
+        song_id: Optional[int] = None,
+        personal_file: bool = False,
+        has_override: bool = False,
+        exclude_columns: tuple[str, ...] = (),
+    ):
+        return f"user_uploaded_files:viewer_id={viewer_id}:project_id={project_id}:task_id={task_id}:song_id={song_id}:personal_file={personal_file}:has_override={has_override}:exclude_columns={','.join(sorted(exclude_columns))}"
+
+    def user_uploaded_files_project_pattern(self, project_id: Optional[int]) -> str:
+        """Every `user_uploaded_files_refactored` entry of one project (all viewers, tasks and flags)."""
+        return f"user_uploaded_files:viewer_id=*:project_id={project_id}:*"
+
     def user_files(
         self, task_id: Optional[int] = None, song_id: Optional[int] = None, user_id: Optional[int] = None
     ) -> str:
@@ -362,6 +393,24 @@ class CacheKeys:
         return "menus:features:*"
 
     # --- generation_files ---
+    def main_generations_refactored(
+        self,
+        viewer_id: int,
+        project_id: Optional[int] = None,
+        task_id: Optional[int] = None,
+        song_id: Optional[int] = None,
+        personal_file: bool = False,
+        has_override: bool = False,
+    ) -> str:
+        return (
+            f"main_generations:viewer_id={viewer_id}:project_id={project_id}:task_id={task_id}:song_id={song_id}"
+            f":personal_file={personal_file}:has_override={has_override}"
+        )
+
+    def main_generations_project_pattern(self, project_id: Optional[int]) -> str:
+        """Every `main_generations_refactored` entry of one project (all viewers, tasks and flags)."""
+        return f"main_generations:viewer_id=*:project_id={project_id}:*"
+
     def generation_files_main_list(
         self, task_id: Optional[int], user_id: Optional[int] = None, search: Optional[str] = None, song_id=None
     ) -> str:

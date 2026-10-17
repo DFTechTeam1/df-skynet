@@ -328,10 +328,10 @@ async def test_tree_marks_type_and_override_actions(authed_client, project_task,
                 return found
 
     as_roles(PLAIN)
-    plain = find((await authed_client.call("GET", f"/api/files/{project_task.uid}")).json()["data"])
-    await authed_client.call("GET", f"/api/files/{project_task.uid}")  # warm
+    plain = find((await authed_client.call("GET", f"/api/files/{project_task.project.uid}")).json()["data"])
+    await authed_client.call("GET", f"/api/files/{project_task.project.uid}")  # warm
     as_roles([OVERRIDE_FILE_ROLES[1]])
-    over = find((await authed_client.call("GET", f"/api/files/{project_task.uid}")).json()["data"])
+    over = find((await authed_client.call("GET", f"/api/files/{project_task.project.uid}")).json()["data"])
     assert plain["type"] == over["type"] == "upload"
     assert not any(plain["action"][k] for k in ("can_rename", "can_delete", "can_choose_to_move"))
     assert all(over["action"][k] for k in ("can_rename", "can_delete", "can_choose_to_move"))

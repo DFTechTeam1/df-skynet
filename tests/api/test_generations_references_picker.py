@@ -67,36 +67,53 @@ async def test_returns_flat_sections_with_uploads_and_generations(authed_client,
     resp = await authed_client.call("GET", url, params=params)
     assert resp.status_code == 200
     body = resp.json()
-    assert [s["type"] for s in body["data"]] == ["Image Uploads", "Image Generations", "Elements"]
+    assert [s["type"] for s in body["data"]] == ["Image Generations", "Image Uploads", "Elements", "Shared"]
 
     # Note: this project's uploads/generations accumulate across test runs on the
     # real shared staging DB, so section totals aren't exact — only membership is checked.
     image_section = _section(body, "Image Uploads")
-    assert image_section["total_data"] == len(image_section["files"]) >= 1
-    assert image_upload.uid in [f["uid"] for f in image_section["files"]]
-    assert video_upload.uid not in [f["uid"] for f in image_section["files"]]
+    assert image_section["total"] == len(image_section["files"]) >= 1
+    assert image_upload.uid in [f["file_uid"] for f in image_section["files"]]
+    assert video_upload.uid not in [f["file_uid"] for f in image_section["files"]]
 
     generation_section = _section(body, "Image Generations")
-    assert generation_section["total_data"] >= 1
+    assert generation_section["total"] >= 1
     file = next(f for f in generation_section["files"] if f["file_uid"] == generation_result.uid)
     assert file["kind"] == GenerationKinds.image
     assert file["favourited_at"] is None
-    assert {"cost_usd", "cost_idr", "prompt", "is_main", "uid"}.isdisjoint(file)
+    assert {"cost_usd", "cost_idr", "prompt", "is_main"}.isdisjoint(file)
 
 
 @pytest.mark.asyncio
-async def test_search_filters_by_name_prefix(authed_client, project_task, user_id):
-    """200 OK; `search` only returns uploads whose name starts with the given text."""
-    prefix = f"banner-{uuid4().hex[:8]}"
-    matching = _make_upload(project_task, user_id, UploadFileTypes.image, name=f"{prefix}-hero.png")
-    non_matching = _make_upload(project_task, user_id, UploadFileTypes.image, name="poster.png")
+async def test_search_is_scoped_to_the_project_and_served_from_the_index(authed_client, project_task, monkeypatch):
+    """200 OK; with `search` the picker reads the search index (not the DB): the requests are scoped to this project and
+    to image kinds, and the hits come back grouped as Image Uploads / Image Generations. Matching itself is the engine's
+    job (covered in tests/unit/test_search_provider.py), so the engine is stubbed here."""
+    seen = []
 
+    async def fake_search(requests):
+        seen.extend(requests)
+        creator = {"user_id": 1}
+        upload = {"file_uid": "u1", "name": "banner-hero.png", "path": "p/u.png", "kind": "image", "creator": creator}
+        generation = {
+            "file_uid": "g1",
+            "name": "banner-gen.png",
+            "path": "p/g.png",
+            "kind": "image",
+            "is_main": True,
+            "creator": creator,
+        }
+        return [[upload], [generation]]
+
+    monkeypatch.setattr("services.search.query._search", fake_search)
     url, _ = _url(project_task.project.uid)
-    resp = await authed_client.call("GET", url, params={"search": prefix})
+    resp = await authed_client.call("GET", url, params={"search": "banner"})
     assert resp.status_code == 200
-    section_uids = [f["uid"] for f in _section(resp.json(), "Image Uploads")["files"]]
-    assert matching.uid in section_uids
-    assert non_matching.uid not in section_uids
+    body = resp.json()
+    assert [f["file_uid"] for f in _section(body, "Image Uploads")["files"]] == ["u1"]
+    assert [f["file_uid"] for f in _section(body, "Image Generations")["files"]] == ["g1"]
+    assert {r.query for r in seen} == {"banner"}
+    assert all(project_task.project.uid in repr(r.filter) for r in seen)
 
 
 @pytest.mark.asyncio
@@ -108,7 +125,7 @@ async def test_all_matching_files_are_returned_unpaginated(authed_client, projec
     resp = await authed_client.call("GET", url, params={"page": 1, "itemsPerPage": 2})
     assert resp.status_code == 200
     image_section = _section(resp.json(), "Image Uploads")
-    uids = [f["uid"] for f in image_section["files"]]
+    uids = [f["file_uid"] for f in image_section["files"] if "file_uid" in f]
     assert all(u.uid in uids for u in uploads)
 
 
@@ -146,14 +163,15 @@ async def test_favourited_result_exposes_favourited_at(authed_client, project_ta
 async def test_element_generation_lands_in_elements_and_video_is_dropped(
     authed_client, project_task, user_id, generation_fks
 ):
-    """200 OK; an element-kind result is listed under Elements, a video-kind result is not offered anywhere."""
+    """200 OK; a video-kind result is not offered anywhere. The refactored picker no longer fills Elements (it is an
+    empty placeholder next to Shared), so an element-kind result is not listed under it either."""
     element = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.element)
     video = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.video)
 
     url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params)
     body = resp.json()
-    assert element.uid in [f["file_uid"] for f in _section(body, "Elements")["files"]]
+    assert _section(body, "Elements")["files"] == []
     all_uids = [f.get("file_uid") or f.get("uid") for s in body["data"] for f in s["files"]]
     assert video.uid not in all_uids
 
@@ -187,106 +205,6 @@ async def test_requires_auth(client, project_task):
     assert resp.status_code == 401
 
 
-GLOBAL_URL = "/api/references-picker"
-
-
-def _global_section(body, type_name):
-    return next(s for s in body["data"] if s["type"] == type_name)
-
-
-def _flat_files(section):
-    """Every file in a global-picker section, whichever project/task it is grouped under."""
-    return [f for project in section["projects"] for task in project["tasks"] for f in task["files"]]
-
-
-@pytest.mark.asyncio
-async def test_global_picker_groups_sections_by_project_and_task(authed_client, project_task, user_id, generation_fks):
-    """200 OK; global picker (no project_uid) returns the same three sections, each grouped projects -> tasks -> files."""
-    image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
-    generation_result = _make_result(project_task, user_id, generation_fks)
-
-    resp = await authed_client.call("GET", GLOBAL_URL, params={})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert [s["type"] for s in body["data"]] == ["Image Uploads", "Image Generations", "Elements"]
-    assert all("files" not in s and "projects" in s for s in body["data"])
-    section = _global_section(body, "Image Uploads")
-    assert section["total_data"] == len(_flat_files(section))
-    project = next(p for p in section["projects"] if p["id"] == project_task.project_id)
-    task = next(t for t in project["tasks"] if t["id"] == project_task.id)
-    assert project["name"] == project_task.project.name
-    assert image_upload.uid in [f["uid"] for f in task["files"]]
-    assert image_upload.uid in [f["uid"] for f in _flat_files(_global_section(body, "Image Uploads"))]
-    assert generation_result.uid in [f["file_uid"] for f in _flat_files(_global_section(body, "Image Generations"))]
-
-
-@pytest.mark.asyncio
-async def test_global_picker_drops_video_generations(authed_client, project_task, user_id, generation_fks):
-    """200 OK; a video-kind generation result is not offered in the global picker."""
-    video_result = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.video)
-
-    resp = await authed_client.call("GET", GLOBAL_URL, params={})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "Video Generations" not in [s["type"] for s in body["data"]]
-    assert video_result.uid not in [f.get("file_uid") for s in body["data"] for f in _flat_files(s)]
-
-
-@pytest.mark.asyncio
-async def test_global_picker_file_name_search(authed_client, project_task, user_id):
-    """200 OK; `search` filters uploads by name prefix across all projects."""
-    prefix = f"global-{uuid4().hex[:8]}"
-    matching = _make_upload(project_task, user_id, UploadFileTypes.image, name=f"{prefix}-shot.png")
-    non_matching = _make_upload(project_task, user_id, UploadFileTypes.image, name="unrelated.png")
-
-    resp = await authed_client.call("GET", GLOBAL_URL, params={"search": prefix})
-    assert resp.status_code == 200
-    uids = [f["uid"] for f in _flat_files(_global_section(resp.json(), "Image Uploads"))]
-    assert matching.uid in uids
-    assert non_matching.uid not in uids
-
-
-@pytest.mark.asyncio
-async def test_global_picker_project_name_search(authed_client, project_task, user_id):
-    """200 OK; `search` also matches on project name, returning that project's uploads."""
-    image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
-
-    resp = await authed_client.call("GET", GLOBAL_URL, params={"search": project_task.project.name})
-    assert resp.status_code == 200
-    uids = [f["uid"] for f in _flat_files(_global_section(resp.json(), "Image Uploads"))]
-    assert image_upload.uid in uids
-
-
-@pytest.mark.asyncio
-async def test_global_picker_empty_result(authed_client, user_id):
-    """200 OK; a `search` matching nothing returns an empty section with total_data 0."""
-    resp = await authed_client.call("GET", GLOBAL_URL, params={"search": f"nonexistent-{uuid4().hex}"})
-    assert resp.status_code == 200
-    section = _global_section(resp.json(), "Image Uploads")
-    assert section["total_data"] == 0
-    assert _flat_files(section) == []
-
-
-@pytest.mark.asyncio
-async def test_global_picker_cached_on_second_call(authed_client, project_task, user_id):
-    """200 OK; a second identical call returns the same data, exercising the cache-hit branch."""
-    image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
-    params = {"search": image_upload.name}
-
-    first = await authed_client.call("GET", GLOBAL_URL, params=params)
-    second = await authed_client.call("GET", GLOBAL_URL, params=params)
-    assert first.status_code == second.status_code == 200
-    uids = [f["uid"] for f in _flat_files(_global_section(second.json(), "Image Uploads"))]
-    assert image_upload.uid in uids
-
-
-@pytest.mark.asyncio
-async def test_global_picker_requires_auth(client):
-    """401 when the request carries no bearer token."""
-    resp = await client.call("GET", GLOBAL_URL, params={}, raise_for_status=False)
-    assert resp.status_code == 401
-
-
 @pytest.mark.asyncio
 async def test_project_picker_passes_domain_errors_through_and_masks_unexpected_ones(
     authed_client, project_task, monkeypatch
@@ -296,32 +214,7 @@ async def test_project_picker_passes_domain_errors_through_and_masks_unexpected_
     async def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("apps.controller.generations.get_upload_references", boom)
+    monkeypatch.setattr("apps.controller.generations.get_user_uploaded_files_refactored", boom)
     url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params, raise_for_status=False)
     assert resp.status_code == 500
-
-
-@pytest.mark.asyncio
-async def test_global_picker_unexpected_error_is_500(authed_client, monkeypatch):
-    """500 when the global picker's loader raises a non-BaseError."""
-
-    async def boom(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr("apps.controller.generations.get_generation_references", boom)
-    resp = await authed_client.call("GET", GLOBAL_URL, params={}, raise_for_status=False)
-    assert resp.status_code == 500
-
-
-@pytest.mark.asyncio
-async def test_global_picker_passes_base_errors_through(authed_client, monkeypatch):
-    """A BaseError raised while loading is returned as-is, not rewritten to 500."""
-    from error import DataNotFoundError
-
-    async def not_found(*args, **kwargs):
-        raise DataNotFoundError(message="project_not_found")
-
-    monkeypatch.setattr("apps.controller.generations.get_upload_references", not_found)
-    resp = await authed_client.call("GET", GLOBAL_URL, params={}, raise_for_status=False)
-    assert resp.status_code == 404

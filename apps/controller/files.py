@@ -29,16 +29,19 @@ from schemas.payload.files import (
 from sqlalchemy import or_, update
 from schemas.response import Response
 from services.api_caller import APICaller
-from services.redis import CacheKeys, delete_pattern, get_json, set_json
+from services.redis import CacheKeys, delete_pattern, get_json, invalidate_project_files, set_json
 from services.mysql import query
 from services.mysql.model import DfEngineGenerationResults, DfEngineGenerations, DfEngineUploadFiles
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from error import DataNotFoundError, DataValidationError
+from services.dto.asynced.employees import get_employee, assigned_to_task
 from services.files import (
     apply_folder_changes,
     invalidate_generation_lists,
     task_scope,
-    build_file_tree,
+    build_file_tree_refactored,
+    resolve_project_scope,
+    format_file_tree_refactored,
     call_udin_folder,
     ensure_task_assigned,
     find_folder,
@@ -49,7 +52,11 @@ from services.files import (
     resolve_files,
 )
 from services.dto.asynced.projects import get_project, get_project_task
-from services.dto.asynced.files import get_user_uploaded_file
+from services.dto.asynced.files import (
+    get_user_uploaded_file,
+    get_user_uploaded_files,
+    get_user_uploaded_files_refactored,
+)
 from services.dto.format_response import FileAction, TreeFile
 from services.dto.asynced.generation_files import (
     get_archieved_files,
@@ -57,9 +64,12 @@ from services.dto.asynced.generation_files import (
     get_generation_files,
     get_generation_main_variants,
     get_generation_main_file_detail,
+    get_generation_main_refactored,
 )
 from utils import local_time
-from utils.formatter import format_datetime
+from utils.formatter import format_datetime, format_size
+from services.search.dispatch import dispatch_search_sync
+from services.search.query import search_project_files
 
 cache_key = CacheKeys()
 UPLOAD_TIMEOUT = Timeout(connect=10, read=600, write=120, pool=10)
@@ -235,6 +245,8 @@ class FilesController(CoreDependencies):
                 await self.redis.delete(cache_key.generation_files_main_detail(member.uid))  # type: ignore
                 await self.redis.delete(cache_key.generation_files_variant_detail(member.uid))  # type: ignore
                 await self.redis.delete(cache_key.generation_files_variants_detail(member.uid))  # type: ignore
+            await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(project_task["id"]))
+            await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
             logging.info(
                 f"[set-archive-files] user={user_id} task_uid={task_uid} "
                 f"updated {len(rows)} rows file_uids={requested_file_uids} is_archieved={schema.is_archieved}"
@@ -450,9 +462,11 @@ class FilesController(CoreDependencies):
                     DfEngineGenerations,
                     filters=(DfEngineGenerations.id.in_(generation_ids),),  # type: ignore
                 )
-                affected_tasks |= {g.task_id for g in generations if g.task_id}
+                affected_tasks |= {g.task_id or g.song_id for g in generations if g.task_id or g.song_id}
             for affected in affected_tasks:
                 await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(affected))
+            await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
+            await dispatch_search_sync(self.db, generations=[row.uid for row in rows])
             logging.info(
                 f"[set-favourite-files] user={user_id} task_uid={task_uid} "
                 f"updated {len(rows)} rows file_uids={requested_file_uids} is_favorited={schema.is_favorited}"
@@ -564,9 +578,13 @@ class FilesController(CoreDependencies):
                 await self.redis.delete(cache_key.generation_files_main_detail(uid))  # type: ignore
                 await self.redis.delete(cache_key.generation_files_variant_detail(uid))  # type: ignore
                 await self.redis.delete(cache_key.generation_files_variants_detail(uid))  # type: ignore
-            await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(generation.task_id))
+            await delete_pattern(
+                self.redis, cache_key.generation_files_main_list_pattern(generation.task_id or generation.song_id)
+            )
             await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
             await invalidate_generation_lists(ctx, {user_id, generation.created_by})
+            await invalidate_project_files(self.redis, cache_key, generation.project_id)
+            await dispatch_search_sync(self.db, generations=family_uids)
 
             response.data = await get_generation_main_file_detail(ctx, file_uid, user_id, can_override)
             response.message = resolve_message("main_generation_set", current_lang.get())
@@ -603,20 +621,62 @@ class FilesController(CoreDependencies):
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
+        can_override = has_override(self.user["roles"])
         try:
+            employee = await get_employee(ctx, user_id=user_id)
             project_task = await get_project_task(ctx, task_uid)
+
+            task_id = project_task["id"] if project_task["is_song"] is False else None
+            song_id = project_task["id"] if project_task["is_song"] is True else None
             project_uid = project_task["project"]["uid"]
-            is_song = project_task["is_song"]
+
+            if can_override is False:
+                """
+                Create a validation to ensure user is assigned on this tasks.
+                Will raised an error if user is not assigned to this tasks, unless the accessed user has override roles.
+                Validation will be enabled later.
+                """
+                # await assigned_to_task(ctx, employee['id'], task_id, song_id)
+
             if path:
-                folder = find_folder(await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), path)
-                if not folder:
-                    raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
-                if not folder["action"]["can_upload_file"]:
-                    raise DataValidationError(message="invalid_folder_scope", error={"path": ["invalid_folder_scope"]})
-            logging.info(
-                f"[upload-files] user={user_id} task_uid={task_uid} start is_song={is_song} "
-                f"project_id={project_task['project_id']}"
-            )
+                """
+                Perform validation this dir should be exists. If valid then uploaded data will be located in here, otherwise will raised error.
+                Error will be 404 due to folder not found or 422 due to system reached limit upload depth.
+                Later the ENV will be changed, due to must be synced with udin actual environment.
+                """
+                path = path.rstrip("/")
+                project_dir = f"storage/DF-Engine-DEV/{project_task['project']['name']}_{str(project_uid)[:8]}"
+                if not path.startswith(project_dir):
+                    raise DataNotFoundError(message="folder_path_not_found", error={"path": ["folder_path_not_found"]})
+                if not any(
+                    path == f"{project_dir}/upload/{kind}" or path.startswith(f"{project_dir}/upload/{kind}/")
+                    for kind in ("images", "videos")
+                ):
+                    raise DataValidationError(message="invalid_upload_path", error={"path": ["invalid_upload_path"]})
+
+                is_root = path in (f"{project_dir}/upload/images", f"{project_dir}/upload/videos")
+                if not is_root:
+                    owner = (
+                        DfEngineUploadFiles.task_id == task_id  # type: ignore
+                        if task_id is not None
+                        else DfEngineUploadFiles.song_id == song_id  # type: ignore
+                    )
+                    exists = await query(
+                        ctx.db,
+                        DfEngineUploadFiles,
+                        columns=(DfEngineUploadFiles.id,),
+                        filters=(
+                            owner,
+                            or_(
+                                (DfEngineUploadFiles.type == UploadFileTypes.folder)  # type: ignore
+                                & (DfEngineUploadFiles.path == path),  # type: ignore
+                                DfEngineUploadFiles.path.startswith(path + "/", autoescape=True),  # type: ignore
+                            ),
+                        ),
+                        fetch_one=True,
+                    )
+                    if exists is None:
+                        raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
 
             try:
                 async with APICaller(
@@ -643,14 +703,10 @@ class FilesController(CoreDependencies):
                 logging.error(f"[upload-files] user={user_id} task_uid={task_uid} udin timed out")
                 raise BaseError(status_code=status.HTTP_504_GATEWAY_TIMEOUT, message="upload_timeout")
 
-            logging.info(
-                f"[upload-files] user={user_id} task_uid={task_uid} udin replied status={upstream.status_code}"
-            )
             try:
                 body: dict[str, Any] = upstream.json() if upstream.content else {}
-            except ValueError:
+            except ValueError:  # a success reply that isn't JSON counts as an empty result
                 body = {}
-
             if upstream.is_error:
                 logging.warning(
                     f"[upload-files] user={user_id} task_uid={task_uid} udin rejected "
@@ -662,9 +718,10 @@ class FilesController(CoreDependencies):
                     error=body.get("error"),
                 )
 
-            uploaded: list[dict[str, Any]] = body.get("data") or []
+            uploaded = body.get("data") or []
+            rows: list[DfEngineUploadFiles] = []
             for item in uploaded:
-                self.db.add(
+                rows.append(
                     DfEngineUploadFiles(
                         name=item["name"],
                         type=UploadFileTypes.video if "/videos/" in item["path"] else UploadFileTypes.image,
@@ -672,27 +729,29 @@ class FilesController(CoreDependencies):
                         md5=item.get("md5"),
                         size=item["size"],
                         project_id=project_task["project_id"],
-                        task_id=None if is_song else project_task["id"],
-                        song_id=project_task["id"] if is_song else None,
+                        task_id=task_id,
+                        song_id=song_id,
                         created_by=user_id,
                     )
                 )
+            self.db.add_all(rows)
+
             await self.db.flush()
             await delete_pattern(
                 self.redis,
-                cache_key.user_files_pattern(
-                    task_id=None if is_song else project_task["id"],
-                    song_id=project_task["id"] if is_song else None,
-                ),
+                cache_key.user_files_pattern(task_id=task_id, song_id=song_id),
             )
             await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
+            await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
+            await dispatch_search_sync(self.db, uploads=[row.uid for row in rows if row.type == UploadFileTypes.image])
+
             logging.info(
                 f"[upload-files] user={user_id} task_uid={task_uid} saved={len(uploaded)} rows, cache invalidated"
             )
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
             response.message = "Files successfully uploaded."
             logging.info(f"[upload-files] user={user_id} task_uid={task_uid} done uploaded={len(uploaded)}")
+
         except BaseError as e:
             logging.warning(
                 f"[upload-files] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
@@ -704,79 +763,106 @@ class FilesController(CoreDependencies):
         return response
 
     @controller.get(
-        "/files/{task_uid}",
+        "/files/{project_uid}",
         summary="Get file trees.",
-        description="Retrieve the file tree of a task or song, including its folders and uploaded files. Set `my_task` to true to return only the files that belong to the current user.",
+        description="Retrieve the file tree of a project, including its folders, uploaded files and generated files. Set `my_task` to true to return only the files that belong to the current user.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
     async def files_with_task_uid_to_get_user_files(
         self,
-        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+        project_uid: UUID = Path(..., description="Project UID."),
+        search: Optional[str] = Query(None, description="Search by filepath or filename."),
+        task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID."),
         my_task: bool = False,
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
+        can_override = has_override(self.user["roles"])
         try:
-            project_task = await get_project_task(ctx, task_uid)
-            response.data = await build_file_tree(ctx, project_task, user_id, my_task, self.user["roles"])
-            logging.info(
-                f"[get-files] user={user_id} task_uid={task_uid} my_task={my_task} root={response.data.get('path')}"
-            )
+            project = await get_project(ctx, project_uid=project_uid)
+            employee = await get_employee(ctx, user_id=user_id)
+
+            if can_override is False:
+                """
+                Create a validation to ensure user is assigned on this tasks.
+                Will raised an error if user is not assigned to this tasks, unless the accessed user has override roles.
+                Validation will be enabled later.
+                """
+                # await assigned_to_task(ctx, employee['id'], task_id, song_id)
+                pass
+
+            if search:
+                uploaded, generated = await search_project_files(
+                    str(project_uid), search, ("image", "image_edit", "video", "folder"), user_id, can_override, my_task
+                )
+                response.data = format_file_tree_refactored(uploaded, generated, await get_folder_depth_limit(ctx))
+            else:
+                response.data = await build_file_tree_refactored(
+                    ctx, project["id"], user_id, task_uid, my_task=my_task, can_override=can_override
+                )
         except BaseError as e:
-            logging.warning(f"[get-files] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}")
+            logging.warning(
+                f"[get-files] user={user_id} project_uid={project_uid} rejected ({e.status_code}): {e.message}"
+            )
             raise
         except Exception:
-            logging.error(f"[get-files] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[get-files] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.get(
-        "/files/{task_uid}/folders",
+        "/files/{project_uid}/folders",
         summary="Get folder details.",
-        description="Retrieve a single folder from the file tree of a task or song, matched by `path`. Returns 404 if the folder does not exist.",
+        description="Retrieve a single folder from the file tree of a project, matched by `path`. Returns 404 if the folder does not exist.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
     async def files_with_task_uid_to_get_user_folder_details(
         self,
-        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+        project_uid: UUID = Path(..., description="Project UID."),
         path: str = Query(
             ...,
             min_length=1,
             max_length=1024,
             description="Full folder path, matching a `path` value from the file tree (e.g. storage/DF-Engine/<name>/upload/images).",
         ),
+        task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID."),
         my_task: bool = Query(
             False, description="If true, only include uploaded files that belong to the current user."
         ),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
+        can_override = has_override(self.user["roles"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            project_task = await get_project_task(ctx, task_uid)
-            file_tree = await build_file_tree(ctx, project_task, user_id, my_task, self.user["roles"])
+            project = await get_project(ctx, project_uid=project_uid)
+            file_tree = await build_file_tree_refactored(
+                ctx, project["id"], user_id, task_uid, my_task=my_task, can_override=can_override
+            )
             folder_details = find_folder(file_tree, path.strip("/"))
             if not folder_details:
                 logging.warning(
-                    f"[get-folder] user={user_id} task_uid={task_uid} path={path!r} my_task={my_task} not found root={file_tree.get('path')}"
+                    f"[get-folder] user={user_id} project_uid={project_uid} path={path!r} my_task={my_task} not found root={file_tree.get('path')}"
                 )
                 raise DataNotFoundError(message="folder_not_found")
             logging.info(
-                f"[get-folder] user={user_id} task_uid={task_uid} path={path!r} my_task={my_task} "
+                f"[get-folder] user={user_id} project_uid={project_uid} path={path!r} my_task={my_task} "
                 f"files={len(folder_details.get('files') or [])} children={len(folder_details.get('children') or [])}"
             )
             response.data = folder_details
 
         except BaseError as e:
-            logging.warning(f"[get-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}")
+            logging.warning(
+                f"[get-folder] user={user_id} project_uid={project_uid} rejected ({e.status_code}): {e.message}"
+            )
             raise
         except Exception:
-            logging.error(f"[get-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[get-folder] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
@@ -821,40 +907,39 @@ class FilesController(CoreDependencies):
         return response
 
     @controller.post(
-        "/files/{task_uid}/folders",
+        "/files/{project_uid}/folders",
         summary="Create folder.",
-        description="Create a new folder under `path` (a folder from the file tree) in the file tree of a task or song. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        description="Create a new folder under `path` (a folder from the file tree) in the file tree of a project. Returns the refreshed file tree.",
         status_code=status.HTTP_201_CREATED,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_task_uid_to_create_a_folder(
-        self, schema: FolderPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
+    async def files_with_project_uid_to_create_a_folder(
+        self,
+        schema: FolderPayload,
+        project_uid: UUID = Path(..., description="Project UID."),
+        task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID (optional scope)."),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            project_task = await get_project_task(ctx, task_uid)
-            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
-            #     raise DataValidationError(message="song_task_already_completed")
-            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
-            #     raise DataValidationError(message="project_task_not_onprocess")
-            project = await get_project(ctx, project_id=project_task["project_id"])
-            # if project['status'] != PROJECT_STATUS_ONGOING:
-            #     raise DataValidationError(message="project_not_ongoing")
+            project, project_task = await resolve_project_scope(ctx, project_uid, task_uid)
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
             parent = find_folder(
-                await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), schema.path
+                await build_file_tree_refactored(
+                    ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+                ),
+                schema.path,
             )
             if not parent:
                 raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
             if not parent["action"]["can_create_subfolder"]:
                 key = "folder_depth_exceeded" if len(folder_scope(schema.path)) == 2 else "invalid_folder_scope"
                 logging.warning(
-                    f"[create-folder] user={user_id} task_uid={task_uid} path={schema.path!r} refused "
+                    f"[create-folder] user={user_id} project_uid={project_uid} path={schema.path!r} refused "
                     f"{key} depth_limit={await get_folder_depth_limit(ctx)}"
                 )
                 raise DataValidationError(message=key, error={"path": [key]})
@@ -883,47 +968,48 @@ class FilesController(CoreDependencies):
             )
             await apply_folder_changes(ctx, project_task, user_id)
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("folder_created", current_lang.get())
-            logging.info(f"[create-folder] user={user_id} task_uid={task_uid} created={created['path']!r}")
+            logging.info(f"[create-folder] user={user_id} project_uid={project_uid} created={created['path']!r}")
         except BaseError as e:
             logging.warning(
-                f"[create-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+                f"[create-folder] user={user_id} project_uid={project_uid} rejected ({e.status_code}): {e.message}"
             )
             raise
         except Exception:
-            logging.error(f"[create-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[create-folder] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.patch(
-        "/files/{task_uid}/folders",
+        "/files/{project_uid}/folders",
         summary="Update folder.",
-        description="Rename the folder at `path` to `name`. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        description="Rename the folder at `path` to `name`. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_task_uid_to_update_a_folder(
-        self, schema: FolderPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
+    async def files_with_project_uid_to_update_a_folder(
+        self,
+        schema: FolderPayload,
+        project_uid: UUID = Path(..., description="Project UID."),
+        task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID (optional scope)."),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            project_task = await get_project_task(ctx, task_uid)
-            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
-            #     raise DataValidationError(message="song_task_already_completed")
-            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
-            #     raise DataValidationError(message="project_task_not_onprocess")
-            project = await get_project(ctx, project_id=project_task["project_id"])
-            # if project['status'] != PROJECT_STATUS_ONGOING:
-            #     raise DataValidationError(message="project_not_ongoing")
+            project, project_task = await resolve_project_scope(ctx, project_uid, task_uid)
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
             folder = find_folder(
-                await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), schema.path
+                await build_file_tree_refactored(
+                    ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+                ),
+                schema.path,
             )
             if not folder:
                 raise DataNotFoundError(message="folder_not_found", error={"path": ["folder_not_found"]})
@@ -933,7 +1019,9 @@ class FilesController(CoreDependencies):
                 )
 
             if schema.name == folder["name"]:  # nothing to rename
-                response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+                response.data = await build_file_tree_refactored(
+                    ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+                )
                 response.message = resolve_message("folder_renamed", current_lang.get())
                 return response
 
@@ -949,32 +1037,35 @@ class FilesController(CoreDependencies):
             new_path = f"{schema.path.rpartition('/')[0]}/{schema.name}"
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [], moves=[(schema.path, new_path)])
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("folder_renamed", current_lang.get())
             logging.info(
-                f"[rename-folder] user={user_id} task_uid={task_uid} {schema.path!r} -> {new_path!r} files={len(pairs or [])}"
+                f"[rename-folder] user={user_id} project_uid={project_uid} {schema.path!r} -> {new_path!r} files={len(pairs or [])}"
             )
         except BaseError as e:
             logging.warning(
-                f"[rename-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+                f"[rename-folder] user={user_id} project_uid={project_uid} rejected ({e.status_code}): {e.message}"
             )
             raise
         except Exception:
-            logging.error(f"[rename-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[rename-folder] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.delete(
-        "/files/{task_uid}/folders",
+        "/files/{project_uid}/folders",
         summary="Delete folder.",
-        description="Delete the folder at `path`. In an upload folder, its files (at any depth) are permanently deleted with it; in a generated folder they are moved up into the parent folder, never deleted. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        description="Delete the folder at `path`. In an upload folder, its files (at any depth) are permanently deleted with it; in a generated folder they are moved up into the parent folder, never deleted. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_task_uid_to_delete_a_folder(
+    async def files_with_project_uid_to_delete_a_folder(
         self,
-        task_uid: UUID = Path(..., description="Task UID (project task or song)."),
+        project_uid: UUID = Path(..., description="Project UID."),
+        task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID (optional scope)."),
         path: str = Query(
             ...,
             min_length=1,
@@ -987,18 +1078,16 @@ class FilesController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         path = path.strip("/")
         try:
-            project_task = await get_project_task(ctx, task_uid)
-            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
-            #     raise DataValidationError(message="song_task_already_completed")
-            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
-            #     raise DataValidationError(message="project_task_not_onprocess")
-            project = await get_project(ctx, project_id=project_task["project_id"])
-            # if project['status'] != PROJECT_STATUS_ONGOING:
-            #     raise DataValidationError(message="project_not_ongoing")
+            project, project_task = await resolve_project_scope(ctx, project_uid, task_uid)
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
-            folder = find_folder(await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"]), path)
+            folder = find_folder(
+                await build_file_tree_refactored(
+                    ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+                ),
+                path,
+            )
             if not folder:
                 raise DataNotFoundError(message="folder_not_found")
             if not folder["action"]["can_delete"]:
@@ -1006,8 +1095,9 @@ class FilesController(CoreDependencies):
                     message="folder_delete_not_permitted", error={"path": ["folder_delete_not_permitted"]}
                 )
 
-            if folder_scope(path)[:1] == ("upload",):  # uploaded files go with their folder
-                await delete_upload_files_under(ctx, project["uid"], user_id, path)
+            deleted_upload_uids: list[str] = []
+            if folder_scope(path)[:1] == ("upload",):
+                deleted_upload_uids = await delete_upload_files_under(ctx, project["uid"], user_id, path)
 
             pairs = await call_udin_folder(
                 "DELETE",
@@ -1019,49 +1109,50 @@ class FilesController(CoreDependencies):
                 "delete-folder",
             )
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [], deleted=[path])
+            await dispatch_search_sync(self.db, deleted_uploads=deleted_upload_uids)
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("folder_deleted", current_lang.get())
             logging.info(
-                f"[delete-folder] user={user_id} task_uid={task_uid} path={path!r} promoted={len(pairs or [])}"
+                f"[delete-folder] user={user_id} project_uid={project_uid} path={path!r} promoted={len(pairs or [])}"
             )
         except BaseError as e:
             logging.warning(
-                f"[delete-folder] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+                f"[delete-folder] user={user_id} project_uid={project_uid} rejected ({e.status_code}): {e.message}"
             )
             raise
         except Exception:
-            logging.error(f"[delete-folder] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[delete-folder] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
     @controller.patch(
-        "/files/{task_uid}/folders/move",
+        "/files/{project_uid}/folders/move",
         summary="Move folders.",
-        description="Move one or more folders into `destination`. Uploaded folders can only go under upload and generated folders under generated, and the type (images or videos) must match. Only users assigned to the task can do this. Returns the refreshed file tree.",
+        description="Move one or more folders into `destination`. Uploaded folders can only go under upload and generated folders under generated, and the type (images or videos) must match. Returns the refreshed file tree.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
     )
-    async def files_with_task_uid_to_move_folders(
-        self, schema: MoveFoldersPayload, task_uid: UUID = Path(..., description="Task UID (project task or song).")
+    async def files_with_project_uid_to_move_folders(
+        self,
+        schema: MoveFoldersPayload,
+        project_uid: UUID = Path(..., description="Project UID."),
+        task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID (optional scope)."),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            project_task = await get_project_task(ctx, task_uid)
-            # if project_task.get("is_song") and project_task["status"] == SONG_STATUS_COMPLETED:
-            #     raise DataValidationError(message="song_task_already_completed")
-            # if not project_task.get("is_song") and project_task["status"] != TASK_STATUS_ONPROCESS:
-            #     raise DataValidationError(message="project_task_not_onprocess")
-            project = await get_project(ctx, project_id=project_task["project_id"])
-            # if project['status'] != PROJECT_STATUS_ONGOING:
-            #     raise DataValidationError(message="project_not_ongoing")
+            project, project_task = await resolve_project_scope(ctx, project_uid, task_uid)
 
             # await ensure_task_assigned(ctx, project_task, user_id)
 
-            tree = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            tree = await build_file_tree_refactored(
+                ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+            )
             destination = find_folder(tree, schema.destination)
             errors: dict[str, list[str]] = {}
             if not destination:
@@ -1094,10 +1185,9 @@ class FilesController(CoreDependencies):
                 elif destination and (len(schema.destination.split("/")) - 5) + 1 + height(folder) > depth_limit:
                     errors[field] = ["folder_depth_exceeded"]
             if errors:
-                logging.warning(f"[move-folders] user={user_id} task_uid={task_uid} invalid={errors}")
+                logging.warning(f"[move-folders] user={user_id} project_uid={project_uid} invalid={errors}")
                 raise DataValidationError(message=next(iter(errors.values()))[0], error=errors)
 
-            # a source nested inside another source travels with it; Udin would fail on the second move
             sources = [
                 source
                 for source in schema.folder_paths
@@ -1120,19 +1210,21 @@ class FilesController(CoreDependencies):
                 moves=[(source, f"{schema.destination}/{source.rsplit('/', 1)[-1]}") for source in sources],
             )
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project["id"], user_id, task_uid, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("folders_moved", current_lang.get())
             logging.info(
-                f"[move-folders] user={user_id} task_uid={task_uid} moved={len(sources)} "
+                f"[move-folders] user={user_id} project_uid={project_uid} moved={len(sources)} "
                 f"destination={schema.destination!r} files={len(pairs or [])}"
             )
         except BaseError as e:
             logging.warning(
-                f"[move-folders] user={user_id} task_uid={task_uid} rejected ({e.status_code}): {e.message}"
+                f"[move-folders] user={user_id} project_uid={project_uid} rejected ({e.status_code}): {e.message}"
             )
             raise
         except Exception:
-            logging.error(f"[move-folders] user={user_id} task_uid={task_uid} failed\n{traceback.format_exc()}")
+            logging.error(f"[move-folders] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}")
             raise ServiceError()
         return response
 
@@ -1163,7 +1255,9 @@ class FilesController(CoreDependencies):
             if len(new_name) > NAME_MAX:
                 raise DataValidationError(message="file_name_too_long", error={"name": ["file_name_too_long"]})
             if new_name == PurePosixPath(rows[0].path).name:  # nothing to rename
-                response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+                response.data = await build_file_tree_refactored(
+                    ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+                )
                 response.message = resolve_message("file_renamed", current_lang.get())
                 return response
             pairs = await call_udin_folder(
@@ -1177,7 +1271,9 @@ class FilesController(CoreDependencies):
             )
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [])
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("file_renamed", current_lang.get())
             logging.info(f"[rename-file] user={user_id} source={source} file_uid={file_uid} name={schema.name!r}")
         except BaseError as e:
@@ -1208,7 +1304,9 @@ class FilesController(CoreDependencies):
             rows, project_task = await resolve_files(ctx, source, schema.file_uids, user_id, self.user["roles"])
             project = await get_project(ctx, project_id=project_task["project_id"])
 
-            tree = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            tree = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             destination = find_folder(tree, schema.destination)
             errors: dict[str, list[str]] = {}
             if not destination:
@@ -1245,7 +1343,9 @@ class FilesController(CoreDependencies):
             )
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [])
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("files_moved", current_lang.get())
             logging.info(
                 f"[move-files] user={user_id} source={source} moved={len(rows)} destination={schema.destination!r}"
@@ -1287,8 +1387,14 @@ class FilesController(CoreDependencies):
                 await ctx.redis.delete(cache_key.user_file_detail(row.uid))  # type: ignore
                 await self.db.delete(row)
             await apply_folder_changes(ctx, project_task, user_id)
+            await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
+            await dispatch_search_sync(
+                self.db, deleted_uploads=[row.uid for row in rows if row.type == UploadFileTypes.image]
+            )
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("files_deleted", current_lang.get())
             logging.info(f"[delete-files] user={user_id} deleted={len(rows)}")
         except BaseError as e:

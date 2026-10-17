@@ -22,18 +22,12 @@ FILES_URL = "/api/files"
 
 
 @pytest.mark.asyncio
-async def test_archive_is_refused_for_main_result_then_favorite_does_not_bust_stale_picker_cache(
+async def test_archive_is_refused_for_main_result_then_favorite_shows_in_picker(
     authed_client, project_task, user_id, db_session
 ):
-    """Walks a generation result through an archive attempt then a favorite, checking the
-    references-picker response and the DB row after each real API call. Two current gaps, both
-    documented here rather than silently patched: (1) the archive endpoint's own UPDATE only ever
-    touches `is_main=False` rows, but its validation step doesn't mirror that restriction, so
-    archiving an is_main result returns 200 and reports it as archived while the DB row is left
-    untouched; (2) neither the archive nor the favorite endpoint invalidates the references-picker
-    cache, so a picker response fetched before the mutation stays stale (missing the favorite)
-    until its own TTL expires - proven here by the favorite's DB write actually landing while the
-    already-cached picker response doesn't reflect it."""
+    """Walks a generation result through an archive attempt then a favorite, checking the references-picker
+    response and the DB row after each real API call. Archiving the current main is refused (422) and leaves the row
+    untouched; favoriting it lands in the DB and shows in the picker straight away (project-wide caches are cleared)."""
     model_option = (await db_session.execute(select(DfEngineModelOptions).limit(1))).scalars().first()
     menu = (await db_session.execute(select(DfEngineMenus).limit(1))).scalars().first()
     feature = (await db_session.execute(select(DfEngineFeatures).limit(1))).scalars().first()
@@ -87,9 +81,8 @@ async def test_archive_is_refused_for_main_result_then_favorite_does_not_bust_st
     db_row = await _fetch_result(result.uid)
     assert db_row.favourited_at is not None
 
-    # 5. the picker's cached response predates the favorite and neither mutation endpoint
-    # invalidates it, so it still shows the pre-favorite state - a stale-cache gap, not correctness
+    # 5. favorite now invalidates the project-wide caches, so the picker reflects it straight away
     picker = await authed_client.call("GET", picker_url)
     body = picker.json()
     file = next(f for f in _picker_section(body, "Image Generations")["files"] if f["file_uid"] == result.uid)
-    assert file["favourited_at"] is None
+    assert file["favourited_at"] is not None
