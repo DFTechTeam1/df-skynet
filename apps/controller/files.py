@@ -39,7 +39,6 @@ from services.files import (
     apply_folder_changes,
     invalidate_generation_lists,
     task_scope,
-    build_file_tree,
     build_file_tree_refactored,
     resolve_project_scope,
     format_file_tree_refactored,
@@ -797,7 +796,7 @@ class FilesController(CoreDependencies):
 
             if search:
                 uploaded, generated = await search_project_files(
-                    str(project_uid), search, ("image", "image_edit", "video"), user_id, can_override, my_task
+                    str(project_uid), search, ("image", "image_edit", "video", "folder"), user_id, can_override, my_task
                 )
                 response.data = format_file_tree_refactored(uploaded, generated, await get_folder_depth_limit(ctx))
             else:
@@ -1256,7 +1255,9 @@ class FilesController(CoreDependencies):
             if len(new_name) > NAME_MAX:
                 raise DataValidationError(message="file_name_too_long", error={"name": ["file_name_too_long"]})
             if new_name == PurePosixPath(rows[0].path).name:  # nothing to rename
-                response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+                response.data = await build_file_tree_refactored(
+                    ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+                )
                 response.message = resolve_message("file_renamed", current_lang.get())
                 return response
             pairs = await call_udin_folder(
@@ -1270,7 +1271,9 @@ class FilesController(CoreDependencies):
             )
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [])
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("file_renamed", current_lang.get())
             logging.info(f"[rename-file] user={user_id} source={source} file_uid={file_uid} name={schema.name!r}")
         except BaseError as e:
@@ -1301,7 +1304,9 @@ class FilesController(CoreDependencies):
             rows, project_task = await resolve_files(ctx, source, schema.file_uids, user_id, self.user["roles"])
             project = await get_project(ctx, project_id=project_task["project_id"])
 
-            tree = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            tree = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             destination = find_folder(tree, schema.destination)
             errors: dict[str, list[str]] = {}
             if not destination:
@@ -1338,7 +1343,9 @@ class FilesController(CoreDependencies):
             )
             await apply_folder_changes(ctx, project_task, user_id, pairs=pairs or [])
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("files_moved", current_lang.get())
             logging.info(
                 f"[move-files] user={user_id} source={source} moved={len(rows)} destination={schema.destination!r}"
@@ -1385,7 +1392,9 @@ class FilesController(CoreDependencies):
                 self.db, deleted_uploads=[row.uid for row in rows if row.type == UploadFileTypes.image]
             )
 
-            response.data = await build_file_tree(ctx, project_task, user_id, roles=self.user["roles"])
+            response.data = await build_file_tree_refactored(
+                ctx, project_task["project_id"], user_id, can_override=has_override(self.user["roles"])
+            )
             response.message = resolve_message("files_deleted", current_lang.get())
             logging.info(f"[delete-files] user={user_id} deleted={len(rows)}")
         except BaseError as e:
