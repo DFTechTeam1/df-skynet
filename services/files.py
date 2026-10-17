@@ -146,6 +146,7 @@ def format_file_tree_refactored(
     uploaded_files: list[dict[str, Any]],
     main_generations: list[dict[str, Any]],
     depth_limit: int,
+    project_root: Optional[str] = None,
 ) -> dict[str, Any]:
     """Same tree as `format_file_tree`, built from the already formatted output of
     `get_user_uploaded_files_refactored` and `get_generation_main_refactored`, so every permission is taken as given.
@@ -194,6 +195,7 @@ def format_file_tree_refactored(
         place(
             file["path"],
             TreeFileRefactored(
+                id=file.get("id"),
                 file_uid=file["file_uid"],
                 name=file["name"],
                 path=file["path"],
@@ -222,6 +224,7 @@ def format_file_tree_refactored(
         place(
             path,
             TreeFileRefactored(
+                id=file.get("id"),
                 file_uid=file["file_uid"],
                 name=file["name"],
                 path=path,
@@ -242,7 +245,16 @@ def format_file_tree_refactored(
             ),
         )
 
+    if not roots and project_root:  # nothing uploaded or generated yet: still return the empty skeleton
+        for scope in ("upload", "generated"):
+            for kind in ("images", "videos"):
+                node(f"{project_root}/{scope}/{kind}", 2)
     return next((folder.model_dump(mode="json") for folder in roots.values()), {})
+
+
+def project_root_path(project: dict[str, Any]) -> str:
+    # ponytail: env segment hardcoded like the upload path check in the files controller; move both to config together.
+    return f"storage/DF-Engine-DEV/{project['name']}_{str(project['uid'])[:8]}"
 
 
 async def resolve_files(
@@ -595,7 +607,8 @@ async def build_file_tree_refactored(
         personal_file=my_task,
         has_override=can_override,
     )
-    tree = format_file_tree_refactored(uploaded, generated, await get_folder_depth_limit(ctx))
+    project_root = None if uploaded or generated else project_root_path(await get_project(ctx, project_id=project_id))
+    tree = format_file_tree_refactored(uploaded, generated, await get_folder_depth_limit(ctx), project_root)
     logging.info(
         f"[file-tree] user={user_id} project_id={project_id} my_task={my_task} "
         f"uploaded={len(uploaded)} generated={len(generated)} root={tree.get('path')}"

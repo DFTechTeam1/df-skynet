@@ -114,6 +114,7 @@ async def get_user_uploaded_files_refactored(
 
     result = [
         UserUploadedFile(
+            id=record["id"],
             file_uid=record["uid"],
             name=record["name"],
             path=record["path"],

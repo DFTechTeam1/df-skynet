@@ -84,6 +84,7 @@ def build_generation_doc(result: DfEngineGenerationResults) -> dict[str, Any]:
     task = generation.get("task") or {}
     song = generation.get("song") or {}
     doc = UserGeneratedFile(
+        id=row["id"],
         kind=generation["kind"],
         file_uid=row["uid"],
         generation_uid=generation["uid"],
@@ -121,6 +122,7 @@ def build_upload_doc(file: DfEngineUploadFiles) -> dict[str, Any]:
     task = row.get("task") or {}
     song = row.get("song") or {}
     doc = UserUploadedFile(
+        id=row["id"],
         file_uid=row["uid"],
         name=row["name"],
         path=row["path"],
