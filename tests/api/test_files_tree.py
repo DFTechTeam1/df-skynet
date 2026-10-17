@@ -317,7 +317,7 @@ async def test_upload_saves_rows(authed_client, project_task, user_id, mock_udin
         .all()
     )
     assert {r.name: r.type for r in rows} == {"a.jpg": UploadFileTypes.image, "b.mp4": UploadFileTypes.video}
-    assert any(call[1].endswith(project_task.project.uid) for call in mock_udin.calls)
+    assert any(project_task.project.uid in call[1] for call in mock_udin.calls)
 
 
 @pytest.mark.asyncio
@@ -331,7 +331,7 @@ async def test_upload_for_a_song_task_is_stored_against_the_song(authed_client, 
             "id": project_task.id,
             "is_song": True,
             "project_id": project_task.project_id,
-            "project": {"uid": project_task.project.uid},
+            "project": {"uid": project_task.project.uid, "name": project_task.project.name},
         }
 
     monkeypatch.setattr("apps.controller.files.get_project_task", fake_task)
