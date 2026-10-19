@@ -40,7 +40,7 @@ from services.dto.asynced.generation_files import (
     get_enhance_prompt,
     get_generation_main_refactored,
 )
-from services.dto.asynced.generation_files import _build_references
+from services.dto.asynced.generation_files import _build_references, overlay_favourites
 from services.dto.asynced.uploaded_files import get_uploaded_files
 from services.dto.asynced.api_keys import get_employee_api_key, validate_api_key_limitation
 from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting, get_model, get_menu
@@ -204,6 +204,7 @@ class GenerationsController(CoreDependencies):
                     has_override(self.user["roles"]),
                     my_task,
                 )
+                await overlay_favourites(ctx, main_generations, user_id)
             else:
                 main_generations = await get_generation_main_refactored(
                     ctx=ctx, viewer_id=user_id, project_id=project_id, personal_file=my_task
@@ -1072,6 +1073,7 @@ class GenerationsController(CoreDependencies):
 
             if search:
                 main_generations = await search_task_generations(str(task_uid), search, user_id, can_override, my_task)
+                await overlay_favourites(ctx, main_generations, user_id)
             else:
                 main_generations = await get_generation_main_refactored(
                     ctx=ctx,

@@ -32,7 +32,6 @@ class DfEngineGenerationResults(SQLModel, table=True):
     path: str = Field(sa_column=Column(Text, nullable=False))
     size: int = Field(sa_column=Column(BigInteger, nullable=False))
     is_main: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
-    favourited_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
@@ -52,6 +51,9 @@ class DfEngineGenerationResults(SQLModel, table=True):
     )
     children: list["DfEngineGenerationResults"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.parent_id]", "viewonly": True}
+    )
+    favourites: list["DfEngineGenerationFavourites"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "passive_deletes": True}
     )
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerationResults.created_by]"}

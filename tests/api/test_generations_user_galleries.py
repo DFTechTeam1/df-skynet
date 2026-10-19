@@ -151,7 +151,7 @@ async def test_child_result_never_listed_separately(authed_client, project_task,
 @pytest.mark.asyncio
 async def test_main_result_listed_regardless_of_archieved_at(authed_client, project_task, user_id, generation_fks):
     """200 OK; the gallery list is keyed off is_main alone; archieved_at isn't filtered (archiving a main
-    result isn't a normal flow — can_archieve requires is_main is False — but if it happens, the
+    result isn't a normal flow — can_set_archieve requires is_main is False — but if it happens, the
     result still appears here)."""
     generation = _make_generation(project_task, user_id, generation_fks)
     result = _make_result(generation, user_id, is_main=True, archieved_at="2024-01-01 00:00:00")

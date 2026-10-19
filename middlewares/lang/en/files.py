@@ -23,6 +23,7 @@ class FilesMessage:
             "file_move_not_permitted": "This file can't be moved because it is archived.",
             "invalid_file_move_scope": "Files can only be moved within the same storage (upload or generated) and type (images or videos).",
             "file_already_in_folder": "This file is already in the destination folder.",
+            "file_archive_not_creator": "Only the creator of this file can archive or unarchive it.",
             "file_archive_not_permitted": "Main versions can't be archived. Set another version as main first.",
             "file_edit_not_permitted": "You can only edit images you generated or uploaded yourself.",
             "file_edit_image_only": "Only image files can be edited.",

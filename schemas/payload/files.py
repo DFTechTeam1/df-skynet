@@ -138,32 +138,8 @@ class MoveFoldersPayload(BaseModel):
 
 
 class SetArchivedPayload(BaseModel):
-    file_uids: list[UUID] = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="File `uid`s to archive/unarchive.",
-        examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
-    )
     is_archieved: bool = Field(True, description="True to archive, False to unarchive.", examples=[True])
-
-    @field_validator("file_uids", mode="before")
-    @classmethod
-    def dedupe_file_uids(cls, value: list[Any]) -> list[str]:
-        return list(dict.fromkeys(str(UUID(str(uid))) for uid in value))
 
 
 class SetFavoritedPayload(BaseModel):
-    file_uids: list[UUID] = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="File `uid`s to favorite/unfavorite.",
-        examples=[["b3f1c2d4-5678-4abc-9def-0123456789ab"]],
-    )
     is_favorited: bool = Field(True, description="True to favorite, False to unfavorite.", examples=[True])
-
-    @field_validator("file_uids", mode="before")
-    @classmethod
-    def dedupe_file_uids(cls, value: list[Any]) -> list[str]:
-        return list(dict.fromkeys(str(UUID(str(uid))) for uid in value))

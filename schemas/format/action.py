@@ -42,11 +42,9 @@ class UploadedFileAction(BaseModel):
 
 
 class GeneratedFileAction(BaseModel):
-    can_archieve: bool = True
-    can_unarchieve: bool = False
+    can_set_archieve: bool = True
     can_set_main: bool = False
-    can_favorited: bool = True
-    can_unfavorited: bool = False
+    can_set_favorite: bool = True
     can_fetch_detail: bool = True
     can_use_as_edit: bool = True
     can_rename: bool = False
@@ -62,14 +60,12 @@ class GeneratedFileAction(BaseModel):
     def action(cls, is_owner: bool, can_override: bool, record: dict[str, Any]) -> "GeneratedFileAction":
         allowed = is_owner or can_override
         archived = record.get("archieved_at") is not None
-        favorited = record.get("favourited_at") is not None
+        favorited = bool(record.get("favourites")) or record.get("favourited_at") is not None  # the viewer's own
         is_video = "/videos/" in record["path"]
         return cls(
-            can_archieve=allowed and not archived and not record["is_main"],
-            can_unarchieve=allowed and archived,
+            can_set_archieve=is_owner and not archived and not record["is_main"],
             can_set_main=allowed and not record["is_main"],
-            can_favorited=allowed and not favorited,
-            can_unfavorited=allowed and favorited,
+            can_set_favorite=not favorited,
             can_use_as_reference=allowed and not is_video,
             can_use_as_edit=allowed and not is_video,
             can_rename=allowed,

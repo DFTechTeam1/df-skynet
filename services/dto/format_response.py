@@ -10,12 +10,17 @@ def _is_image(path: str) -> bool:
     return "/videos/" not in path
 
 
+def favourited_at_of(result: dict[str, Any]) -> Optional[str]:
+    """The viewer's own favourite time of a serialized result: its `favourites` relationship is loaded filtered to
+    the viewer (see `viewer_favourite`), so any row in it is theirs. None when it isn't loaded or empty."""
+    favourites = result.get("favourites") or []
+    return favourites[0]["favourited_at"] if favourites else None
+
+
 class GenerationAction(BaseModel):
-    can_archieve: bool
-    can_unarchieve: bool
+    can_set_archieve: bool
     can_set_main: bool
-    can_favorited: bool
-    can_unfavorited: bool
+    can_set_favorite: bool
     can_download: bool
     can_fetch_detail: bool
     can_use_as_reference: bool
@@ -26,11 +31,9 @@ class GenerationAction(BaseModel):
     @classmethod
     def from_result(cls, result: dict[str, Any], is_owner: bool) -> "GenerationAction":
         return cls(
-            can_archieve=is_owner and result["archieved_at"] is None and result["is_main"] is False,
-            can_unarchieve=is_owner and result["archieved_at"] is not None,
+            can_set_archieve=is_owner and result["archieved_at"] is None and result["is_main"] is False,
             can_set_main=is_owner and result["is_main"] is False,
-            can_favorited=is_owner and result["favourited_at"] is None,
-            can_unfavorited=is_owner and result["favourited_at"] is not None,
+            can_set_favorite=favourited_at_of(result) is None,
             can_download=True,
             can_fetch_detail=True,
             can_use_as_reference=_is_image(result["path"]),
@@ -42,7 +45,7 @@ class GenerationAction(BaseModel):
 
 def grant_generation_override(record: dict[str, Any]) -> None:
     """Widen a serialized generated-file record for an `OVERRIDE_FILE_ROLES` user: rename, move (unless archived)
-    image-edit, set-main, archive and favourite work on anyone's file. Pending records (no file yet)
+    image-edit and set-main work on anyone's file. Pending records (no file yet)
     are left alone. Applied on the way out, never before caching, because cached lists are shared between viewers."""
     action = record.get("action")
     if record.get("file_uid") is None or not action:
@@ -51,10 +54,6 @@ def grant_generation_override(record: dict[str, Any]) -> None:
     action["can_choose_to_move"] = record.get("archieved_at") is None
     action["can_use_as_edit"] = action["can_use_as_reference"]
     action["can_set_main"] = record.get("is_main") is False
-    action["can_archieve"] = record.get("archieved_at") is None and record.get("is_main") is False
-    action["can_unarchieve"] = record.get("archieved_at") is not None
-    action["can_favorited"] = record.get("favourited_at") is None
-    action["can_unfavorited"] = record.get("favourited_at") is not None
 
 
 class ReferenceAction(BaseModel):
@@ -106,7 +105,7 @@ class GenerationResultRecord(BaseModel):
         return cls(
             id=result.get("id"),
             flag_created_at=result["created_at"],
-            flag_favourited_at=result["favourited_at"],
+            flag_favourited_at=favourited_at_of(result),
             flag_archieved_at=result["archieved_at"],
             kind=kind,
             file_uid=result["uid"],
@@ -119,7 +118,7 @@ class GenerationResultRecord(BaseModel):
             version=result["version"],
             created_at=format_datetime(result["created_at"]),
             updated_at=format_datetime(result.get("updated_at")),
-            favourited_at=format_datetime(result["favourited_at"]),
+            favourited_at=format_datetime(favourited_at_of(result)),
             archieved_at=format_datetime(result["archieved_at"]),
             icon=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("icon"),  # type: ignore
             color=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("color"),  # type: ignore
@@ -158,11 +157,9 @@ class GenerationResultRecord(BaseModel):
             full_prompt=generation.get("full_prompt"),
             parameter=generation.get("parameter"),
             action=GenerationAction(
-                can_archieve=False,
-                can_unarchieve=False,
+                can_set_archieve=False,
                 can_set_main=False,
-                can_favorited=False,
-                can_unfavorited=False,
+                can_set_favorite=False,
                 can_download=False,
                 can_fetch_detail=False,
                 can_use_as_reference=False,

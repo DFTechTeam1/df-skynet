@@ -36,11 +36,9 @@ def _generated(path, uid="g1", kind="image_edit", user_id=1):
         "created_at": "now",
         "creator": {"user_id": user_id, "image": None, "nickname": "n"},
         "action": {
-            "can_archieve": False,
-            "can_unarchieve": False,
+            "can_set_archieve": False,
             "can_set_main": False,
-            "can_favorited": True,
-            "can_unfavorited": False,
+            "can_set_favorite": True,
             "can_download": True,
             "can_fetch_detail": True,
             "can_use_as_reference": True,
@@ -183,10 +181,10 @@ class TestOverride:
         assert file["type"] == "generated" and "can_delete" not in file["action"]
 
     def test_grant_generation_override(self):
-        """Override widens rename/move/edit; archive/favourite/set-main stay; archived files can't move; pending records untouched."""
+        """Override widens rename/move/edit; archive/set-main stay; archived files can't move; pending records untouched."""
         from services.dto.format_response import GenerationAction, grant_generation_override
 
-        result = {"archieved_at": None, "is_main": False, "favourited_at": None, "path": "x/images/a.png"}
+        result = {"archieved_at": None, "is_main": False, "favourites": [], "path": "x/images/a.png"}
         action = GenerationAction.from_result(result, is_owner=False).model_dump()
         assert not (action["can_rename"] or action["can_use_as_edit"] or action["can_choose_to_move"])
         record = {"file_uid": "u", "archieved_at": None, "action": dict(action)}
@@ -196,7 +194,7 @@ class TestOverride:
             record["action"]["can_choose_to_move"],
             record["action"]["can_use_as_edit"],
         ) == (True,) * 3
-        assert not (record["action"]["can_archieve"] or record["action"]["can_set_main"])
+        assert not (record["action"]["can_set_archieve"] or record["action"]["can_set_main"])
         archived = {"file_uid": "u", "archieved_at": "x", "action": dict(action)}
         grant_generation_override(archived)
         assert archived["action"]["can_choose_to_move"] is False

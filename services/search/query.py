@@ -25,7 +25,8 @@ def _clean(doc: dict[str, Any]) -> dict[str, Any]:
 
 def generation_with_action(doc: dict[str, Any], viewer_id: int, can_override: bool) -> dict[str, Any]:
     """An indexed generation doc in the shape `get_generation_main_refactored` returns: the viewer's `action` is
-    worked out here (creator, else override role, else nothing) because the index stores `action` as null."""
+    worked out here (creator, else override role, else nothing) because the index stores `action` as null. Favourites
+    are per viewer, so they are never indexed; the caller overlays them (`overlay_favourites`)."""
     action = GeneratedFileAction.action(_is_owner(doc, viewer_id), can_override, doc)
     return {**_clean(doc), "variants": [], "references": [], "action": action.model_dump(mode="json")}
 
@@ -94,7 +95,7 @@ async def search_task_generations(
     return [generation_with_action(doc, viewer_id, can_override) for doc in docs]
 
 
-_PICKER_GROUPS = ("Image Generations", "Image Uploads", "Elements", "Shared")
+_PICKER_GROUPS = ("Image Generations", "Image Uploads", "Elements")
 _PICKER_HIDDEN_GENERATION = {
     "references",
     "variants",

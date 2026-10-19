@@ -360,7 +360,7 @@ def test_group_reference_picker_keeps_action_and_drops_videos_folders_and_hidden
             {"kind": "folder", "name": "f"},
         ],
     )
-    assert [g["type"] for g in groups] == ["Image Generations", "Image Uploads", "Elements", "Shared"]
+    assert [g["type"] for g in groups] == ["Image Generations", "Image Uploads", "Elements"]
     assert groups[0] == {
         "type": "Image Generations",
         "total": 1,

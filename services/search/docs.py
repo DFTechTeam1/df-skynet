@@ -100,7 +100,6 @@ def build_generation_doc(result: DfEngineGenerationResults) -> dict[str, Any]:
         task=(task or song).get("name"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
-        favourited_at=row["favourited_at"],
         archieved_at=row["archieved_at"],
         cost_usd=format_usd(generation["cost"]),
         cost_idr=format_idr(generation["cost"], USD_TO_IDR_RATE),
