@@ -245,7 +245,8 @@ def format_file_tree_refactored(
             ),
         )
 
-    if not roots and project_root:  # nothing uploaded or generated yet: still return the empty skeleton
+    project_root = next(iter(roots), project_root)  # real data wins over the computed root (env segment may differ)
+    if project_root:  # always return the full skeleton, even when only uploads or only generations exist
         for scope in ("upload", "generated"):
             for kind in ("images", "videos"):
                 node(f"{project_root}/{scope}/{kind}", 2)
@@ -607,7 +608,7 @@ async def build_file_tree_refactored(
         personal_file=my_task,
         has_override=can_override,
     )
-    project_root = None if uploaded or generated else project_root_path(await get_project(ctx, project_id=project_id))
+    project_root = project_root_path(await get_project(ctx, project_id=project_id))
     tree = format_file_tree_refactored(uploaded, generated, await get_folder_depth_limit(ctx), project_root)
     logging.info(
         f"[file-tree] user={user_id} project_id={project_id} my_task={my_task} "

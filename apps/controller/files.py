@@ -459,16 +459,27 @@ class FilesController(CoreDependencies):
                         if task_id is not None
                         else DfEngineUploadFiles.song_id == song_id  # type: ignore
                     )
+                    # a folder made from the project-level tree has no task/song: it belongs to the whole project
+                    project_folder = (
+                        (DfEngineUploadFiles.project_id == project_task["project_id"])  # type: ignore
+                        & (DfEngineUploadFiles.task_id.is_(None))  # type: ignore
+                        & (DfEngineUploadFiles.song_id.is_(None))  # type: ignore
+                        & (DfEngineUploadFiles.type == UploadFileTypes.folder)  # type: ignore
+                        & (DfEngineUploadFiles.path == path)  # type: ignore
+                    )
                     exists = await query(
                         ctx.db,
                         DfEngineUploadFiles,
                         columns=(DfEngineUploadFiles.id,),
                         filters=(
-                            owner,
                             or_(
-                                (DfEngineUploadFiles.type == UploadFileTypes.folder)  # type: ignore
-                                & (DfEngineUploadFiles.path == path),  # type: ignore
-                                DfEngineUploadFiles.path.startswith(path + "/", autoescape=True),  # type: ignore
+                                project_folder,
+                                owner
+                                & or_(
+                                    (DfEngineUploadFiles.type == UploadFileTypes.folder)  # type: ignore
+                                    & (DfEngineUploadFiles.path == path),  # type: ignore
+                                    DfEngineUploadFiles.path.startswith(path + "/", autoescape=True),  # type: ignore
+                                ),
                             ),
                         ),
                         fetch_one=True,
