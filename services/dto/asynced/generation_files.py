@@ -562,10 +562,12 @@ async def get_archieved_files(
     project_id: Optional[int] = None,
     task_id: Optional[int] = None,
     song_id: Optional[int] = None,
+    search: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Every file `user_id` created and archived, newest archive first. `project_id`, `task_id` and `song_id`
-    narrow it when given (combined with AND)."""
-    archived_key = ctx.key.generation_files_archived_list(user_id, project_id, task_id, song_id)
+    narrow it when given (combined with AND). `search` matches the file name or path, the project name, or the
+    task name."""
+    archived_key = ctx.key.generation_files_archived_list(user_id, project_id, task_id, song_id, search)
     data = await get_json(ctx.redis, archived_key)
     if data is not None:
         logging.info(f"user={user_id} listed archived generations source=cache project_id={project_id}")
@@ -576,6 +578,21 @@ async def get_archieved_files(
         DfEngineGenerationResults.created_by == user_id,  # type: ignore
     )
     filters = []
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        mine = and_(
+            mine,
+            or_(
+                DfEngineGenerationResults.name.ilike(term),  # type: ignore
+                DfEngineGenerationResults.path.ilike(term),  # type: ignore
+                DfEngineGenerationResults.generation.has(  # type: ignore
+                    or_(
+                        DfEngineGenerations.project.has(Projects.name.ilike(term)),  # type: ignore
+                        DfEngineGenerations.task.has(ProjectTasks.name.ilike(term)),  # type: ignore
+                    )
+                ),
+            ),
+        )
     for column, value in (
         (DfEngineGenerations.project_id, project_id),
         (DfEngineGenerations.task_id, task_id),
@@ -591,6 +608,10 @@ async def get_archieved_files(
             selectinload(DfEngineGenerations.results.and_(mine)).selectinload(  # type: ignore
                 _viewer_favourites(user_id)
             ),
+            selectinload(DfEngineGenerations.project),
+            selectinload(DfEngineGenerations.task),
+            selectinload(DfEngineGenerations.song),
+            selectinload(DfEngineGenerations.model_option),
         ),
         filters=(
             *filters,
@@ -598,27 +619,40 @@ async def get_archieved_files(
         ),
     )
 
-    archieved_files = sorted(
-        (
-            _drop(
-                GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(mode="json"),
-                "updated_at",
-                "status",
-                "creator",
-                "cost_usd",
-                "cost_idr",
-                "model",
-                "prompt",
-                "full_prompt",
-                "parameter",
-                "parent_id",
-            )
-            for record in serialize(generations)
-            for result in record["results"]
-        ),
-        key=lambda r: r["flag_archieved_at"],
-        reverse=True,
-    )
+    archieved_files = []
+    for record in serialize(generations):
+        for result in record["results"]:
+            file = UserGeneratedFile(
+                id=result["id"],
+                kind=record["kind"],
+                file_uid=result["uid"],
+                generation_uid=record["uid"],
+                parent_id=result.get("parent_id"),
+                name=result["name"],
+                path=result["path"],
+                size=result["size"],
+                is_main=result["is_main"],
+                version=result["version"],
+                status=record["status"],
+                task_uid=(record.get("task") or {}).get("uid"),
+                song_uid=(record.get("song") or {}).get("uid"),
+                task=(record.get("task") or record.get("song") or {}).get("name"),
+                created_at=result["created_at"],
+                updated_at=result["updated_at"],
+                favourited_at=favourited_at_of(result),
+                archieved_at=result["archieved_at"],
+                cost_usd=format_usd(record["cost"]),
+                cost_idr=format_idr(record["cost"], USD_TO_IDR_RATE),
+                model=(record.get("model_option") or {}).get("name"),
+                prompt=record["prompt"],
+                full_prompt=record["full_prompt"],
+                parameter=record["parameter"],
+                action=GeneratedFileAction.action(True, False, result),  # only the viewer's own files are listed
+                creator=format_user_employees(result.get("created_by_user")),
+                updater=format_user_employees(result.get("updated_by_user")),
+            ).model_dump(mode="json", exclude={"variants", "references"})
+            archieved_files.append({**file, "project": (record.get("project") or {}).get("name")})
+    archieved_files.sort(key=lambda r: r["archieved_at"] or "", reverse=True)
 
     await set_json(ctx.redis, archived_key, archieved_files)
     logging.info(
@@ -741,10 +775,12 @@ async def get_favourited_files(
     project_id: Optional[int] = None,
     task_id: Optional[int] = None,
     song_id: Optional[int] = None,
+    search: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Every generated file `user_id` favourited (own or someone else's), newest favourite first, as flat
-    `GenerationVariant`s. `project_id`, `task_id` and `song_id` narrow it when given."""
-    favourited_key = ctx.key.generation_files_favourited_list(user_id, project_id, task_id, song_id)
+    `UserGeneratedFile`s (no variants/references) with the `project` name. `project_id`, `task_id` and `song_id`
+    narrow it when given. `search` matches the file name or path, the project name, or the task name."""
+    favourited_key = ctx.key.generation_files_favourited_list(user_id, project_id, task_id, song_id, search)
     data = await get_json(ctx.redis, favourited_key)
     if data is not None:
         logging.info(f"user={user_id} listed favourited generations source=cache project_id={project_id}")
@@ -758,6 +794,21 @@ async def get_favourited_files(
     ):
         if value is not None:
             generation_filters.append(column == value)
+    result_filters = [DfEngineGenerationResults.favourites.any(DfEngineGenerationFavourites.user_id == user_id)]  # type: ignore
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        result_filters.append(
+            or_(
+                DfEngineGenerationResults.name.ilike(term),  # type: ignore
+                DfEngineGenerationResults.path.ilike(term),  # type: ignore
+                DfEngineGenerationResults.generation.has(  # type: ignore
+                    or_(
+                        DfEngineGenerations.project.has(Projects.name.ilike(term)),  # type: ignore
+                        DfEngineGenerations.task.has(ProjectTasks.name.ilike(term)),  # type: ignore
+                    )
+                ),
+            )
+        )
 
     rows = await query(
         ctx.db,
@@ -779,6 +830,9 @@ async def get_favourited_files(
             .selectinload(DfEngineGenerations.model_option)  # type: ignore
             .load_only(DfEngineModelOptions.name),  # type: ignore
             selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.project)  # type: ignore
+            .load_only(Projects.name),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .selectinload(DfEngineGenerations.task)  # type: ignore
             .load_only(ProjectTasks.uid, ProjectTasks.name),  # type: ignore
             selectinload(DfEngineGenerationResults.generation)  # type: ignore
@@ -794,18 +848,45 @@ async def get_favourited_files(
             .load_only(Employees.nickname),  # type: ignore
         ),
         filters=(
-            DfEngineGenerationResults.favourites.any(DfEngineGenerationFavourites.user_id == user_id),  # type: ignore
+            *result_filters,
             DfEngineGenerationResults.generation.has(and_(*generation_filters)),  # type: ignore
         ),
     )
 
     serialized = sorted(serialize(rows), key=lambda row: row["favourites"][0]["favourited_at"], reverse=True)
-    favourited_files = [
-        _build_variant(
-            row, None, ((row["generation"].get("task") or row["generation"].get("song")) or {}).get("name")
-        ).model_dump(mode="json")
-        for row in serialized
-    ]
+    favourited_files = []
+    for row in serialized:
+        generation = row["generation"]
+        file = UserGeneratedFile(
+            id=row["id"],
+            kind=generation["kind"],
+            file_uid=row["uid"],
+            generation_uid=generation["uid"],
+            parent_id=row["parent_id"],
+            name=row["name"],
+            path=row["path"],
+            size=row["size"],
+            is_main=row["is_main"],
+            version=row["version"],
+            status=generation["status"],
+            task_uid=(generation.get("task") or {}).get("uid"),
+            song_uid=(generation.get("song") or {}).get("uid"),
+            task=(generation.get("task") or generation.get("song") or {}).get("name"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            favourited_at=favourited_at_of(row),
+            archieved_at=row["archieved_at"],
+            cost_usd=format_usd(generation.get("cost")),
+            cost_idr=format_idr(generation.get("cost"), USD_TO_IDR_RATE),
+            model=(generation.get("model_option") or {}).get("name"),
+            prompt=generation.get("prompt"),
+            full_prompt=generation.get("full_prompt"),
+            parameter=generation.get("parameter"),
+            action=GeneratedFileAction.action(row["created_by"] == user_id, False, row),
+            creator=format_user_employees(row.get("created_by_user")),
+            updater=format_user_employees(row.get("updated_by_user")),
+        ).model_dump(mode="json", exclude={"variants", "references"})
+        favourited_files.append({**file, "project": (generation.get("project") or {}).get("name")})
 
     await set_json(ctx.redis, favourited_key, favourited_files)
     logging.info(

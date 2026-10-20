@@ -7,6 +7,8 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 
+from schemas.format.files import IconKind, UserGeneratedFile
+
 URL = "/api/files/archieves"
 
 
@@ -122,31 +124,29 @@ async def test_archived_list_empty_scope_and_cache_hit(authed_client, project_ta
 @pytest.mark.asyncio
 async def test_archived_action_flags_and_shape(authed_client, project_task, user_id, generation_fks):
     """200 OK; an archived result has can_set_archieve false, favoriting is independent, and the entry is a
-    `GenerationResultRecord` without the generation-context fields."""
+    `UserGeneratedFile` without variants/references, plus the project name."""
     result = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=datetime.now())
 
     file = _find_flat((await authed_client.call("GET", URL)).json()["data"], result.uid)
     assert file["action"]["can_set_archieve"] is False
-    assert "can_archieve" not in file["action"] and "can_unarchieve" not in file["action"]
     assert file["action"]["can_set_favorite"] is True
-    assert file.keys() == {
-        "id",
-        "flag_created_at",
-        "flag_favourited_at",
-        "flag_archieved_at",
-        "kind",
-        "file_uid",
-        "generation_uid",
-        "name",
-        "type",
-        "is_main",
-        "path",
-        "size",
-        "version",
-        "created_at",
-        "favourited_at",
-        "archieved_at",
-        "icon",
-        "color",
-        "action",
-    }
+    assert file.keys() == (set(UserGeneratedFile.model_fields) | set(IconKind.model_fields)) - {
+        "variants",
+        "references",
+    } | {"project"}
+    assert file["project"]
+
+
+@pytest.mark.asyncio
+async def test_archived_search(authed_client, project_task, user_id, generation_fks):
+    """200 OK; search matches file name, file path, project name and task name (case-insensitive), else nothing."""
+    result = _make_result(_make_generation(project_task, user_id, generation_fks), user_id, archieved_at=datetime.now())
+    file = _find_flat((await authed_client.call("GET", URL)).json()["data"], result.uid)
+
+    for term in (result.name, result.path, file["project"], file["task"], file["project"].upper(), "  " + result.name):
+        found = (await authed_client.call("GET", URL, params={"search": term})).json()["data"]
+        assert _find_flat(found, result.uid) is not None, term
+    none = (await authed_client.call("GET", URL, params={"search": "no-such-term-\u2603"})).json()["data"]
+    assert _find_flat(none, result.uid) is None
+    blank = (await authed_client.call("GET", URL, params={"search": "  "})).json()["data"]
+    assert _find_flat(blank, result.uid) is not None

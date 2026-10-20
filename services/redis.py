@@ -429,9 +429,11 @@ class CacheKeys:
         project_id: Optional[int] = None,
         task_id: Optional[int] = None,
         song_id: Optional[int] = None,
+        search: Optional[str] = None,
     ) -> str:
         return (
             f"generation_files:archived:user_id={user_id}:project_id={project_id}:task_id={task_id}:song_id={song_id}"
+            f":search={search}"
         )
 
     def generation_files_favourited_list(
@@ -440,9 +442,11 @@ class CacheKeys:
         project_id: Optional[int] = None,
         task_id: Optional[int] = None,
         song_id: Optional[int] = None,
+        search: Optional[str] = None,
     ) -> str:
         return (
             f"generation_files:favourited:user_id={user_id}:project_id={project_id}:task_id={task_id}:song_id={song_id}"
+            f":search={search}"
         )
 
     def generation_files_result_list(

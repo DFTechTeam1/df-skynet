@@ -7,6 +7,7 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from utils import local_time
+from schemas.format.files import IconKind, UserGeneratedFile
 
 URL = "/api/files/favorites"
 
@@ -74,17 +75,39 @@ async def test_variants_are_listed_flat_newest_favourite_first(authed_client, pr
 
 
 @pytest.mark.asyncio
-async def test_entry_is_a_generation_variant(authed_client, project_task, user_id, generation_fks):
-    """200 OK; each entry has the `GenerationVariant` shape: favourited_at set, no action/variants/references."""
+async def test_entry_is_a_user_generated_file(authed_client, project_task, user_id, other_user_id, generation_fks):
+    """200 OK; each entry is a `UserGeneratedFile` without variants/references, plus the project name; actions are
+    per-file ownership (no archive on someone else's file)."""
+    mine = _make_result(_make_generation(project_task, user_id, generation_fks), user_id)
+    theirs = _make_result(_make_generation(project_task, other_user_id, generation_fks), other_user_id)
+    for r in (mine, theirs):
+        DfEngineGenerationFavouritesFactory.create(user_id=int(user_id), result_id=r.id)
+
+    data = (await authed_client.call("GET", URL, params={"task_id": project_task.id})).json()["data"]
+    file = _find_flat(data, mine.uid)
+    assert file["favourited_at"] is not None
+    assert file["generation_uid"] and file["id"] == mine.id
+    assert file.keys() == (set(UserGeneratedFile.model_fields) | set(IconKind.model_fields)) - {
+        "variants",
+        "references",
+    } | {"project"}
+    assert file["project"]
+    assert file["action"]["can_set_favorite"] is False
+    assert _find_flat(data, theirs.uid)["action"]["can_rename"] is False
+
+
+@pytest.mark.asyncio
+async def test_favourites_search(authed_client, project_task, user_id, generation_fks):
+    """200 OK; search matches file name, file path, project name and task name, else nothing."""
     result = _make_result(_make_generation(project_task, user_id, generation_fks), user_id)
     DfEngineGenerationFavouritesFactory.create(user_id=int(user_id), result_id=result.id)
+    file = _find_flat((await authed_client.call("GET", URL)).json()["data"], result.uid)
 
-    file = _find_flat(
-        (await authed_client.call("GET", URL, params={"task_id": project_task.id})).json()["data"], result.uid
-    )
-    assert file["favourited_at"] is not None
-    assert file["generation_uid"] and file["id"] == result.id
-    assert "action" not in file and "variants" not in file and "references" not in file
+    for term in (result.name, result.path, file["project"], file["task"]):
+        found = (await authed_client.call("GET", URL, params={"search": term})).json()["data"]
+        assert _find_flat(found, result.uid) is not None, term
+    none = (await authed_client.call("GET", URL, params={"search": "no-such-term-\u2603"})).json()["data"]
+    assert _find_flat(none, result.uid) is None
 
 
 @pytest.mark.asyncio

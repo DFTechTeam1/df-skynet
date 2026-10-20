@@ -66,7 +66,7 @@ class GeneratedFileAction(BaseModel):
             can_set_archieve=is_owner and not archived and not record["is_main"],
             can_set_main=allowed and not record["is_main"],
             can_set_favorite=not favorited,
-            can_use_as_reference=allowed and not is_video,
+            can_use_as_reference=not is_video,
             can_use_as_edit=allowed and not is_video,
             can_rename=allowed,
             can_choose_to_move=allowed and not archived,

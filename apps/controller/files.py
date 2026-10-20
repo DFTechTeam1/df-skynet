@@ -96,15 +96,18 @@ class FilesController(CoreDependencies):
         project_id: Optional[int] = Query(None, description="Only archived files of this project."),
         task_id: Optional[int] = Query(None, description="Only archived files of this project task."),
         song_id: Optional[int] = Query(None, description="Only archived files of this song."),
+        search: Optional[str] = Query(
+            None, description="Match file name, file path, project name or project task name."
+        ),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            archieved_files = await get_archieved_files(ctx, user_id, project_id, task_id, song_id)
+            archieved_files = await get_archieved_files(ctx, user_id, project_id, task_id, song_id, search)
             logging.info(
                 f"[get-archived-files] user={user_id} project_id={project_id} task_id={task_id} "
-                f"song_id={song_id} fetched {len(archieved_files)} archived files"
+                f"song_id={song_id} search={search} fetched {len(archieved_files)} archived files"
             )
             response.data = archieved_files
         except Exception:
@@ -125,15 +128,18 @@ class FilesController(CoreDependencies):
         project_id: Optional[int] = Query(None, description="Only favorites of this project."),
         task_id: Optional[int] = Query(None, description="Only favorites of this project task."),
         song_id: Optional[int] = Query(None, description="Only favorites of this song."),
+        search: Optional[str] = Query(
+            None, description="Match file name, file path, project name or project task name."
+        ),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            favourited_files = await get_favourited_files(ctx, user_id, project_id, task_id, song_id)
+            favourited_files = await get_favourited_files(ctx, user_id, project_id, task_id, song_id, search)
             logging.info(
                 f"[get-favourited-files] user={user_id} project_id={project_id} task_id={task_id} "
-                f"song_id={song_id} fetched {len(favourited_files)} favourited files"
+                f"song_id={song_id} search={search} fetched {len(favourited_files)} favourited files"
             )
             response.data = favourited_files
         except Exception:
