@@ -250,6 +250,11 @@ def format_file_tree_refactored(
         for scope in ("upload", "generated"):
             for kind in ("images", "videos"):
                 node(f"{project_root}/{scope}/{kind}", 2)
+    # fixed layout whichever side has data: project -> generated, upload -> images, videos (deeper levels keep their order)
+    fixed = {"generated": 0, "upload": 1, "images": 0, "videos": 1}
+    for path, folder in nodes.items():
+        if len(path.split("/")) <= 4:
+            folder.children.sort(key=lambda child: fixed.get(child.name, len(fixed)))
     return next((folder.model_dump(mode="json") for folder in roots.values()), {})
 
 
