@@ -440,3 +440,24 @@ async def test_task_from_another_project_is_404(authed_client, project_task):
         raise_for_status=False,
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upload_into_project_level_folder_passes_folder_check(authed_client, project_task, user_id):
+    """A folder made from the project tree has no task/song owner; uploading into it must not 404 folder_not_found."""
+    project = project_task.project
+    path = (
+        f"storage/DF-Engine-DEV/{project.name}_{project.uid[:8]}/upload/images/aa"  # the upload check pins the DEV root
+    )
+    DfEngineUploadFilesFactory.create(
+        type=UploadFileTypes.folder,
+        project_id=project_task.project_id,
+        task_id=None,
+        created_by=int(user_id),
+        path=path,
+        name="aa",
+    )
+    resp = await authed_client.call(
+        "POST", f"/api/files/{project_task.uid}/uploads", params={"path": path}, raise_for_status=False
+    )
+    assert "folder_not_found" not in resp.text, resp.text
