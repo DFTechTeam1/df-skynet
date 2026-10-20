@@ -45,6 +45,13 @@ from services.tasks.base import (
 )
 
 IMAGE_UPLOAD_TIMEOUT = Timeout(connect=5, read=15, write=15, pool=10)
+IMAGE_MEDIA_TYPES = {
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "webp": "image/webp",
+    "svg": "image/svg+xml",
+}
 LOCAL_COMMIT_ATTEMPTS = 3
 LOCAL_COMMIT_BACKOFF_SECONDS = 1
 
@@ -103,6 +110,9 @@ def udin_uploader(
         source_key = db.get(key_model, generation.sourceable_id)
         openrouter_api_key = source_key.key if source_key else None
         generation_uid = str(generation.uid)
+        media_type = IMAGE_MEDIA_TYPES.get(
+            str((generation.parameter or {}).get("output_format", "png")).lower(), "image/png"
+        )
         task_id = generation.task_id
         project_id = generation.project_id
         task_uid = None
@@ -211,7 +221,7 @@ def udin_uploader(
                         f"/engine/storage/upload-generated-image/{project_uid}",
                         user_id=user_id,
                         params={"project_name": project["name"]},
-                        json={"b64_json": b64_json, "media_type": "image/png"},
+                        json={"b64_json": b64_json, "media_type": media_type},
                         timeout=IMAGE_UPLOAD_TIMEOUT,
                     )
                 except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
