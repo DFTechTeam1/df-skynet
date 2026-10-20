@@ -57,9 +57,9 @@ async def test_archive_is_refused_for_main_result_then_favorite_shows_in_picker(
 
     # 2. archiving the current main is refused (422) via the real files API; the row is untouched
     archive_resp = await authed_client.call(
-        "PATCH",
-        f"{FILES_URL}/{project_task.uid}/archieve",
-        json={"file_uids": [str(result.uid)]},
+        "POST",
+        f"{FILES_URL}/archieve/{result.uid}",
+        json={"is_archieved": True},
         raise_for_status=False,
     )
     assert archive_resp.status_code == 422
@@ -72,14 +72,10 @@ async def test_archive_is_refused_for_main_result_then_favorite_shows_in_picker(
     assert result.uid in [f["file_uid"] for f in _picker_section(picker.json(), "Image Generations")["files"]]
 
     # 4. favorite it via the real files API - no is_main restriction, this write actually lands
-    favorite_resp = await authed_client.call(
-        "PATCH", f"{FILES_URL}/{project_task.uid}/favorite", json={"file_uids": [str(result.uid)]}
-    )
+    favorite_resp = await authed_client.call("POST", f"{FILES_URL}/favorite/{result.uid}", json={})
     assert favorite_resp.status_code == 200
-    assert result.uid in [f["file_uid"] for f in favorite_resp.json()["data"]]
-
-    db_row = await _fetch_result(result.uid)
-    assert db_row.favourited_at is not None
+    favourited = await authed_client.call("GET", f"{FILES_URL}/favorites", params={"task_id": project_task.id})
+    assert result.uid in [f["file_uid"] for f in favourited.json()["data"]]
 
     # 5. favorite now invalidates the project-wide caches, so the picker reflects it straight away
     picker = await authed_client.call("GET", picker_url)

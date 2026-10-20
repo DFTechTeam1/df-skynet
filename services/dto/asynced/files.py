@@ -25,7 +25,7 @@ async def get_user_uploaded_files_refactored(
     song_id: Optional[int] = None,
     personal_file: bool = False,
     has_override: bool = False,
-    exclude_columns: tuple[str, ...] = ("favourited_at", "archieved_at"),
+    exclude_columns: tuple[str, ...] = ("archieved_at",),
 ) -> list[dict[str, Any]]:
     """Return the uploaded files and folders visible for the given scope.
 

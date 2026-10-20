@@ -424,14 +424,30 @@ class CacheKeys:
         return f"generation_files:main:task_id={task_id}:*"
 
     def generation_files_archived_list(
-        self, user_id: int, task_id: Optional[int] = None, song_id: Optional[int] = None
+        self,
+        user_id: int,
+        project_id: Optional[int] = None,
+        task_id: Optional[int] = None,
+        song_id: Optional[int] = None,
+        search: Optional[str] = None,
     ) -> str:
-        return f"generation_files:archived:user_id={user_id}:task_id={task_id}:song_id={song_id}"
+        return (
+            f"generation_files:archived:user_id={user_id}:project_id={project_id}:task_id={task_id}:song_id={song_id}"
+            f":search={search}"
+        )
 
     def generation_files_favourited_list(
-        self, user_id: int, task_id: Optional[int] = None, song_id: Optional[int] = None
+        self,
+        user_id: int,
+        project_id: Optional[int] = None,
+        task_id: Optional[int] = None,
+        song_id: Optional[int] = None,
+        search: Optional[str] = None,
     ) -> str:
-        return f"generation_files:favourited:user_id={user_id}:task_id={task_id}:song_id={song_id}"
+        return (
+            f"generation_files:favourited:user_id={user_id}:project_id={project_id}:task_id={task_id}:song_id={song_id}"
+            f":search={search}"
+        )
 
     def generation_files_result_list(
         self,

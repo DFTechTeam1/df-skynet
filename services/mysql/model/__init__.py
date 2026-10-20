@@ -6,6 +6,7 @@ from services.mysql.model.df_engine_feature_prompt_mappings import DfEngineFeatu
 from services.mysql.model.df_engine_features import DfEngineFeatures
 from services.mysql.model.df_engine_generation_reconciliation_issues import DfEngineGenerationReconciliationIssues
 from services.mysql.model.df_engine_generation_references import DfEngineGenerationReferences
+from services.mysql.model.df_engine_generation_favourites import DfEngineGenerationFavourites
 from services.mysql.model.df_engine_generation_results import DfEngineGenerationResults
 from services.mysql.model.df_engine_generation_uploads import DfEngineGenerationUploads
 from services.mysql.model.df_engine_generations import DfEngineGenerations
@@ -48,6 +49,7 @@ __all__ = [
     "DfEngineFeatures",
     "DfEngineGenerationReconciliationIssues",
     "DfEngineGenerationReferences",
+    "DfEngineGenerationFavourites",
     "DfEngineGenerationResults",
     "DfEngineGenerationUploads",
     "DfEngineGenerations",

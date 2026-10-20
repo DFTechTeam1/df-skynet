@@ -8,6 +8,7 @@ from services.mysql.factory.df_engine_generation_reconciliation_issues import (
     DfEngineGenerationReconciliationIssuesFactory,
 )
 from services.mysql.factory.df_engine_generation_references import DfEngineGenerationReferencesFactory
+from services.mysql.factory.df_engine_generation_favourites import DfEngineGenerationFavouritesFactory
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_generation_uploads import DfEngineGenerationUploadsFactory
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
@@ -38,6 +39,7 @@ __all__ = [
     "DfEngineFeaturesFactory",
     "DfEngineGenerationReconciliationIssuesFactory",
     "DfEngineGenerationReferencesFactory",
+    "DfEngineGenerationFavouritesFactory",
     "DfEngineGenerationResultsFactory",
     "DfEngineGenerationUploadsFactory",
     "DfEngineGenerationsFactory",

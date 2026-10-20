@@ -3,6 +3,7 @@ import pytest_asyncio
 from uuid import uuid4
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+from services.mysql.factory.df_engine_generation_favourites import DfEngineGenerationFavouritesFactory
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
@@ -67,7 +68,7 @@ async def test_returns_flat_sections_with_uploads_and_generations(authed_client,
     resp = await authed_client.call("GET", url, params=params)
     assert resp.status_code == 200
     body = resp.json()
-    assert [s["type"] for s in body["data"]] == ["Image Generations", "Image Uploads", "Elements", "Shared"]
+    assert [s["type"] for s in body["data"]] == ["Image Generations", "Image Uploads", "Elements"]
 
     # Note: this project's uploads/generations accumulate across test runs on the
     # real shared staging DB, so section totals aren't exact — only membership is checked.
@@ -149,7 +150,8 @@ async def test_non_main_result_excluded_archived_still_listed(authed_client, pro
 async def test_favourited_result_exposes_favourited_at(authed_client, project_task, user_id, generation_fks):
     """200 OK; a favourited result stays in Image Generations and carries a formatted `favourited_at`; there is no
     separate Favorites section."""
-    result = _make_result(project_task, user_id, generation_fks, favourited_at="2024-01-01 00:00:00")
+    result = _make_result(project_task, user_id, generation_fks)
+    DfEngineGenerationFavouritesFactory.create(user_id=int(user_id), result_id=result.id)
 
     url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params)
@@ -164,7 +166,7 @@ async def test_element_generation_lands_in_elements_and_video_is_dropped(
     authed_client, project_task, user_id, generation_fks
 ):
     """200 OK; a video-kind result is not offered anywhere. The refactored picker no longer fills Elements (it is an
-    empty placeholder next to Shared), so an element-kind result is not listed under it either."""
+    empty placeholder), so an element-kind result is not listed under it either."""
     element = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.element)
     video = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.video)
 

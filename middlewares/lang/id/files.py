@@ -23,6 +23,7 @@ class FilesMessage:
             "file_move_not_permitted": "File ini tidak dapat dipindahkan karena sudah diarsipkan.",
             "invalid_file_move_scope": "File hanya dapat dipindahkan di dalam storage (upload atau generated) dan tipe (images atau videos) yang sama.",
             "file_already_in_folder": "File ini sudah berada di folder tujuan.",
+            "file_archive_not_creator": "Hanya pembuat file ini yang dapat mengarsipkan atau membatalkan arsipnya.",
             "file_archive_not_permitted": "Versi utama tidak dapat diarsipkan. Jadikan versi lain sebagai versi utama terlebih dahulu.",
             "file_edit_not_permitted": "Anda hanya dapat mengedit gambar yang Anda buat atau unggah sendiri.",
             "file_edit_image_only": "Hanya file gambar yang dapat diedit.",

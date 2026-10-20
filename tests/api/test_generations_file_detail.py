@@ -3,6 +3,7 @@ import pytest_asyncio
 from uuid import uuid4
 from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+from services.mysql.factory.df_engine_generation_favourites import DfEngineGenerationFavouritesFactory
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
@@ -152,7 +153,7 @@ async def test_override_role_can_manage_another_users_file(
     for action in (data["action"], data["variants"][0]["action"]):
         assert (action["can_rename"], action["can_choose_to_move"], action["can_use_as_edit"]) == (True,) * 3
         assert action["can_set_main"] is False  # it is already the main version
-        assert action["can_archieve"] is False  # main versions cannot be archived
+        assert action["can_set_archieve"] is False  # main versions cannot be archived
 
     as_roles(["staff"])
     data = (await authed_client.call("GET", _url(result.uid))).json()["data"]
@@ -209,33 +210,28 @@ async def test_main_file_detail_hides_archived_variants_but_they_stay_fetchable(
 
 
 @pytest.mark.asyncio
-async def test_override_role_archive_and_favourite_set_updated_by_and_show_in_overriders_lists(
+async def test_override_role_cannot_archive_someone_elses_file(
     authed_client, project_task, user_id, generation_fks, other_user_id, as_roles, db_session
 ):
-    """200 OK; an override user archives/favourites another user's non-main file: `updated_by` becomes the overrider and the file shows in the overrider's archived and favourited lists."""
+    """403 file_archive_not_creator; archive is creator-only, so an override user cannot archive another user's file and the row is untouched."""
     from sqlalchemy import select
     from services.mysql.model import DfEngineGenerationResults
 
     generation = _make_generation(project_task, other_user_id, generation_fks)
     root = _make_result(generation, other_user_id, is_main=True, version=1)
     other = _make_result(generation, other_user_id, is_main=False, version=2, parent_id=root.id)
-    base = f"/api/files/{project_task.uid}"
 
     as_roles(["director"])
-    for suffix, body, key in (
-        ("archieve", {"file_uids": [str(other.uid)], "is_archieved": True}, "archieved"),
-        ("favorite", {"file_uids": [str(other.uid)], "is_favorited": True}, "favourited"),
-    ):
-        resp = await authed_client.call("PATCH", f"{base}/{suffix}", json=body)
-        assert str(other.uid) in [f["file_uid"] for f in resp.json()["data"]]
-        listed = await authed_client.call("GET", f"{base}/{key}")
-        assert str(other.uid) in [f["file_uid"] for f in listed.json()["data"]]
+    resp = await authed_client.call(
+        "POST", f"/api/files/archieve/{other.uid}", json={"is_archieved": True}, raise_for_status=False
+    )
+    assert resp.status_code == 403
 
     await db_session.commit()
     row = (
         await db_session.execute(select(DfEngineGenerationResults).where(DfEngineGenerationResults.id == other.id))
     ).scalar_one()
-    assert row.updated_by == int(user_id) and row.archieved_at and row.favourited_at
+    assert row.archieved_at is None
 
 
 @pytest.mark.asyncio
@@ -261,7 +257,8 @@ async def test_file_lists_are_scoped_to_the_task_not_the_project(
     assert sibling_task is not None, "the fixture project needs a second task to prove the task scoping"
 
     mine = _make_generation(project_task, user_id, generation_fks)
-    my_fav = _make_result(mine, user_id, is_main=True, version=1, favourited_at=local_time())
+    my_fav = _make_result(mine, user_id, is_main=True, version=1)
+    DfEngineGenerationFavouritesFactory.create(user_id=int(user_id), result_id=my_fav.id)
     my_arch = _make_result(mine, user_id, is_main=False, version=2, parent_id=my_fav.id, archieved_at=local_time())
     sibling = DfEngineGenerationsFactory.create(
         project_id=project_task.project_id,
@@ -270,14 +267,25 @@ async def test_file_lists_are_scoped_to_the_task_not_the_project(
         sourceable_id=1,
         **generation_fks,
     )
-    other_fav = _make_result(sibling, user_id, is_main=True, version=1, favourited_at=local_time())
+    other_fav = _make_result(sibling, user_id, is_main=True, version=1)
+    DfEngineGenerationFavouritesFactory.create(user_id=int(user_id), result_id=other_fav.id)
     other_arch = _make_result(
         sibling, user_id, is_main=False, version=2, parent_id=other_fav.id, archieved_at=local_time()
     )
 
     base = f"/api/files/{project_task.uid}"
-    fav = {f["file_uid"] for f in (await authed_client.call("GET", f"{base}/favourited")).json()["data"]}
-    arch = {f["file_uid"] for f in (await authed_client.call("GET", f"{base}/archieved")).json()["data"]}
+    fav = {
+        f["file_uid"]
+        for f in (await authed_client.call("GET", "/api/files/favorites", params={"task_id": project_task.id})).json()[
+            "data"
+        ]
+    }
+    arch = {
+        f["file_uid"]
+        for f in (await authed_client.call("GET", "/api/files/archieves", params={"task_id": project_task.id})).json()[
+            "data"
+        ]
+    }
     assert str(my_fav.uid) in fav and str(my_arch.uid) in arch
     assert str(other_fav.uid) not in fav and str(other_arch.uid) not in arch
 

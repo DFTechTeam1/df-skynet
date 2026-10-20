@@ -26,7 +26,6 @@ class DfEngineGenerationResultsFactory(SQLAlchemyModelFactory):
     path = Faker("file_path", depth=2, category="image")
     size = Faker("random_int", min=1024, max=10_485_760)
     is_main = True
-    favourited_at = None
     version = 1
     created_by = None
     updated_by = None

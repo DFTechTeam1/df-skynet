@@ -4,6 +4,7 @@ from services.redis import get_json, set_json
 from sqlalchemy import or_, and_, func, select
 from sqlalchemy.orm import selectinload
 from services.mysql.model import (
+    DfEngineGenerationFavourites,
     DfEngineGenerations,
     DfEngineGenerationReferences,
     DfEngineGenerationResults,
@@ -22,7 +23,7 @@ from error import DataNotFoundError, DataValidationError
 from services.mysql import query
 from config.variables import USD_TO_IDR_RATE
 from schemas.format.action import GeneratedFileAction
-from utils.formatter import format_idr, format_usd, format_user_employees
+from utils.formatter import format_datetime, format_idr, format_usd, format_user_employees
 from utils.serializer import serialize
 from services.dto import ConnectionContext
 from schemas.format.files import GenerationReference, GenerationVariant, UserGeneratedFile
@@ -30,8 +31,91 @@ from services.dto.format_response import (
     grant_generation_override,
     GenerationResultRecord,
     GenerationReferenceRecord,
+    favourited_at_of,
     UploadedReferenceRecord,
 )
+
+
+def _viewer_favourites(viewer_id: int) -> Any:
+    """Loader option: a result's `favourites`, narrowed to the viewer's own row (0 or 1)."""
+    return DfEngineGenerationResults.favourites.and_(DfEngineGenerationFavourites.user_id == viewer_id)  # type: ignore
+
+
+def _build_variant(
+    variant: dict[str, Any], fallback_kind: Optional[str], task_name: Optional[str]
+) -> GenerationVariant:
+    generation = variant.get("generation") or {}
+    return GenerationVariant(
+        id=variant["id"],
+        kind=generation.get("kind") or fallback_kind,
+        file_uid=variant["uid"],
+        generation_uid=generation.get("uid"),
+        parent_id=variant["parent_id"],
+        name=variant["name"],
+        path=variant["path"],
+        size=variant["size"],
+        is_main=variant["is_main"],
+        version=variant["version"],
+        status=generation.get("status"),
+        task_uid=(generation.get("task") or {}).get("uid"),
+        song_uid=(generation.get("song") or {}).get("uid"),
+        task=task_name,
+        created_at=variant["created_at"],
+        updated_at=variant["updated_at"],
+        favourited_at=favourited_at_of(variant),
+        archieved_at=variant["archieved_at"],
+        cost_usd=format_usd(generation.get("cost")),
+        cost_idr=format_idr(generation.get("cost"), USD_TO_IDR_RATE),
+        model=(generation.get("model_option") or {}).get("name"),
+        prompt=generation.get("prompt"),
+        full_prompt=generation.get("full_prompt"),
+        parameter=generation.get("parameter"),
+        creator=format_user_employees(variant.get("created_by_user")),
+        updater=format_user_employees(variant.get("updated_by_user")),
+    )
+
+
+async def overlay_favourites(
+    ctx: ConnectionContext, records: Any, user_id: Optional[int], key: Optional[str] = None
+) -> Any:
+    """Stamp the viewer's own favourite onto records read from a viewer-neutral (shared) cache: `favourited_at` and the
+    `can_set_favorite` flag. Nested `variants` are covered too. No-op without a viewer."""
+    if user_id is None:
+        return records
+    items: list[dict[str, Any]] = []
+
+    def collect(record: dict[str, Any]) -> None:
+        items.append(record)
+        for variant in record.get("variants") or []:
+            collect(variant)
+
+    for record in [records] if isinstance(records, dict) else records:
+        collect(record[key] if key else record)
+    uids = {item["file_uid"] for item in items if item.get("file_uid")}
+    if not uids:
+        return records
+    rows = await query(
+        ctx.db,
+        DfEngineGenerationFavourites,
+        columns=(DfEngineGenerationFavourites.favourited_at, DfEngineGenerationResults.uid),
+        joins=((DfEngineGenerationResults, DfEngineGenerationResults.id == DfEngineGenerationFavourites.result_id),),
+        filters=(
+            DfEngineGenerationFavourites.user_id == user_id,  # type: ignore
+            DfEngineGenerationResults.uid.in_(uids),  # type: ignore
+        ),
+    )
+    favourited = {row[1]: row[0] for row in rows}
+    if key:  # the references picker also flags the row itself
+        for record in records:
+            record["favourited"] = (record[key].get("file_uid") or "") in favourited
+    for item in items:
+        if not item.get("file_uid"):
+            continue
+        at = favourited.get(item["file_uid"])
+        item["favourited_at"] = format_datetime(at)
+        if action := item.get("action"):
+            action["can_set_favorite"] = at is None
+    return records
 
 
 async def get_generation_main_refactored(
@@ -53,7 +137,7 @@ async def get_generation_main_refactored(
     )
     main_generation = await get_json(ctx.redis, main_generation_key)
     if main_generation:
-        return main_generation
+        return await overlay_favourites(ctx, main_generation, viewer_id)
 
     filters = [
         DfEngineGenerations.status.in_([GenerationStatuses.processing, GenerationStatuses.success]),  # type: ignore
@@ -85,6 +169,9 @@ async def get_generation_main_refactored(
         .load_only(Users.image)  # type: ignore
         .selectinload(Users.employees)  # type: ignore
         .load_only(Employees.nickname),  # type: ignore
+        selectinload(DfEngineGenerations.results.and_(DfEngineGenerationResults.is_main.is_(True))).selectinload(  # type: ignore
+            _viewer_favourites(viewer_id)
+        ),
         selectinload(DfEngineGenerations.generation_references)  # type: ignore
         .selectinload(DfEngineGenerationReferences.result)  # type: ignore
         .selectinload(DfEngineGenerationResults.generation)  # type: ignore
@@ -204,6 +291,7 @@ async def get_generation_main_refactored(
                 .load_only(Users.image)  # type: ignore
                 .selectinload(Users.employees)  # type: ignore
                 .load_only(Employees.nickname),  # type: ignore
+                selectinload(_viewer_favourites(viewer_id)),
             ),
             order_by=(DfEngineGenerationResults.version.asc(),),  # type: ignore
         )
@@ -257,37 +345,7 @@ async def get_generation_main_refactored(
         for result in record["results"] or [{}]:
             variants = []
             for variant in families.get(result.get("parent_id") or result.get("id"), []):
-                variant_generation = variant.get("generation") or {}
-                variants.append(
-                    GenerationVariant(
-                        id=variant["id"],
-                        kind=variant_generation.get("kind") or record["kind"],
-                        file_uid=variant["uid"],
-                        generation_uid=variant_generation.get("uid"),
-                        parent_id=variant["parent_id"],
-                        name=variant["name"],
-                        path=variant["path"],
-                        size=variant["size"],
-                        is_main=variant["is_main"],
-                        version=variant["version"],
-                        status=variant_generation.get("status"),
-                        task_uid=(variant_generation.get("task") or {}).get("uid"),
-                        song_uid=(variant_generation.get("song") or {}).get("uid"),
-                        task=task,
-                        created_at=variant["created_at"],
-                        updated_at=variant["updated_at"],
-                        favourited_at=variant["favourited_at"],
-                        archieved_at=variant["archieved_at"],
-                        cost_usd=format_usd(variant_generation.get("cost")),
-                        cost_idr=format_idr(variant_generation.get("cost"), USD_TO_IDR_RATE),
-                        model=(variant_generation.get("model_option") or {}).get("name"),
-                        prompt=variant_generation.get("prompt"),
-                        full_prompt=variant_generation.get("full_prompt"),
-                        parameter=variant_generation.get("parameter"),
-                        creator=format_user_employees(variant.get("created_by_user")),
-                        updater=format_user_employees(variant.get("updated_by_user")),
-                    )
-                )
+                variants.append(_build_variant(variant, record["kind"], task))
 
             files.append(
                 UserGeneratedFile(
@@ -307,7 +365,7 @@ async def get_generation_main_refactored(
                     task=task,
                     created_at=result.get("created_at") or record["created_at"],
                     updated_at=result.get("updated_at"),
-                    favourited_at=result.get("favourited_at"),
+                    favourited_at=favourited_at_of(result),
                     archieved_at=result.get("archieved_at"),
                     cost_usd=format_usd(record["cost"]),
                     cost_idr=format_idr(record["cost"], USD_TO_IDR_RATE),
@@ -328,7 +386,7 @@ async def get_generation_main_refactored(
             )
 
     await set_json(ctx.redis, main_generation_key, files)
-    return files
+    return await overlay_favourites(ctx, files, viewer_id)
 
 
 def _scope(task_id: Optional[int], song_id: Optional[int]) -> Any:
@@ -413,7 +471,7 @@ async def get_generation_main_files(
         logging.info(
             f"user={user_id} listed user galleries source=cache task_id={task_id} my_task={my_task} search={search}"
         )
-        return _grant(generation_main_files, can_override)
+        return await overlay_favourites(ctx, _grant(generation_main_files, can_override), user_id)
 
     filters = [
         _scope(task_id, song_id),
@@ -456,6 +514,9 @@ async def get_generation_main_files(
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(
+                DfEngineGenerations.results.and_(DfEngineGenerationResults.is_main.is_(True))  # type: ignore
+            ).selectinload(_viewer_favourites(user_id)),
             selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
             selectinload(DfEngineGenerations.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
@@ -492,74 +553,113 @@ async def get_generation_main_files(
         f"user={user_id} listed user galleries source=db task_id={task_id} my_task={my_task} search={search} "
         f"count={len(generation_main_files)}"
     )
-    return _grant(generation_main_files, can_override)
+    return await overlay_favourites(ctx, _grant(generation_main_files, can_override), user_id)
 
 
 async def get_archieved_files(
     ctx: ConnectionContext,
-    task_id: Optional[int],
-    song_id: Optional[int],
     user_id: int,
-    can_override: bool = False,
+    project_id: Optional[int] = None,
+    task_id: Optional[int] = None,
+    song_id: Optional[int] = None,
+    search: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    archived_key = ctx.key.generation_files_archived_list(user_id, task_id, song_id)
+    """Every file `user_id` created and archived, newest archive first. `project_id`, `task_id` and `song_id`
+    narrow it when given (combined with AND). `search` matches the file name or path, the project name, or the
+    task name."""
+    archived_key = ctx.key.generation_files_archived_list(user_id, project_id, task_id, song_id, search)
     data = await get_json(ctx.redis, archived_key)
-    if data:
-        logging.info(f"user={user_id} listed archived generations source=cache task_id={task_id} song_id={song_id}")
-        return _grant(data, can_override)
+    if data is not None:
+        logging.info(f"user={user_id} listed archived generations source=cache project_id={project_id}")
+        return await overlay_favourites(ctx, data, user_id)
+
+    mine = and_(
+        DfEngineGenerationResults.archieved_at.is_not(None),  # type: ignore
+        DfEngineGenerationResults.created_by == user_id,  # type: ignore
+    )
+    filters = []
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        mine = and_(
+            mine,
+            or_(
+                DfEngineGenerationResults.name.ilike(term),  # type: ignore
+                DfEngineGenerationResults.path.ilike(term),  # type: ignore
+                DfEngineGenerationResults.generation.has(  # type: ignore
+                    or_(
+                        DfEngineGenerations.project.has(Projects.name.ilike(term)),  # type: ignore
+                        DfEngineGenerations.task.has(ProjectTasks.name.ilike(term)),  # type: ignore
+                    )
+                ),
+            ),
+        )
+    for column, value in (
+        (DfEngineGenerations.project_id, project_id),
+        (DfEngineGenerations.task_id, task_id),
+        (DfEngineGenerations.song_id, song_id),
+    ):
+        if value is not None:
+            filters.append(column == value)
 
     generations = await query(
         ctx.db,
         DfEngineGenerations,
         options=(
-            selectinload(
-                DfEngineGenerations.results.and_(DfEngineGenerationResults.archieved_at.is_not(None))  # type: ignore
+            selectinload(DfEngineGenerations.results.and_(mine)).selectinload(  # type: ignore
+                _viewer_favourites(user_id)
             ),
+            selectinload(DfEngineGenerations.project),
+            selectinload(DfEngineGenerations.task),
+            selectinload(DfEngineGenerations.song),
+            selectinload(DfEngineGenerations.model_option),
         ),
         filters=(
-            _scope(task_id, song_id),
-            # the owner's files, plus files an override user changed (`updated_by`) on someone else's generation
-            or_(
-                DfEngineGenerations.created_by == user_id,  # type: ignore
-                DfEngineGenerations.results.any(  # type: ignore
-                    and_(
-                        DfEngineGenerationResults.archieved_at.is_not(None),  # type: ignore
-                        DfEngineGenerationResults.updated_by == user_id,  # type: ignore
-                    )
-                ),
-            ),
-            DfEngineGenerations.results.any(DfEngineGenerationResults.archieved_at.is_not(None)),  # type: ignore
+            *filters,
+            DfEngineGenerations.results.any(mine),  # type: ignore
         ),
     )
 
-    archieved_files = sorted(
-        (
-            _drop(
-                GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(mode="json"),
-                "updated_at",
-                "status",
-                "creator",
-                "cost_usd",
-                "cost_idr",
-                "model",
-                "prompt",
-                "full_prompt",
-                "parameter",
-                "parent_id",
-            )
-            for record in serialize(generations)
-            for result in record["results"]
-            if record["created_by"] == user_id or result["updated_by"] == user_id
-        ),
-        key=lambda r: r["flag_archieved_at"],
-        reverse=True,
-    )
+    archieved_files = []
+    for record in serialize(generations):
+        for result in record["results"]:
+            file = UserGeneratedFile(
+                id=result["id"],
+                kind=record["kind"],
+                file_uid=result["uid"],
+                generation_uid=record["uid"],
+                parent_id=result.get("parent_id"),
+                name=result["name"],
+                path=result["path"],
+                size=result["size"],
+                is_main=result["is_main"],
+                version=result["version"],
+                status=record["status"],
+                task_uid=(record.get("task") or {}).get("uid"),
+                song_uid=(record.get("song") or {}).get("uid"),
+                task=(record.get("task") or record.get("song") or {}).get("name"),
+                created_at=result["created_at"],
+                updated_at=result["updated_at"],
+                favourited_at=favourited_at_of(result),
+                archieved_at=result["archieved_at"],
+                cost_usd=format_usd(record["cost"]),
+                cost_idr=format_idr(record["cost"], USD_TO_IDR_RATE),
+                model=(record.get("model_option") or {}).get("name"),
+                prompt=record["prompt"],
+                full_prompt=record["full_prompt"],
+                parameter=record["parameter"],
+                action=GeneratedFileAction.action(True, False, result),  # only the viewer's own files are listed
+                creator=format_user_employees(result.get("created_by_user")),
+                updater=format_user_employees(result.get("updated_by_user")),
+            ).model_dump(mode="json", exclude={"variants", "references"})
+            archieved_files.append({**file, "project": (record.get("project") or {}).get("name")})
+    archieved_files.sort(key=lambda r: r["archieved_at"] or "", reverse=True)
 
     await set_json(ctx.redis, archived_key, archieved_files)
     logging.info(
-        f"user={user_id} listed archived generations source=db task_id={task_id} song_id={song_id} count={len(archieved_files)}"
+        f"user={user_id} listed archived generations source=db project_id={project_id} task_id={task_id} "
+        f"song_id={song_id} count={len(archieved_files)}"
     )
-    return _grant(archieved_files, can_override)
+    return await overlay_favourites(ctx, archieved_files, user_id)
 
 
 async def get_enhance_prompt(ctx: ConnectionContext, enhance_uid: UUID) -> dict[str, Any]:
@@ -608,7 +708,7 @@ async def get_generation_files(
     data = await get_json(ctx.redis, user_generation_files_key) if user_id else None
     if data is not None:
         logging.info(f"user={user_id} listed generation files source=cache task_id={task_id} song_id={song_id}")
-        return _grant(data, can_override)
+        return await overlay_favourites(ctx, _grant(data, can_override), user_id)
 
     filters = [DfEngineGenerations.results.any()]  # type: ignore
     if task_id is not None or song_id is not None:
@@ -623,7 +723,11 @@ async def get_generation_files(
     generations = await query(
         ctx.db,
         DfEngineGenerations,
-        options=(selectinload(DfEngineGenerations.results),),  # type: ignore
+        options=(
+            (selectinload(DfEngineGenerations.results).selectinload(_viewer_favourites(user_id)),)  # type: ignore
+            if user_id
+            else (selectinload(DfEngineGenerations.results),)  # type: ignore
+        ),
         filters=tuple(filters),
     )
 
@@ -662,73 +766,134 @@ async def get_generation_files(
     logging.info(
         f"user={user_id} listed generation files source=db task_id={task_id} song_id={song_id} count={len(generation_files)}"
     )
-    return _grant(generation_files, can_override)
+    return await overlay_favourites(ctx, _grant(generation_files, can_override), user_id)
 
 
 async def get_favourited_files(
     ctx: ConnectionContext,
-    task_id: Optional[int],
-    song_id: Optional[int],
     user_id: int,
-    can_override: bool = False,
+    project_id: Optional[int] = None,
+    task_id: Optional[int] = None,
+    song_id: Optional[int] = None,
+    search: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    favourited_key = ctx.key.generation_files_favourited_list(user_id, task_id, song_id)
+    """Every generated file `user_id` favourited (own or someone else's), newest favourite first, as flat
+    `UserGeneratedFile`s (no variants/references) with the `project` name. `project_id`, `task_id` and `song_id`
+    narrow it when given. `search` matches the file name or path, the project name, or the task name."""
+    favourited_key = ctx.key.generation_files_favourited_list(user_id, project_id, task_id, song_id, search)
     data = await get_json(ctx.redis, favourited_key)
     if data is not None:
-        logging.info(f"user={user_id} listed favourited generations source=cache task_id={task_id} song_id={song_id}")
-        return _grant(data, can_override)
+        logging.info(f"user={user_id} listed favourited generations source=cache project_id={project_id}")
+        return data
 
-    generations = await query(
-        ctx.db,
-        DfEngineGenerations,
-        options=(
-            selectinload(
-                DfEngineGenerations.results.and_(DfEngineGenerationResults.favourited_at.is_not(None))  # type: ignore
-            ),
-        ),
-        filters=(
-            _scope(task_id, song_id),
+    generation_filters = [DfEngineGenerations.kind.in_(["image", "image_edit", "video"])]  # type: ignore
+    for column, value in (
+        (DfEngineGenerations.project_id, project_id),
+        (DfEngineGenerations.task_id, task_id),
+        (DfEngineGenerations.song_id, song_id),
+    ):
+        if value is not None:
+            generation_filters.append(column == value)
+    result_filters = [DfEngineGenerationResults.favourites.any(DfEngineGenerationFavourites.user_id == user_id)]  # type: ignore
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        result_filters.append(
             or_(
-                DfEngineGenerations.created_by == user_id,  # type: ignore
-                DfEngineGenerations.results.any(  # type: ignore
-                    and_(
-                        DfEngineGenerationResults.favourited_at.is_not(None),  # type: ignore
-                        DfEngineGenerationResults.updated_by == user_id,  # type: ignore
+                DfEngineGenerationResults.name.ilike(term),  # type: ignore
+                DfEngineGenerationResults.path.ilike(term),  # type: ignore
+                DfEngineGenerationResults.generation.has(  # type: ignore
+                    or_(
+                        DfEngineGenerations.project.has(Projects.name.ilike(term)),  # type: ignore
+                        DfEngineGenerations.task.has(ProjectTasks.name.ilike(term)),  # type: ignore
                     )
                 ),
-            ),
-            DfEngineGenerations.results.any(DfEngineGenerationResults.favourited_at.is_not(None)),  # type: ignore
+            )
+        )
+
+    rows = await query(
+        ctx.db,
+        DfEngineGenerationResults,
+        options=(
+            selectinload(_viewer_favourites(user_id)),
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .load_only(
+                DfEngineGenerations.uid,  # type: ignore
+                DfEngineGenerations.kind,  # type: ignore
+                DfEngineGenerations.status,  # type: ignore
+                DfEngineGenerations.prompt,  # type: ignore
+                DfEngineGenerations.full_prompt,  # type: ignore
+                DfEngineGenerations.parameter,  # type: ignore
+                DfEngineGenerations.cost,  # type: ignore
+                DfEngineGenerations.task_id,  # type: ignore
+                DfEngineGenerations.song_id,  # type: ignore
+            )
+            .selectinload(DfEngineGenerations.model_option)  # type: ignore
+            .load_only(DfEngineModelOptions.name),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.project)  # type: ignore
+            .load_only(Projects.name),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.task)  # type: ignore
+            .load_only(ProjectTasks.uid, ProjectTasks.name),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.song)  # type: ignore
+            .load_only(ProjectSongLists.uid, ProjectSongLists.name),  # type: ignore
+            selectinload(DfEngineGenerationResults.created_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEngineGenerationResults.updated_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+        ),
+        filters=(
+            *result_filters,
+            DfEngineGenerationResults.generation.has(and_(*generation_filters)),  # type: ignore
         ),
     )
 
-    favourited_files = sorted(
-        (
-            _drop(
-                GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(mode="json"),
-                "updated_at",
-                "status",
-                "creator",
-                "cost_usd",
-                "cost_idr",
-                "model",
-                "prompt",
-                "full_prompt",
-                "parameter",
-                "parent_id",
-            )
-            for record in serialize(generations)
-            for result in record["results"]
-            if record["created_by"] == user_id or result["updated_by"] == user_id
-        ),
-        key=lambda r: r["flag_favourited_at"],
-        reverse=True,
-    )
+    serialized = sorted(serialize(rows), key=lambda row: row["favourites"][0]["favourited_at"], reverse=True)
+    favourited_files = []
+    for row in serialized:
+        generation = row["generation"]
+        file = UserGeneratedFile(
+            id=row["id"],
+            kind=generation["kind"],
+            file_uid=row["uid"],
+            generation_uid=generation["uid"],
+            parent_id=row["parent_id"],
+            name=row["name"],
+            path=row["path"],
+            size=row["size"],
+            is_main=row["is_main"],
+            version=row["version"],
+            status=generation["status"],
+            task_uid=(generation.get("task") or {}).get("uid"),
+            song_uid=(generation.get("song") or {}).get("uid"),
+            task=(generation.get("task") or generation.get("song") or {}).get("name"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            favourited_at=favourited_at_of(row),
+            archieved_at=row["archieved_at"],
+            cost_usd=format_usd(generation.get("cost")),
+            cost_idr=format_idr(generation.get("cost"), USD_TO_IDR_RATE),
+            model=(generation.get("model_option") or {}).get("name"),
+            prompt=generation.get("prompt"),
+            full_prompt=generation.get("full_prompt"),
+            parameter=generation.get("parameter"),
+            action=GeneratedFileAction.action(row["created_by"] == user_id, False, row),
+            creator=format_user_employees(row.get("created_by_user")),
+            updater=format_user_employees(row.get("updated_by_user")),
+        ).model_dump(mode="json", exclude={"variants", "references"})
+        favourited_files.append({**file, "project": (generation.get("project") or {}).get("name")})
 
     await set_json(ctx.redis, favourited_key, favourited_files)
     logging.info(
-        f"user={user_id} listed favourited generations source=db task_id={task_id} song_id={song_id} count={len(favourited_files)}"
+        f"user={user_id} listed favourited generations source=db project_id={project_id} task_id={task_id} "
+        f"song_id={song_id} count={len(favourited_files)}"
     )
-    return _grant(favourited_files, can_override)
+    return favourited_files
 
 
 async def get_upload_references(
@@ -806,7 +971,7 @@ async def get_generation_references(
         logging.info(
             f"user={user_id} listed generation references source=cache project_id={project_id} search={search} count={len(data)}"
         )
-        return _grant(data, can_override, "file")
+        return await overlay_favourites(ctx, _grant(data, can_override, "file"), user_id, "file")
 
     filters = [
         DfEngineGenerations.results.any(DfEngineGenerationResults.is_main.is_(True)),  # type: ignore
@@ -841,6 +1006,9 @@ async def get_generation_references(
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(
+                DfEngineGenerations.results.and_(DfEngineGenerationResults.is_main.is_(True))  # type: ignore
+            ).selectinload(_viewer_favourites(user_id)),
         ),
         filters=tuple(filters),
         order_by=(DfEngineGenerations.created_at.desc(),),  # type: ignore
@@ -853,7 +1021,7 @@ async def get_generation_references(
             "task_id": record["task_id"],
             "task_name": record["task"]["name"] if record["task"] else None,
             "kind": record["kind"],
-            "favourited": result["favourited_at"] is not None and result["created_by"] == user_id,
+            "favourited": favourited_at_of(result) is not None,
             "file": _drop(
                 GenerationResultRecord.from_result(_with_generation(result, record), user_id).model_dump(mode="json"),
                 *_MAIN_FILE_INTERNAL_KEYS,
@@ -871,7 +1039,7 @@ async def get_generation_references(
     logging.info(
         f"user={user_id} listed generation references source=db project_id={project_id} search={search} count={len(rows)}"
     )
-    return _grant(rows, can_override, "file")
+    return await overlay_favourites(ctx, _grant(rows, can_override, "file"), user_id, "file")
 
 
 async def get_generation_main_file_detail(
@@ -881,7 +1049,7 @@ async def get_generation_main_file_detail(
     generated_main_file_detail_cached = await get_json(ctx.redis, generated_main_file_detail_key)
     if generated_main_file_detail_cached is not None:
         logging.info(f"file_uid={file_uid} fetched generation main file detail source=cache")
-        return _grant_detail(generated_main_file_detail_cached, can_override)
+        return await overlay_favourites(ctx, _grant_detail(generated_main_file_detail_cached, can_override), user_id)
 
     group_id = (
         select(func.coalesce(DfEngineGenerationResults.parent_id, DfEngineGenerationResults.id))
@@ -941,6 +1109,7 @@ async def get_generation_main_file_detail(
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(_viewer_favourites(user_id or -1)),
             selectinload(DfEngineGenerationResults.children)  # type: ignore
             .selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .load_only(
@@ -976,7 +1145,7 @@ async def get_generation_main_file_detail(
         f"file_uid={file_uid} fetched generation main file detail source=db is_main={serialized['is_main']} "
         f"references={len(serialized['references'])}"
     )
-    return _grant_detail(serialized, can_override)
+    return await overlay_favourites(ctx, _grant_detail(serialized, can_override), user_id)
 
 
 async def get_generation_main_variants(
@@ -986,7 +1155,7 @@ async def get_generation_main_variants(
     generation_variants_cached = await get_json(ctx.redis, generation_variants_key)
     if generation_variants_cached is not None:
         logging.info(f"file_uid={file_uid} fetched generation variants source=cache")
-        return _grant(generation_variants_cached, can_override)
+        return await overlay_favourites(ctx, _grant(generation_variants_cached, can_override), user_id)
 
     group_id = (
         select(func.coalesce(DfEngineGenerationResults.parent_id, DfEngineGenerationResults.id))
@@ -1040,6 +1209,7 @@ async def get_generation_main_variants(
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(_viewer_favourites(user_id or -1)),
         ),
         order_by=(DfEngineGenerationResults.version.asc(),),  # type: ignore
     )
@@ -1060,4 +1230,4 @@ async def get_generation_main_variants(
 
     await set_json(ctx.redis, generation_variants_key, variants)
     logging.info(f"file_uid={file_uid} fetched generation variants source=db count={len(variants)}")
-    return _grant(variants, can_override)
+    return await overlay_favourites(ctx, _grant(variants, can_override), user_id)
