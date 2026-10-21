@@ -12,7 +12,7 @@ class FeatureTypes(StrEnum):
     generate_motion = auto()
     generate_element_character = auto()
     generate_element_object = auto()
-    generate_element_element = auto()
+    generate_element_environment = auto()
     generate_element_style = auto()
 
 

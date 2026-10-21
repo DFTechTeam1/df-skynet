@@ -352,3 +352,10 @@ class TestGlobalReferenceSections:
         assert sections["Image Uploads"]["projects"][0]["tasks"][0]["files"] == ["u-img"]
         assert sections["Image Generations"]["total_data"] == 2  # image + image_edit
         assert sections["Elements"]["projects"][0]["tasks"][0]["id"] == 4
+
+
+def test_tree_folder_refactored_set_flash_defaults_false():
+    from schemas.format.files import TreeFolderRefactored
+    from schemas.format.action import FolderAction
+
+    assert TreeFolderRefactored(name="x", path="a/x", action=FolderAction()).set_flash is False

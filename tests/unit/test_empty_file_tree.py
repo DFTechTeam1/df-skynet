@@ -45,3 +45,33 @@ def test_tree_order_is_fixed_whichever_side_has_data():
         assert [c["name"] for c in tree["children"]] == ["generated", "upload"]
         for child in tree["children"]:
             assert [g["name"] for g in child["children"]] == ["images", "videos"]
+
+
+def test_flash_files_flags_path_down_to_folders_holding_files():
+    from services.files import UDIN_BASE_URL
+
+    root = "storage/DF-Engine-DEV/Wedding_7b804b30"
+    gen = {
+        "kind": "image",
+        "icon": "i",
+        "color": "c",
+        "size": "1 KB",
+        "created_at": "2026-01-01T00:00:00",
+        "creator": None,
+        "id": 1,
+        "file_uid": "g",
+        "name": "g.png",
+        "path": f"{UDIN_BASE_URL}/{root}/generated/images/g.png",
+        "action": {"can_rename": False, "can_move": False, "can_delete": False, "can_download": True},
+    }
+
+    def flags(tree, acc=None):
+        acc = {} if acc is None else acc
+        acc[tree["path"]] = tree["set_flash"]
+        for c in tree["children"]:
+            flags(c, acc)
+        return acc
+
+    assert not any(flags(format_file_tree_refactored([], [gen], 3, root)).values())
+    flashed = {p for p, v in flags(format_file_tree_refactored([], [gen], 3, root, flash_files=True)).items() if v}
+    assert flashed == {root, f"{root}/generated", f"{root}/generated/images"}  # root -> folder holding the file
