@@ -408,8 +408,8 @@ class FeatureManagementController(CoreDependencies):
         summary="Delete a feature.",
         description=(
             "Permanently deletes a feature and unlinks it from every prompt template. "
-            "Blocked if the feature is still attached to a menu — remove it from that menu "
-            "first. Returns the full, up-to-date list of remaining features."
+            "Blocked (409) if the feature is still attached to a menu (remove it from that menu "
+            "first) or has been used by any generation. Returns the full, up-to-date list of remaining features."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Feature Management"],
@@ -436,9 +436,18 @@ class FeatureManagementController(CoreDependencies):
             if feature is None:
                 raise DataNotFoundError(message="feature_not_found")
 
+            has_menu = bool(feature.df_engine_menu_feature_mappings)
+            has_generations = bool(feature.df_engine_generations)
+            if has_menu and has_generations:
+                raise DataConflictError(message="feature_linked_to_menu_and_generations")
+            if has_menu:
+                raise DataConflictError(message="feature_linked_to_menu")
+            if has_generations:
+                raise DataConflictError(message="feature_used_by_generations")
+
             formatted_feature = feature_management_service.format(serialize(feature))
             if formatted_feature.get("action", {}).get("can_delete", False) is False:
-                raise DataConflictError(message="feature_in_use")
+                raise DataConflictError(message="feature_delete_forbidden")
 
             await self.db.execute(
                 delete(DfEngineFeaturePromptMappings).where(

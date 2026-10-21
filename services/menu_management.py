@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.mysql import query
 from services.mysql.model import (
     DfEngineFeatures,
+    DfEngineGenerations,
     DfEngineMenuFeatureMappings,
     DfEngineMenus,
     Users,
@@ -39,6 +40,7 @@ class MenuManagementService:
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
+            selectinload(DfEngineMenus.df_engine_generations).load_only(DfEngineGenerations.id),  # type: ignore
         )
 
     def format(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -73,7 +75,7 @@ class MenuManagementService:
         record["action"] = {
             "can_fetch_detail": "fetch_df_engine_menus" in user_permissions,
             "can_update": "update_df_engine_menu" in user_permissions,
-            "can_delete": "delete_df_engine_menu" in user_permissions,
+            "can_delete": "delete_df_engine_menu" in user_permissions and not record["df_engine_generations"],
         }
 
         record.pop("id", None)
@@ -82,6 +84,7 @@ class MenuManagementService:
         record.pop("created_by", None)
         record.pop("updated_by", None)
         record.pop("df_engine_menu_feature_mappings", None)
+        record.pop("df_engine_generations", None)
         return record
 
     async def rebuild_response(self, db: AsyncSession, user_id: int) -> list[dict[str, Any]]:

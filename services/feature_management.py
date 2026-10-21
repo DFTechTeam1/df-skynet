@@ -5,6 +5,7 @@ from services.mysql import query
 from services.mysql.model import (
     DfEngineFeaturePromptMappings,
     DfEngineFeatures,
+    DfEngineGenerations,
     DfEngineMenuFeatureMappings,
     DfEnginePromptTemplates,
     Users,
@@ -41,6 +42,7 @@ class FeatureManagementService:
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
             selectinload(DfEngineFeatures.df_engine_menu_feature_mappings).load_only(DfEngineMenuFeatureMappings.id),  # type: ignore  # type: ignore
+            selectinload(DfEngineFeatures.df_engine_generations).load_only(DfEngineGenerations.id),  # type: ignore
         )
 
     def format(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -76,7 +78,8 @@ class FeatureManagementService:
             "can_fetch_detail": "fetch_df_engine_features" in user_permissions,
             "can_update": "update_df_engine_feature" in user_permissions,
             "can_delete": "delete_df_engine_feature" in user_permissions
-            and not record["df_engine_menu_feature_mappings"],
+            and not record["df_engine_menu_feature_mappings"]
+            and not record["df_engine_generations"],
         }
 
         record.pop("id", None)
@@ -86,6 +89,7 @@ class FeatureManagementService:
         record.pop("updated_by", None)
         record.pop("df_engine_feature_prompt_mappings", None)
         record.pop("df_engine_menu_feature_mappings", None)
+        record.pop("df_engine_generations", None)
         return record
 
     async def rebuild_response(self, db: AsyncSession, user_id: int) -> list[dict[str, Any]]:

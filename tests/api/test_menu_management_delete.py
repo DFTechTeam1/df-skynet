@@ -6,6 +6,8 @@ from services.mysql.model import DfEngineMenuFeatureMappings
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
+from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.redis import client as redis_client
 from tests.helpers import response_names
 
@@ -83,3 +85,22 @@ async def test_delete_invalidates_the_list_cache(authed_client, user_id):
 
     resp = await authed_client.call("GET", URL)
     assert menu.name not in response_names(resp.json())
+
+
+@pytest.mark.asyncio
+async def test_delete_blocked_while_used_by_generations(authed_client, db_session, user_id):
+    """409 menu_used_by_generations; a menu referenced by a generation cannot be deleted (not a 500), and the row survives."""
+    menu = DfEngineMenusFactory.create(created_by=int(user_id), df_engine_menu_feature_mapping=None)
+    feature = DfEngineFeaturesFactory.create(created_by=int(user_id), df_engine_feature_prompt_mapping=None)
+    model = DfEngineModelOptionsFactory.create()
+    DfEngineGenerationsFactory.create(
+        model_id=model.id, menu_id=menu.id, feature_id=feature.id, sourceable_id=1, created_by=int(user_id)
+    )
+
+    resp = await authed_client.call("DELETE", f"{URL}/{menu.uid}", raise_for_status=False)
+    assert resp.status_code == 409
+    assert resp.json()["message"] == resolve_message("menu_used_by_generations", "en")
+
+    listing = await authed_client.call("GET", URL)
+    item = next(i for i in listing.json()["data"] if i["uid"] == str(menu.uid))
+    assert item["action"]["can_delete"] is False
