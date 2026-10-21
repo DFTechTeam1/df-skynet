@@ -4,5 +4,8 @@ class FeatureManagementMessage:
             "feature_not_found": "Feature not found.",
             "feature_already_exists": "A feature with this name already exists.",
             "feature_template_not_found": "One or more selected prompt templates could not be found.",
-            "feature_in_use": "This feature is still linked to a menu and cannot be deleted. Unmap it in menu management first.",
+            "feature_linked_to_menu": "This feature is still linked to a menu and cannot be deleted. Unmap it in menu management first.",
+            "feature_used_by_generations": "This feature has been used by existing generations and cannot be deleted.",
+            "feature_linked_to_menu_and_generations": "This feature is still linked to a menu and has been used by existing generations, so it cannot be deleted.",
+            "feature_delete_forbidden": "You are not allowed to delete this feature.",
         }

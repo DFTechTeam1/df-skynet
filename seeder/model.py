@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from log import logging
-from apps.secret import DB_ASYNC_URL, ERP_EMAIL, ERP_PASSWORD, LOGIN_URL
+from apps.secret import DB_ASYNC_URL, ERP_EMAIL, ERP_PASSWORD, LOGIN_URL, BASE_URL
 from services.api_caller import APICaller
 from services.mysql import engine, make_session, query
 from services.mysql.model import DfEngineModelOptions, DfEngineSettings
@@ -16,8 +16,6 @@ from services.redis import client as redis_client, delete_pattern, CacheKeys
 from utils import local_time
 
 SETTING_CODE = "admin_setting"
-ENGINE_URL = "http://engine.localhost:9000/api"
-# model type -> substrings (case-insensitive, matched on name or model_id) to enable
 ENABLE = {
     ModelUsageTypes.text: ["google", "openai"],
     ModelUsageTypes.image: ["google"],
@@ -42,7 +40,7 @@ async def sync_models() -> bool:
         logging.warning(f"seeder=model login failed {login.status_code}; using models already in DB")
         return False
     token = login.json()["data"]["access_token"]
-    async with APICaller(base_url=ENGINE_URL, headers={"Authorization": f"Bearer {token}"}) as caller:
+    async with APICaller(base_url=BASE_URL, headers={"Authorization": f"Bearer {token}"}) as caller:
         res = await caller.call("POST", "/models", raise_for_status=False)
     if res.is_error:
         logging.warning(f"seeder=model sync failed {res.status_code}: {res.text}; using models already in DB")

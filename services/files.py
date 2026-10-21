@@ -266,7 +266,6 @@ def format_file_tree_refactored(
 
 
 def project_root_path(project: dict[str, Any]) -> str:
-    # ponytail: env segment hardcoded like the upload path check in the files controller; move both to config together.
     return f"storage/DF-Engine-DEV/{project['name']}_{str(project['uid'])[:8]}"
 
 

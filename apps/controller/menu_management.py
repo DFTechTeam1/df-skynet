@@ -384,7 +384,7 @@ class MenuManagementController(CoreDependencies):
         summary="Delete a menu.",
         description=(
             "Permanently deletes a menu and unlinks it from every feature. Fails if no "
-            "menu matches the given ID. Returns the full, up-to-date list of remaining "
+            "menu matches the given ID, and is blocked (409) if the menu is used by any generation. Returns the full, up-to-date list of remaining "
             "menus."
         ),
         status_code=status.HTTP_200_OK,
@@ -405,11 +405,18 @@ class MenuManagementController(CoreDependencies):
             menu = await query(
                 db=self.db,
                 table=DfEngineMenus,
+                options=menu_management_service.options(),
                 filters=(DfEngineMenus.uid == str(uid),),  # type: ignore
                 fetch_one=True,
             )
             if menu is None:
                 raise DataNotFoundError(message="menu_not_found")
+
+            if menu.df_engine_generations:
+                raise DataConflictError(message="menu_used_by_generations")
+
+            if menu_management_service.format(serialize(menu)).get("action", {}).get("can_delete", False) is False:
+                raise DataConflictError(message="menu_delete_forbidden")
 
             await self.db.execute(
                 delete(DfEngineMenuFeatureMappings).where(
