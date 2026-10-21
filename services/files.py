@@ -147,6 +147,7 @@ def format_file_tree_refactored(
     main_generations: list[dict[str, Any]],
     depth_limit: int,
     project_root: Optional[str] = None,
+    flash_files: bool = False,
 ) -> dict[str, Any]:
     """Same tree as `format_file_tree`, built from the already formatted output of
     `get_user_uploaded_files_refactored` and `get_generation_main_refactored`, so every permission is taken as given.
@@ -255,6 +256,12 @@ def format_file_tree_refactored(
     for path, folder in nodes.items():
         if len(path.split("/")) <= 4:
             folder.children.sort(key=lambda child: fixed.get(child.name, len(fixed)))
+    if flash_files:  # search results: flag the whole path from the root down to each folder holding a hit
+        for path, folder in nodes.items():
+            if folder.files:
+                while path in nodes:
+                    nodes[path].set_flash = True
+                    path = path.rpartition("/")[0]
     return next((folder.model_dump(mode="json") for folder in roots.values()), {})
 
 

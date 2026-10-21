@@ -176,6 +176,7 @@ class TreeFileRefactored(BaseModel):
 class TreeFolderRefactored(BaseModel):
     name: str
     path: str
+    set_flash: bool = False
     kind: Literal["folder"] = "folder"
     icon: str = ICON_COLOR_MAP["folder"]["icon"]
     color: str = ICON_COLOR_MAP["folder"]["color"]
