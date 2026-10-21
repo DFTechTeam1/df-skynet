@@ -115,6 +115,17 @@ async def test_tree_my_task_hides_other_users_uploads(authed_client, project_tas
 
 
 @pytest.mark.asyncio
+async def test_tree_search_without_hits_returns_none(authed_client, project_task, monkeypatch):
+    async def no_hits(*args, **kwargs):
+        return [], []
+
+    monkeypatch.setattr("apps.controller.files.search_project_files", no_hits)
+    resp = await authed_client.call("GET", _tree_url(project_task.project.uid), params={"search": "nothing"})
+    assert resp.status_code == 200
+    assert resp.json()["data"] is None
+
+
+@pytest.mark.asyncio
 async def test_tree_unknown_project_is_404(authed_client):
     """404 project_not_found for a uid that matches no project."""
     resp = await authed_client.call("GET", _tree_url(uuid4()), raise_for_status=False)
