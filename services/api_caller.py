@@ -3,9 +3,10 @@ import time
 from typing import Any, Literal, Optional
 from httpx import AsyncBaseTransport, AsyncClient, Client, Response
 from sqlalchemy import select
-from apps.secret import DB_SYNC_URL
+from apps.secret import DB_SYNC_URL, OPENROUTER_MANAGEMENT_KEY
 from services.mysql import get_db, make_sync_session, query
 from services.mysql.model import DfEngineExternalApiCalls, Employees
+from services.openrouter_credits import refresh_credits, refresh_credits_sync
 from log import logging
 
 
@@ -133,6 +134,13 @@ class APICaller:
                 )
             )
 
+        if type == "openrouter" and OPENROUTER_MANAGEMENT_KEY:
+            try:
+                async for db in get_db():
+                    await refresh_credits(db)
+            except Exception:
+                logging.exception("openrouter credits refresh failed")
+
         if raise_for_status:
             response.raise_for_status()
 
@@ -191,6 +199,15 @@ class APICaller:
             db.commit()
         finally:
             db.close()
+
+        if type == "openrouter" and OPENROUTER_MANAGEMENT_KEY:
+            credits_db = make_sync_session(DB_SYNC_URL)()
+            try:
+                refresh_credits_sync(credits_db)
+            except Exception:
+                logging.exception("openrouter credits refresh failed")
+            finally:
+                credits_db.close()
 
         if raise_for_status:
             response.raise_for_status()
