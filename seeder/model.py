@@ -52,7 +52,13 @@ async def seed(force_sync: bool = False) -> None:
     async with make_session(DB_ASYNC_URL)() as db:
         has_models = await query(db=db, table=DfEngineModelOptions, fetch_one=True) is not None
     if force_sync or not has_models:
-        await sync_models()
+        synced = await sync_models()
+        if synced:
+            async with make_session(DB_ASYNC_URL)() as db:
+                if await query(db=db, table=DfEngineModelOptions, fetch_one=True) is None:
+                    logging.warning(
+                        "seeder=model sync returned OK but df_engine_model_options is still empty, check OPENROUTER_API_KEY / df_engine_external_api_calls"
+                    )
     else:
         logging.info("seeder=model sync skipped, models already in DB (use --sync to force)")
     enabled = 0
@@ -77,8 +83,8 @@ async def seed(force_sync: bool = False) -> None:
                     row.is_enabled = True
                     enabled += 1
             if model_type == ModelUsageTypes.text:
-                # enhancer/assistant must be an enabled, available text model
-                enabled_text = [r for r in rows if r.is_enabled]
+                # enhancer/assistant must be an enabled, available text model; prefer a seeded match
+                enabled_text = matched or [r for r in rows if r.is_enabled]
                 default_text = enabled_text[0] if enabled_text else None
 
         if default_text:

@@ -48,7 +48,7 @@ from log import logging
 from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
 from services.files import has_override
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
-from services.generations import global_reference_sections, reference_sections
+from services.generations import global_reference_sections, reference_sections, validation_record
 from services.search.query import group_reference_picker, search_project_files, search_task_generations
 from services.model_management import ModelManagement
 from utils import local_time
@@ -286,7 +286,13 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             await validate_prompt(
-                ctx, schema.prompt, enhancer_model["model_id"], api_key["key"], user_id, "prompt_enhancement"
+                ctx,
+                schema.prompt,
+                enhancer_model["model_id"],
+                api_key["key"],
+                user_id,
+                "prompt_enhancement",
+                record=validation_record(enhancer_model["id"], api_key["id"], project["id"], task),
             )
             enhanced = await enhance_prompt(merged_prompt, enhancer_model["model_id"], api_key["key"], user_id)
 
@@ -496,7 +502,13 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             await validate_prompt(
-                ctx, schema.prompt, ranking_model["model_id"], api_key["key"], user_id, "image_generation"
+                ctx,
+                schema.prompt,
+                ranking_model["model_id"],
+                api_key["key"],
+                user_id,
+                "image_generation",
+                record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
             )
 
             """Insert generation record"""
@@ -703,6 +715,7 @@ class GenerationsController(CoreDependencies):
                 api_key["key"],
                 user_id,
                 "image_generation" if schema.type == "image" else "video_generation",
+                record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
             )
 
             """Insert generation record"""
