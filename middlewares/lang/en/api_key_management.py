@@ -16,4 +16,5 @@ class ApiKeyManagementMessage:
             "api_key_copy_missing_employee": "This key's assigned PIC no longer exists, so it can't be copied. It can only be deleted.",
             "api_key_openrouter_sync_failed": "This API key couldn't be updated because it no longer matches what's on OpenRouter. You can still copy or delete it, but it can't be edited.",
             "api_key_expired": "This API key has expired. It can only be deleted — create a new key instead.",
+            "openrouter_credits_fetch_failed": "Could not fetch the OpenRouter credit balance. Please try again later.",
         }

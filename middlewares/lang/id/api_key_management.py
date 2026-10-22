@@ -16,4 +16,5 @@ class ApiKeyManagementMessage:
             "api_key_copy_missing_employee": "PIC yang ditugaskan pada key ini sudah tidak ada, sehingga tidak dapat disalin. Key ini hanya dapat dihapus.",
             "api_key_openrouter_sync_failed": "API key ini tidak dapat diupdate karena sudah tidak sesuai dengan data di OpenRouter. Key ini masih dapat disalin atau dihapus, namun tidak dapat diedit.",
             "api_key_expired": "API key ini sudah kedaluwarsa. Key ini hanya dapat dihapus — buat key baru sebagai gantinya.",
+            "openrouter_credits_fetch_failed": "Tidak dapat mengambil saldo kredit OpenRouter. Silakan coba lagi nanti.",
         }
