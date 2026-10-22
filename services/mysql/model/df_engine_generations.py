@@ -22,6 +22,7 @@ class GenerationKinds(StrEnum):
     chat = auto()
     enhancer = auto()
     image_edit = auto()
+    prompt_validation = auto()
 
 
 class GenerationStatuses(StrEnum):
@@ -41,6 +42,7 @@ GENERATION_KIND_ICON_COLOR: dict[str, dict[str, str]] = {
     GenerationKinds.motion: {"icon": "mdi-motion", "color": "deep-purple"},
     GenerationKinds.chat: {"icon": "mdi-chat-outline", "color": "green"},
     GenerationKinds.enhancer: {"icon": "mdi-auto-fix", "color": "amber"},
+    GenerationKinds.prompt_validation: {"icon": "mdi-shield-check", "color": "grey"},
 }
 
 
@@ -59,9 +61,11 @@ class DfEngineGenerations(SQLModel, table=True):
     model_id: int = Field(
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_model_options.id"), nullable=False)
     )
-    menu_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_menus.id"), nullable=False))
-    feature_id: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_features.id"), nullable=False)
+    menu_id: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_menus.id"), nullable=True)
+    )
+    feature_id: Optional[int] = Field(
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_features.id"), nullable=True)
     )
     sourceable_id: int = Field(sa_column=Column(BIGINT(unsigned=True), nullable=False))
     sourceable_type: str = Field(sa_column=Column(String(255), nullable=False))

@@ -1,3 +1,4 @@
+import json
 import re
 import traceback
 from typing import Any
@@ -8,6 +9,9 @@ from log import logging
 from schemas.payload.setting import PromptValidationType
 from schemas.response import PromptValidationResponse
 from services.api_caller import APICaller
+from services.mysql import get_db, get_usd_rate
+from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
+from services.mysql.model.df_engine_generations import DfEngineGenerations, GenerationKinds, GenerationStatuses
 from services.dto import ConnectionContext
 from services.dto.asynced.admin_settings import get_admin_settings
 
@@ -127,13 +131,53 @@ _SKELETON_RE = re.compile(
 _FENCE_RE = re.compile(r"^```[^\n]*\n|\n?```\s*$")
 
 
+async def _record_validation(record: dict[str, Any] | None, prompt: str, response: Any, user_id: int) -> None:
+    """Own session + commit so the cost row survives the caller's rollback when validation raises.
+    Never raises: bookkeeping must not mask the validation result."""
+    if record is None:
+        return
+    try:
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        usage = body.get("usage") or {}
+        ok = not response.is_error
+        content = body["choices"][0]["message"]["content"] if ok else json.dumps(body)
+        async for db in get_db():
+            db.add(
+                DfEngineGenerations(
+                    kind=GenerationKinds.prompt_validation,
+                    sourceable_type=DfEngineApiKeys.__name__,
+                    prompt=prompt,
+                    response=content,
+                    status=GenerationStatuses.success if ok else GenerationStatuses.failed,
+                    status_code=response.status_code,
+                    token_usage=usage.get("total_tokens"),
+                    cost=usage.get("cost"),
+                    exchange_rate=await db.run_sync(get_usd_rate),
+                    created_by=user_id,
+                    **record,
+                )
+            )
+    except Exception:
+        logging.error(traceback.format_exc())
+
+
 async def validate_prompt(
-    ctx: ConnectionContext, prompt: str, model_id: str, api_key: str, user_id: int, type: PromptValidationType
+    ctx: ConnectionContext,
+    prompt: str,
+    model_id: str,
+    api_key: str,
+    user_id: int,
+    type: PromptValidationType,
+    record: dict[str, Any] | None = None,
 ) -> None:
     """Scores the raw `prompt` against the admin-configured rules that apply to `type` (plus nfsw and
     prompt_injection) in ONE logged OpenRouter call: `messages` holds a system+user pair per rule. Every score
     is a violation score: the prompt passes when `score <= threshold` and raises when `score > threshold`.
-    Rules with threshold 0 are skipped."""
+    Rules with threshold 0 are skipped. When `record` (model_id, sourceable_id, project_id, task_id, song_id) is
+    given, the paid call is also stored as a `prompt_validation` row in `df_engine_generations`."""
     rules = {
         rule["type"]: rule
         for rule in (await get_admin_settings(ctx)).get("prompt_guardrails") or []
@@ -172,6 +216,7 @@ async def validate_prompt(
                 "provider": {"require_parameters": True},
             },
         )
+        await _record_validation(record, prompt, response, user_id)
         response.raise_for_status()
         scores = output_model.model_validate_json(response.json()["choices"][0]["message"]["content"]).model_dump()
     except Exception:

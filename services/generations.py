@@ -55,3 +55,14 @@ def global_reference_sections(
         }
         for label, by_project in projects.items()
     ]
+
+
+def validation_record(model_id: int, api_key_id: int, project_id: int, task: dict) -> dict:
+    is_song = task.get("is_song")
+    return {
+        "model_id": model_id,
+        "sourceable_id": api_key_id,
+        "project_id": project_id,
+        "task_id": None if is_song else task["id"],
+        "song_id": task["id"] if is_song else None,
+    }
