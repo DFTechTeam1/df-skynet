@@ -7,6 +7,7 @@ from middlewares.lang import resolve_message
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_generation_uploads import DfEngineGenerationUploadsFactory
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.model import DfEngineGenerations
@@ -46,8 +47,7 @@ def make(project_task, generation_fks):
             sourceable_id=1,
             kind=kind,
             status=GenerationStatuses.failed,
-            **generation_fks,
-            **over,
+            **{**generation_fks, **over},
         )
         DfEngineGenerationUploadsFactory.create(
             generation_id=generation.id,
@@ -108,8 +108,11 @@ async def test_list_excludes_pending_and_success(list_url, authed_client, user_i
 
 @pytest.mark.asyncio
 async def test_list_filters(authed_client, user_id, make, project_task, list_url):
-    image = make(user_id, prompt="needle in a haystack")
+    image = make(user_id, prompt="prompt-only-needle")
     video = make(user_id, kind=GenerationKinds.video, prompt="other")
+    DfEngineGenerationResultsFactory.create(
+        generation_id=video.id, created_by=int(user_id), name="needle-clip.mp4", path="storage/x/needle-dir/clip.mp4"
+    )
 
     async def uids(**params):
         resp = await authed_client.call("GET", list_url, params=params)
@@ -117,8 +120,14 @@ async def test_list_filters(authed_client, user_id, make, project_task, list_url
         return {row["generation_uid"] for row in resp.json()["data"]}
 
     assert {str(image.uid), str(video.uid)} <= await uids()  # image and video are both listed
-    assert {str(image.uid)} <= await uids(search="needle")
-    assert str(video.uid) not in await uids(search="needle")
+    assert str(video.uid) in await uids(search="needle-clip")  # file name
+    assert str(video.uid) in await uids(search="needle-dir")  # file path
+    assert str(image.uid) not in await uids(search="needle-dir")
+    assert str(image.uid) not in await uids(search="prompt-only-needle")  # prompt is not searched
+    model_name = f"UniqueModel-{uuid4().hex[:8]}"
+    other = make(user_id, model_id=DfEngineModelOptionsFactory.create(name=model_name).id)
+    assert str(other.uid) in await uids(search=model_name)  # model name
+    assert str(video.uid) not in await uids(search=model_name)
     assert {str(image.uid), str(video.uid)} <= await uids()
     assert {str(image.uid), str(video.uid)} <= await uids(task_uid=project_task.uid)  # task_id + project_id
     bad = await authed_client.call("GET", list_url, params={"task_uid": "nope"}, raise_for_status=False)

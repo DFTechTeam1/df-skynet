@@ -610,8 +610,10 @@ async def get_failed_upload_generations(
         term = f"%{search.strip()}%"
         filters.append(
             or_(
-                DfEngineGenerations.prompt.ilike(term),  # type: ignore
                 DfEngineGenerations.model_option.has(DfEngineModelOptions.name.ilike(term)),  # type: ignore
+                DfEngineGenerations.results.any(  # type: ignore
+                    or_(DfEngineGenerationResults.name.ilike(term), DfEngineGenerationResults.path.ilike(term))  # type: ignore
+                ),
             )
         )
 
