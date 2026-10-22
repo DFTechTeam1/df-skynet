@@ -62,7 +62,7 @@ class FilesMessage:
             "reupload_not_creator": "Only the creator can re-upload this generation.",
             "reupload_not_permitted": "This generation does not need a manual re-upload.",
             "reupload_in_progress": "A re-upload for this generation is already in progress.",
-            "reupload_queued": "Re-upload to Udin has been queued.",
+            "reupload_queued": "Your file is being re-uploaded. This may take a moment.",
             "folder_created": "Folder successfully created.",
             "folder_deleted": "Folder successfully deleted.",
             "files_deleted": "Files successfully deleted.",
