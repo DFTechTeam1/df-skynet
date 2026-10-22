@@ -16,6 +16,15 @@ def format_credit_amount(value: float) -> int | float:
     return int(rounded) if rounded == int(rounded) else rounded
 
 
+def format_credits(credits: dict[str, Any]) -> dict[str, Any]:
+    total_credits, total_usage = credits.get("total_credits", 0), credits.get("total_usage", 0)
+    return {
+        "total_credits": format_credit_amount(total_credits),
+        "total_usage": format_credit_amount(total_usage),
+        "remaining": format_credit_amount(total_credits - total_usage),
+    }
+
+
 def format_user_employees(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if user is None:
         return None

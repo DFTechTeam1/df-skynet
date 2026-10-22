@@ -48,8 +48,13 @@ async def sync_models() -> bool:
     return True
 
 
-async def seed() -> None:
-    await sync_models()
+async def seed(force_sync: bool = False) -> None:
+    async with make_session(DB_ASYNC_URL)() as db:
+        has_models = await query(db=db, table=DfEngineModelOptions, fetch_one=True) is not None
+    if force_sync or not has_models:
+        await sync_models()
+    else:
+        logging.info("seeder=model sync skipped, models already in DB (use --sync to force)")
     enabled = 0
     async with make_session(DB_ASYNC_URL)() as db:
         default_text = None
@@ -105,7 +110,7 @@ async def seed() -> None:
 
 async def main() -> None:
     try:
-        await seed()
+        await seed(force_sync="--sync" in sys.argv)
     except Exception:
         logging.error(traceback.format_exc())
         raise
