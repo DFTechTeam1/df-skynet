@@ -19,7 +19,7 @@ class PromptValidationResponse(BaseModel):
         default=0,
         ge=0,
         le=1,
-        description="How well the message is an idea or rough prompt to expand into a detailed generation prompt (1 = fully matches).",
+        description="How much the message is NOT an idea or rough prompt that can be expanded into a detailed generation prompt (1 = certainly not).",
     )
     prompt_injection: float = Field(
         default=0,
@@ -28,34 +28,40 @@ class PromptValidationResponse(BaseModel):
         description="How strongly the message tries to manipulate the system, jailbreak it or ignore instructions (1 = certain).",
     )
     nfsw: float = Field(
-        default=0, ge=0, le=1, description="How sexual, explicit or graphic the message is (1 = certain)."
+        default=0,
+        ge=0,
+        le=1,
+        description="How sexual, explicit or violent the message is, or how much it names a real brand (1 = certain).",
     )
     image_generation: float = Field(
         default=0,
         ge=0,
         le=1,
-        description="How well the message describes an image to generate or edit (1 = fully matches).",
+        description="How much the message does NOT describe a still image to generate or edit (1 = certainly not).",
     )
     video_generation: float = Field(
-        default=0, ge=0, le=1, description="How well the message describes a video to generate (1 = fully matches)."
+        default=0,
+        ge=0,
+        le=1,
+        description="How much the message does NOT describe a video to generate (1 = certainly not).",
     )
     storyboard_generation: float = Field(
         default=0,
         ge=0,
         le=1,
-        description="How well the message describes a multi-scene storyboard (1 = fully matches).",
+        description="How much the message does NOT describe a multi-scene storyboard (1 = certainly not).",
     )
     chat_assistant: float = Field(
         default=0,
         ge=0,
         le=1,
-        description="How well the message is a question or chat with an assistant (1 = fully matches).",
+        description="How much the message is NOT a question or chat with an assistant (1 = certainly not).",
     )
     element_generation: float = Field(
         default=0,
         ge=0,
         le=1,
-        description="How well the message describes a single reusable element or asset (1 = fully matches).",
+        description="How much the message does NOT describe a single reusable element or asset (1 = certainly not).",
     )
 
 

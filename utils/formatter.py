@@ -10,6 +10,12 @@ def format_udin_url(path: str) -> str:
     return f"{UDIN_BASE_URL}/{quote(path, safe='/')}"
 
 
+def format_credit_amount(value: float) -> int | float:
+    """Whole amounts stay int; fractional ones are rounded to 2 decimals."""
+    rounded = round(value, 2)
+    return int(rounded) if rounded == int(rounded) else rounded
+
+
 def format_user_employees(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if user is None:
         return None

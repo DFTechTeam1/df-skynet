@@ -496,7 +496,7 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
             await validate_prompt(
-                ctx, resolved_prompt, ranking_model["model_id"], api_key["key"], user_id, "image_generation"
+                ctx, schema.prompt, ranking_model["model_id"], api_key["key"], user_id, "image_generation"
             )
 
             """Insert generation record"""
@@ -698,7 +698,7 @@ class GenerationsController(CoreDependencies):
 
             await validate_prompt(
                 ctx,
-                resolved_prompt,
+                schema.prompt,
                 ranking_model["model_id"],
                 api_key["key"],
                 user_id,

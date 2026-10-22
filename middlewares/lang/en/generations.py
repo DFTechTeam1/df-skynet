@@ -32,7 +32,7 @@ class GenerationsMessage:
             "employee_api_key_not_resolved": "We couldn't determine which API key to use for this request. Make sure you or your PIC is assigned to this project.",
             "song_task_already_completed": "This song's content has already been completed and can no longer be modified.",
             "prompt_injection_detected": "This prompt looks like an attempt to manipulate the system (score: {score}). Please rephrase it as a plain description of the image or video you want.",
-            "prompt_nsfw_detected": "This prompt contains inappropriate content (score: {score}). Please rephrase it.",
+            "prompt_nsfw_detected": "This prompt can't be used: it contains sexual or explicit content, a real brand or logo, or violence/weapons (especially aimed at a real person). Please rephrase it.",
             "prompt_not_generation_related": "This prompt doesn't look related to {type_label} (score: {score}). Please describe what you'd like the {type_label} to look like.",
             "generation_file_not_found": "This generated file could not be found.",
             "main_generation_file_not_found": "The main version of this generated file could not be found.",

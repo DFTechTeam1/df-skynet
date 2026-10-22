@@ -1,6 +1,6 @@
+import asyncio
 import re
 import traceback
-from typing import Any
 from pydantic import Field, create_model
 from apps.secret import OPENROUTER_BASE_URL
 from error import DataValidationError
@@ -122,28 +122,18 @@ _SKELETON_RE = re.compile(
 _FENCE_RE = re.compile(r"^```[^\n]*\n|\n?```\s*$")
 
 
-async def validate_prompt(
-    ctx: ConnectionContext, prompt: str, model_id: str, api_key: str, user_id: int, type: PromptValidationType
-) -> None:
-    """Scores `prompt` against the admin-configured rules that apply to `type` (plus nfsw and
-    prompt_injection) in one logged OpenRouter call. Rules with threshold 0 are skipped."""
-    rules = {
-        rule["type"]: rule
-        for rule in (await get_admin_settings(ctx)).get("prompt_guardrails") or []
-        if rule.get("threshold") and rule["type"] in (*RISK_TYPES, type)
-    }
-    if not rules:
-        return
-
-    fields: dict[str, Any] = {
-        name: (float, Field(ge=0, le=1, description=PromptValidationResponse.model_fields[name].description))
-        for name in rules
-    }
-    output_model = create_model("ActiveValidation", **fields)
-    system_prompt = BASE_SYSTEM_PROMPT.format(
-        dimensions="\n".join(f"- {name}: {rule['instruction']}" for name, rule in rules.items())
+async def _score(rule_name: str, instruction: str, prompt: str, model_id: str, api_key: str, user_id: int) -> float:
+    """One isolated OpenRouter call per rule, so instructions never bleed into each other."""
+    output_model = create_model(
+        "ActiveValidation",
+        **{
+            rule_name: (
+                float,
+                Field(ge=0, le=1, description=PromptValidationResponse.model_fields[rule_name].description),
+            )
+        },
     )
-
+    system_prompt = BASE_SYSTEM_PROMPT.format(dimensions=f"- {rule_name}: {instruction}")
     caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"})
     try:
         response = await caller.openrouter(
@@ -165,25 +155,44 @@ async def validate_prompt(
             },
         )
         response.raise_for_status()
-        scores = output_model.model_validate_json(response.json()["choices"][0]["message"]["content"]).model_dump()
-        print(scores)
-    except Exception:
-        logging.error(traceback.format_exc())
-        raise DataValidationError(message="prompt_ranking_failed")
+        return getattr(output_model.model_validate_json(response.json()["choices"][0]["message"]["content"]), rule_name)
     finally:
         await caller.close()
 
-    for name, rule in rules.items():
-        score, threshold = scores[name], rule["threshold"]
-        if name == "prompt_injection" and score >= threshold:
-            raise DataValidationError(message="prompt_injection_detected", context={"score": round(score, 2)})
-        if name == "nfsw" and score >= threshold:
-            raise DataValidationError(message="prompt_nsfw_detected", context={"score": round(score, 2)})
-        if name not in RISK_TYPES and score < threshold:
-            raise DataValidationError(
-                message="prompt_not_generation_related",
-                context={"type_label": TYPE_LABELS[name], "score": round(score, 2)},
-            )
+
+async def validate_prompt(
+    ctx: ConnectionContext, prompt: str, model_id: str, api_key: str, user_id: int, type: PromptValidationType
+) -> None:
+    """Scores the raw `prompt` against the admin-configured rules that apply to `type` (plus nfsw and
+    prompt_injection), one parallel OpenRouter call per rule. Every score is a violation score: the prompt
+    passes when `score <= threshold` and raises when `score > threshold`. Rules with threshold 0 are skipped."""
+    rules = {
+        rule["type"]: rule
+        for rule in (await get_admin_settings(ctx)).get("prompt_guardrails") or []
+        if rule.get("threshold") and rule["type"] in (*RISK_TYPES, type)
+    }
+    if not rules:
+        return
+
+    try:
+        results = await asyncio.gather(
+            *(_score(name, rule["instruction"], prompt, model_id, api_key, user_id) for name, rule in rules.items())
+        )
+    except Exception:
+        logging.error(traceback.format_exc())
+        raise DataValidationError(message="prompt_ranking_failed")
+
+    for (name, rule), score in zip(rules.items(), results):
+        if score <= rule["threshold"]:
+            continue
+        context = {"score": round(score, 2)}
+        if name == "prompt_injection":
+            raise DataValidationError(message="prompt_injection_detected", context=context)
+        if name == "nfsw":
+            raise DataValidationError(message="prompt_nsfw_detected", context=context)
+        raise DataValidationError(
+            message="prompt_not_generation_related", context={**context, "type_label": TYPE_LABELS[name]}
+        )
 
 
 async def enhance_prompt(prompt: str, model_id: str, api_key: str, user_id: int) -> dict:

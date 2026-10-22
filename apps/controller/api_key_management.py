@@ -25,6 +25,7 @@ from error import ServiceError, BaseError, DataConflictError, DataNotFoundError,
 from utils import local_time, wib_to_utc_iso
 from services.api_caller import APICaller
 from services.api_key_management import ApiKeyManagement
+from utils.formatter import format_credit_amount
 from utils.serializer import serialize
 
 
@@ -526,6 +527,48 @@ class APIKeyManagementController(CoreDependencies):
         except Exception:
             logging.error(
                 f"user={self.user['user_id']} unexpected error deleting API key uid={uid}\n{traceback.format_exc()}"
+            )
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/key-management/credits",
+        summary="Get OpenRouter credit balance.",
+        description=(
+            "Fetches the live OpenRouter account credit balance (total purchased, total "
+            "used, and what remains). The call is recorded in the OpenRouter call log."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["API Key Management"],
+        response_model=Response,
+    )
+    async def api_key_management_to_fetch_openrouter_credits(self) -> Response:
+        response = Response()
+        try:
+            header = {"Authorization": f"Bearer {OPENROUTER_MANAGEMENT_KEY}"}
+            async with APICaller(base_url=OPENROUTER_BASE_URL, headers=header) as caller:
+                upstream = await caller.openrouter("GET", "/credits", user_id=int(self.user["user_id"]))
+
+            if upstream.is_error:
+                raise ServiceError(message="openrouter_credits_fetch_failed")
+
+            credits = (upstream.json() if upstream.content else {}).get("data") or {}
+            total_credits = credits.get("total_credits", 0)
+            total_usage = credits.get("total_usage", 0)
+            response.data = {
+                "total_credits": format_credit_amount(total_credits),
+                "total_usage": format_credit_amount(total_usage),
+                "remaining": format_credit_amount(total_credits - total_usage),
+            }
+            logging.info(f"user={self.user['user_id']} fetched OpenRouter credits")
+        except BaseError as e:
+            logging.warning(
+                f"user={self.user['user_id']} could not fetch OpenRouter credits: {e.message} ({e.status_code})"
+            )
+            raise
+        except Exception:
+            logging.error(
+                f"user={self.user['user_id']} unexpected error fetching OpenRouter credits\n{traceback.format_exc()}"
             )
             raise ServiceError()
         return response

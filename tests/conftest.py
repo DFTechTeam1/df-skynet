@@ -495,6 +495,14 @@ class _FakeOpenRouterCaller:
     async def __aexit__(self, *args: Any) -> None:
         return None
 
+    credits_status = 200
+
+    async def openrouter(self, method: str, path: str, user_id: int = 0, **kwargs: Any):
+        if path == "/credits":
+            body = {"data": {"total_credits": 100, "total_usage": 40}} if self.credits_status < 400 else {"error": {}}
+            return _FakeOpenRouterResponse(self.credits_status, body, path=path)
+        return await self.call(method, path, **kwargs)
+
     async def call(self, method: str, path: str, json: Optional[dict[str, Any]] = None, **kwargs: Any):
         if method == "POST":
             return _FakeOpenRouterResponse(
