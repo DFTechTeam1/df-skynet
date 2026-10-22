@@ -353,6 +353,9 @@ def udin_uploader(
     )
 
 
+MAX_SWEEP_ATTEMPTS = 12  # one failed run = 6 attempts, so the sweep re-uploads once; then `failed` -> manual re-upload
+
+
 def _bump_sweep_attempts(generation_id: int, final: bool = False, detail: str = "") -> None:
     with get_sync_db() as db:
         upload = db.query(DfEngineGenerationUploads).filter_by(generation_id=generation_id).first()
@@ -362,6 +365,8 @@ def _bump_sweep_attempts(generation_id: int, final: bool = False, detail: str = 
         newly_flagged = final and not upload.needs_reconciliation
         if final:
             upload.needs_reconciliation = True
+            if upload.sweep_attempts >= MAX_SWEEP_ATTEMPTS:
+                upload.upload_status = UploadStatuses.failed  # auto-retry exhausted: only a manual re-upload is left
         db.add(upload)
         db.flush()
         if newly_flagged:

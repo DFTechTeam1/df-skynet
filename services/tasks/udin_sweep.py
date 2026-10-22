@@ -4,9 +4,7 @@ from services.celery_app import celery_app
 from services.mysql import get_sync_db
 from services.mysql.model import DfEngineGenerations, DfEngineGenerationUploads
 from services.mysql.model.df_engine_generation_uploads import UploadStatuses
-from services.tasks.udin_uploader import udin_uploader
-
-MAX_SWEEP_ATTEMPTS = 20  # give up auto-retrying past this; stays visible via needs_reconciliation for ops
+from services.tasks.udin_uploader import MAX_SWEEP_ATTEMPTS, udin_uploader  # noqa: F401
 
 
 @celery_app.task(name="df_engine.udin_sweep")

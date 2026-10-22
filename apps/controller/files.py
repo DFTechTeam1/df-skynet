@@ -35,9 +35,13 @@ from services.mysql.model import (
     DfEngineGenerationFavourites,
     DfEngineGenerationResults,
     DfEngineGenerations,
+    DfEngineGenerationUploads,
     DfEngineUploadFiles,
 )
+from services.mysql.model.df_engine_generation_uploads import UploadStatuses
+from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
+from services.tasks.udin_uploader import udin_uploader
 from error import AuthorizationError, DataNotFoundError, DataValidationError
 from services.dto.asynced.employees import get_employee, assigned_to_task
 from services.files import (
@@ -66,6 +70,7 @@ from services.dto.asynced.files import (
 from services.dto.format_response import FileAction, TreeFile
 from services.dto.asynced.generation_files import (
     get_archieved_files,
+    get_failed_upload_generations,
     get_favourited_files,
     get_generation_files,
     get_generation_main_variants,
@@ -83,6 +88,149 @@ UPLOAD_TIMEOUT = Timeout(connect=10, read=600, write=120, pool=10)
 
 
 class FilesController(CoreDependencies):
+    @controller.get(
+        "/files/failed-uploads/{project_uid}",
+        summary="Get generations that need a manual re-upload.",
+        description="Shows generated images, edited images and videos of a project whose upload to Udin failed after every automatic retry. Only your own generations are listed, unless you have an override role. Optionally narrow by task or song (`task_uid`) or search.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_to_fetch_failed_upload_generations(
+        self,
+        project_uid: UUID = Path(..., description="Project UID."),
+        task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID."),
+        search: Optional[str] = Query(None, description="Match prompt or model name."),
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        can_override = has_override(self.user["roles"])
+        try:
+            project = await get_project(ctx, project_uid=project_uid)
+            task_id = None
+            song_id = None
+            if task_uid:
+                project_task = await get_project_task(ctx, task_uid)
+                if project_task["project_id"] != project["id"]:
+                    raise DataNotFoundError(message="project_task_not_found")
+                task_id = project_task["id"] if project_task["is_song"] is False else None
+                song_id = project_task["id"] if project_task["is_song"] is True else None
+
+            response.data = await get_failed_upload_generations(
+                ctx,
+                user_id,
+                can_override,
+                project_id=project["id"],
+                task_id=task_id,
+                song_id=song_id,
+                search=search,
+            )
+            logging.info(
+                f"[get-failed-uploads] user={user_id} project_uid={project_uid} task_uid={task_uid} "
+                f"fetched {len(response.data)} generations"
+            )
+        except BaseError as e:
+            logging.warning(
+                f"[get-failed-uploads] user={user_id} project_uid={project_uid} rejected ({e.status_code}): {e.message}"
+            )
+            raise
+        except Exception:
+            logging.error(
+                f"[get-failed-uploads] user={user_id} project_uid={project_uid} failed\n{traceback.format_exc()}"
+            )
+            raise ServiceError()
+        return response
+
+    @controller.patch(
+        "/files/failed-uploads/{generation_uid}",
+        summary="Re-upload a failed generation to Udin.",
+        description="Queues a manual re-upload to Udin for a generation whose automatic retries are exhausted. Only the creator or a user with an override role can do this. The upload runs in the background.",
+        status_code=status.HTTP_200_OK,
+        tags=["Files"],
+        response_model=Response,
+    )
+    async def files_to_reupload_failed_generation(
+        self, generation_uid: UUID = Path(..., description="Generation UID (`generation_uid` from the list).")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        ctx = ConnectionContext(self.db, self.redis, cache_key)
+        can_override = has_override(self.user["roles"])
+        lock = None
+        try:
+            row = await query(
+                self.db,
+                DfEngineGenerations,
+                columns=(DfEngineGenerations, DfEngineGenerationUploads.upload_status),
+                joins=((DfEngineGenerationUploads, DfEngineGenerationUploads.generation_id == DfEngineGenerations.id),),
+                filters=(DfEngineGenerations.uid == str(generation_uid),),  # type: ignore
+                fetch_one=True,
+            )
+            if not row:
+                raise DataNotFoundError(
+                    message="generation_not_found", error={"generation_uid": ["generation_not_found"]}
+                )
+            generation, upload_status = row
+            if generation.created_by != user_id and not can_override:
+                raise AuthorizationError(
+                    message="reupload_not_creator", error={"generation_uid": ["reupload_not_creator"]}
+                )
+            if upload_status != UploadStatuses.failed:
+                raise DataValidationError(
+                    message="reupload_not_permitted", error={"generation_uid": ["reupload_not_permitted"]}
+                )
+
+            key = cache_key.generation_reupload_lock(generation.id)
+            if not await self.redis.set(key, user_id, nx=True, ex=400):  # ttl > the uploader's 360s time limit
+                raise BaseError(
+                    status_code=status.HTTP_409_CONFLICT,
+                    message="reupload_in_progress",
+                    error={"generation_uid": ["reupload_in_progress"]},
+                )
+            lock = key
+
+            async def refresh_caches() -> None:
+                await delete_pattern(
+                    self.redis, cache_key.generation_files_main_list_pattern(generation.task_id or generation.song_id)
+                )
+                await invalidate_generation_lists(ctx, {user_id, generation.created_by})
+                await invalidate_project_files(self.redis, cache_key, generation.project_id)
+
+            # galleries list processing/success only: show it as in-flight until the worker finishes
+            generation.status = GenerationStatuses.processing
+            self.db.add(generation)
+            await self.db.commit()
+            await refresh_caches()
+            try:
+                udin_uploader.delay(generation.id, generation.created_by)  # type: ignore
+            except Exception:
+                generation.status = GenerationStatuses.failed
+                self.db.add(generation)
+                await self.db.commit()
+                await refresh_caches()
+                raise
+
+            items = await get_failed_upload_generations(ctx, user_id, True, generation_uid=str(generation_uid))
+            response.data = items[0] if items else None
+            response.message = resolve_message("reupload_queued", current_lang.get())
+            logging.info(f"[reupload-failed-generation] user={user_id} generation_uid={generation_uid} queued")
+        except BaseError as e:
+            logging.warning(
+                f"[reupload-failed-generation] user={user_id} generation_uid={generation_uid} "
+                f"rejected ({e.status_code}): {e.message}"
+            )
+            raise
+        except Exception:
+            if lock:
+                await self.redis.delete(lock)
+            logging.error(
+                f"[reupload-failed-generation] user={user_id} generation_uid={generation_uid} failed\n"
+                f"{traceback.format_exc()}"
+            )
+            raise ServiceError()
+        return response
+
     @controller.get(
         "/files/archieves",
         summary="Get archived files.",
