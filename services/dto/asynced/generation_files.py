@@ -8,6 +8,7 @@ from services.mysql.model import (
     DfEngineGenerations,
     DfEngineGenerationReferences,
     DfEngineGenerationResults,
+    DfEngineGenerationUploads,
     DfEngineModelOptions,
     DfEngineUploadFiles,
     DfEngineUploadFileReferences,
@@ -17,6 +18,7 @@ from services.mysql.model import (
     ProjectSongLists,
     ProjectTasks,
 )
+from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from log import logging
 from error import DataNotFoundError, DataValidationError
@@ -554,6 +556,86 @@ async def get_generation_main_files(
         f"count={len(generation_main_files)}"
     )
     return await overlay_favourites(ctx, _grant(generation_main_files, can_override), user_id)
+
+
+def _failed_upload_variant(record: dict[str, Any]) -> dict[str, Any]:
+    """A generation whose result never reached Udin: no result row, so only generation-level fields are filled."""
+    task = record.get("task") or record.get("song") or {}
+    return GenerationVariant(
+        kind=record["kind"],
+        generation_uid=record["uid"],
+        is_main=False,
+        status=record["status"],
+        task_uid=(record.get("task") or {}).get("uid"),
+        song_uid=(record.get("song") or {}).get("uid"),
+        task=task.get("name"),
+        created_at=record["created_at"],
+        cost_usd=format_usd(record["cost"]),
+        cost_idr=format_idr(record["cost"], USD_TO_IDR_RATE),
+        model=(record["model_option"] or {}).get("name"),
+        prompt=record["prompt"],
+        full_prompt=record["full_prompt"],
+        parameter=record["parameter"],
+        creator=format_user_employees(record.get("created_by_user")),
+    ).model_dump(mode="json")
+
+
+async def get_failed_upload_generations(
+    ctx: ConnectionContext,
+    user_id: int,
+    can_override: bool,
+    project_id: Optional[int] = None,
+    task_id: Optional[int] = None,
+    song_id: Optional[int] = None,
+    search: Optional[str] = None,
+    generation_uid: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Generations whose Udin upload exhausted every automatic retry (`upload_status == failed`): the manual re-upload
+    list. Not cached: it must reflect a re-upload the moment it succeeds."""
+    filters = [
+        DfEngineGenerationUploads.upload_status == UploadStatuses.failed,  # type: ignore
+        DfEngineGenerations.kind.in_(["image", "image_edit", "video"]),  # type: ignore
+    ]
+    if not can_override:
+        filters.append(DfEngineGenerations.created_by == user_id)  # type: ignore
+    if generation_uid:
+        filters.append(DfEngineGenerations.uid == generation_uid)  # type: ignore
+    if project_id:
+        filters.append(DfEngineGenerations.project_id == project_id)  # type: ignore
+    if task_id:
+        filters.append(DfEngineGenerations.task_id == task_id)  # type: ignore
+    if song_id:
+        filters.append(DfEngineGenerations.song_id == song_id)  # type: ignore
+    if search:
+        term = f"%{search.strip()}%"
+        filters.append(
+            or_(
+                DfEngineGenerations.model_option.has(DfEngineModelOptions.name.ilike(term)),  # type: ignore
+                DfEngineGenerations.results.any(  # type: ignore
+                    or_(DfEngineGenerationResults.name.ilike(term), DfEngineGenerationResults.path.ilike(term))  # type: ignore
+                ),
+            )
+        )
+
+    generations = await query(
+        ctx.db,
+        DfEngineGenerations,
+        joins=((DfEngineGenerationUploads, DfEngineGenerationUploads.generation_id == DfEngineGenerations.id),),
+        options=(
+            selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+            selectinload(DfEngineGenerations.task).load_only(ProjectTasks.uid, ProjectTasks.name),  # type: ignore
+            selectinload(DfEngineGenerations.song).load_only(ProjectSongLists.uid, ProjectSongLists.name),  # type: ignore
+            selectinload(DfEngineGenerations.created_by_user)  # type: ignore
+            .load_only(Users.image)  # type: ignore
+            .selectinload(Users.employees)  # type: ignore
+            .load_only(Employees.nickname),  # type: ignore
+        ),
+        filters=tuple(filters),
+        order_by=(DfEngineGenerations.created_at.desc(),),  # type: ignore
+    )
+    items = [_failed_upload_variant(record) for record in serialize(generations)]
+    logging.info(f"user={user_id} listed failed upload generations count={len(items)} override={can_override}")
+    return items
 
 
 async def get_archieved_files(

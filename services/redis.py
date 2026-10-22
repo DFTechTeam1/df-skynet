@@ -407,6 +407,9 @@ class CacheKeys:
             f":personal_file={personal_file}:has_override={has_override}"
         )
 
+    def generation_reupload_lock(self, generation_id: int) -> str:
+        return f"generation_reupload_lock:{generation_id}"
+
     def main_generations_project_pattern(self, project_id: Optional[int]) -> str:
         """Every `main_generations_refactored` entry of one project (all viewers, tasks and flags)."""
         return f"main_generations:viewer_id=*:project_id={project_id}:*"
