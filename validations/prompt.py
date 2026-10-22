@@ -139,13 +139,10 @@ async def validate_prompt(
         name: (float, Field(ge=0, le=1, description=PromptValidationResponse.model_fields[name].description))
         for name in rules
     }
-    print(fields)
     output_model = create_model("ActiveValidation", **fields)
-    print(output_model.model_json_schema())
     system_prompt = BASE_SYSTEM_PROMPT.format(
         dimensions="\n".join(f"- {name}: {rule['instruction']}" for name, rule in rules.items())
     )
-    print(system_prompt)
 
     caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"})
     try:

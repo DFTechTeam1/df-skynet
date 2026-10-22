@@ -154,6 +154,14 @@ STAGE_STATUSES = {
 }
 
 
+def _release_reupload_lock(generation_id: int) -> None:
+    """Free the manual re-upload lock once the task is terminal, so a failed manual upload can be retried right away."""
+    try:
+        sync_client().delete(CacheKeys().generation_reupload_lock(generation_id))
+    except Exception:
+        logging.exception(f"failed to release reupload lock generation_id={generation_id}")
+
+
 class GenerationTask(celery_app.Task):
     def _attempt_duration_ms(self) -> Optional[int]:
         """Milliseconds since this attempt's `before_start`, or None if it never ran. The start time lives on
@@ -205,6 +213,7 @@ class GenerationTask(celery_app.Task):
             broadcast_generation_status(project_uid, task_uid, user_uid, gid, "retry", error=str(exc))
 
     def on_success(self, retval: Any, task_id: str, args: tuple, kwargs: dict) -> None:
+        _release_reupload_lock(args[0] if args else kwargs["generation_id"])
         log_queue(
             generation_id=args[0] if args else kwargs["generation_id"],
             queue_name=self.name,
@@ -230,6 +239,7 @@ class GenerationTask(celery_app.Task):
             else {"message": str(exc)}
         )
         generation_id = args[0] if args else kwargs["generation_id"]
+        _release_reupload_lock(generation_id)
         _mark_generation_failed(generation_id)
         log_queue(
             generation_id=generation_id,
