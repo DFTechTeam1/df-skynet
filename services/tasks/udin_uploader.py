@@ -8,6 +8,7 @@ from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
 from services.api_caller import APICaller
 from services.celery_app import celery_app
+from services.slack_notifier import notify_udin_upload_failed
 from services.dto import SyncedConnectionContext
 from services.dto.synced.projects import get_project
 from services.mysql import get_sync_db
@@ -363,9 +364,11 @@ def _bump_sweep_attempts(generation_id: int, final: bool = False, detail: str = 
             upload = DfEngineGenerationUploads(generation_id=generation_id)
         upload.sweep_attempts += 1
         newly_flagged = final and not upload.needs_reconciliation
+        newly_failed = False
         if final:
             upload.needs_reconciliation = True
             if upload.sweep_attempts >= MAX_SWEEP_ATTEMPTS:
+                newly_failed = upload.upload_status != UploadStatuses.failed
                 upload.upload_status = UploadStatuses.failed  # auto-retry exhausted: only a manual re-upload is left
         db.add(upload)
         db.flush()
@@ -378,3 +381,18 @@ def _bump_sweep_attempts(generation_id: int, final: bool = False, detail: str = 
                     detail=detail[:2000],
                 )
             )
+
+    if newly_failed:
+        generation_uid, project_name = str(generation_id), "-"
+        try:
+            with get_sync_db() as db:
+                generation = db.get(DfEngineGenerations, generation_id)
+                if generation is not None:
+                    generation_uid = str(generation.uid)
+                    if generation.project_id is not None:
+                        project_name = get_project(
+                            SyncedConnectionContext(db, sync_client(), CacheKeys()), project_id=generation.project_id
+                        )["name"]
+        except Exception:
+            logging.exception(f"slack notify lookup failed generation_id={generation_id}")
+        notify_udin_upload_failed(generation_uid, project_name, detail)
