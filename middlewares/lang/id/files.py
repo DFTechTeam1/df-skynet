@@ -62,7 +62,7 @@ class FilesMessage:
             "reupload_not_creator": "Hanya pembuat yang dapat mengunggah ulang generasi ini.",
             "reupload_not_permitted": "Generasi ini tidak memerlukan unggah ulang manual.",
             "reupload_in_progress": "Unggah ulang untuk generasi ini sedang berlangsung.",
-            "reupload_queued": "Unggah ulang ke Udin telah dijadwalkan.",
+            "reupload_queued": "File Anda sedang diunggah ulang. Mohon tunggu sebentar.",
             "folder_created": "Folder berhasil dibuat.",
             "folder_deleted": "Folder berhasil dihapus.",
             "files_deleted": "File berhasil dihapus.",
