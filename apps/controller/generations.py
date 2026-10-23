@@ -3,7 +3,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
-from fastapi import status, Path, Query
+from fastapi import status, Path, Query, Depends
 from fastapi_controller import controller
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -13,6 +13,7 @@ from schemas.response import PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql import get_usd_rate, query
+from apps.dependency.rate_limitter import rate_limit
 from services.mysql.model import (
     DfEngineModelOptions,
     DfEngineGenerations,
@@ -239,6 +240,7 @@ class GenerationsController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
+        dependencies=[Depends(rate_limit(2, 60))],
     )
     async def generation_with_uid_to_enhance_user_prompt(
         self, schema: PromptEnhancerPayload, task_uid: UUID = Path(..., description="Task UID.")
@@ -350,6 +352,7 @@ class GenerationsController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
+        dependencies=[Depends(rate_limit(5, 60))],
     )
     async def generation_with_uid_to_edit_generated_image(
         self, schema: EditImageGenerationPayload, file_uid: UUID = Path(description="File UID.")
@@ -624,6 +627,7 @@ class GenerationsController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
+        dependencies=[Depends(rate_limit(5, 60))],
     )
     async def generation_with_uid_to_generate_an_image_or_video(
         self, schema: ImageVideoGenerationPayload, task_uid: UUID = Path(description="Task UID")

@@ -40,6 +40,11 @@ async def get_stored_credits(db: AsyncSession) -> Optional[dict[str, Any]]:
     return json.loads(row.value) if row and row.value else None
 
 
+def get_stored_credits_sync(db: Session) -> Optional[dict[str, Any]]:
+    row = db.execute(select(DfEngineSettings).where(*_filters())).scalars().first()
+    return json.loads(row.value) if row and row.value else None
+
+
 async def refresh_credits(db: AsyncSession) -> Optional[dict[str, Any]]:
     """Fetch the live balance and store it in the single `openrouter_credits` row. None on upstream error."""
     async with httpx.AsyncClient(base_url=OPENROUTER_BASE_URL, headers=_headers(), timeout=TIMEOUT) as client:
