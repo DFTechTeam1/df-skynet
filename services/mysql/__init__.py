@@ -191,7 +191,6 @@ def get_usd_rate(db: Session) -> Decimal:
     """USD->base-currency rate from the `get_currency_rate` procedure; 0 if the call fails."""
     try:
         row = db.execute(text("CALL get_currency_rate('USD')")).fetchone()
-        print(row)
         return Decimal(str(row[0])) if row else Decimal("0")
     except Exception:
         logging.error(f"get_usd_rate failed, storing 0: {traceback.format_exc()}")

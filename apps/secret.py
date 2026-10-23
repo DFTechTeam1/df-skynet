@@ -24,7 +24,6 @@ DB_HOST = os.getenv("DB_HOST", "")
 DB_PORT = os.getenv("DB_PORT", "")
 DB_SYNC_URL = f"mysql+pymysql://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 DB_ASYNC_URL = f"mysql+aiomysql://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-print(DB_ASYNC_URL)
 JWT_PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "")
 JWT_ISSUER = os.getenv("JWT_ISSUER", "")
 JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "")
