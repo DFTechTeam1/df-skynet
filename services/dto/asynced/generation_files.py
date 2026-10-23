@@ -146,7 +146,13 @@ async def get_generation_main_refactored(
         DfEngineGenerations.kind.in_(["image", "image_edit", "video"]),  # type: ignore
         or_(
             DfEngineGenerations.results.any(DfEngineGenerationResults.is_main.is_(True)),  # type: ignore
-            ~DfEngineGenerations.results.any(),  # type: ignore
+            and_(
+                ~DfEngineGenerations.results.any(),  # type: ignore
+                or_(
+                    DfEngineGenerations.kind != "image_edit",  # type: ignore
+                    ~DfEngineGenerations.generation_references.any(),  # type: ignore
+                ),
+            ),
         ),
     ]
 

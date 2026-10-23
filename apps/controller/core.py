@@ -10,7 +10,7 @@ from redis.asyncio import Redis
 
 
 class CoreDependencies(ApiController):
-    throttle: Any = Depends(rate_limit(times=5, seconds=60))
+    throttle: Any = Depends(rate_limit())
     user: dict[str, Any] = Depends(get_user)
     db: AsyncSession = Depends(get_db)
     redis: Redis = Depends(get_redis)

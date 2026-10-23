@@ -59,8 +59,16 @@ def _reset_rate_limiter():
     the current test instead of accumulating across the whole session.
     """
     from apps.controller.core import CoreDependencies
+    from apps.dependency.rate_limitter import RateLimiter
+    from apps.main import app
 
     CoreDependencies.throttle.dependency.limiter.bucket_factory.buckets.clear()
+    # per-route `dependencies=[Depends(rate_limit(n, s))]` limiters (e.g. the 5/min generation create)
+    # are separate instances, so clear those too
+    for route in app.routes:
+        for dep in getattr(route, "dependencies", None) or []:
+            if isinstance(dep.dependency, RateLimiter):
+                dep.dependency.limiter.bucket_factory.buckets.clear()
     yield
 
 
