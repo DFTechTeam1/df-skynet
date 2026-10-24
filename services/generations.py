@@ -1,5 +1,8 @@
+import traceback
 from typing import Any
-from services.mysql.model.df_engine_generations import GenerationKinds
+from sqlalchemy.ext.asyncio import AsyncSession
+from log import logging
+from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 
 # Generation kinds the picker offers, and the section each lands in (an edited image is still an image).
@@ -66,3 +69,14 @@ def validation_record(model_id: int, api_key_id: int, project_id: int, task: dic
         "task_id": None if is_song else task["id"],
         "song_id": task["id"] if is_song else None,
     }
+
+
+async def dispatch_generation(db: AsyncSession, generation: Any, task: Any, user_id: int, **kwargs: Any) -> None:
+    """Enqueue the Celery task; if the broker rejects it, mark the committed row failed so it isn't a ghost `pending`."""
+    try:
+        task.delay(generation.id, user_id, **kwargs)
+    except Exception:
+        logging.error(traceback.format_exc())
+        generation.status = GenerationStatuses.failed
+        await db.commit()
+        raise
