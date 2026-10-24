@@ -271,6 +271,12 @@ def udin_uploader(
     finally:
         caller.sync_client.close()
 
+    with get_sync_db() as db:
+        saved = db.query(DfEngineGenerationResults).filter_by(generation_id=generation_id).all()
+    if not saved or any(not result.path for result in saved):
+        _bump_sweep_attempts(generation_id, final=True, detail="no stored file for generation")
+        raise GenerationStageError("no stored file returned for generation", source="udin", final=True)
+
     for attempt in range(1, LOCAL_COMMIT_ATTEMPTS + 1):
         try:
             with get_sync_db() as db:

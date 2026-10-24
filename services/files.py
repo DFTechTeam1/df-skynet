@@ -410,7 +410,7 @@ async def delete_upload_files_under(
         await ctx.redis.delete(ctx.key.user_file_detail(row.uid))  # type: ignore
         await ctx.db.delete(row)
     await ctx.db.flush()
-    return [row.uid for row in rows if row.type == UploadFileTypes.image]
+    return [row.uid for row in rows if row.type != UploadFileTypes.folder]
 
 
 def task_scope(project_task: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
@@ -480,7 +480,7 @@ async def apply_folder_changes(
             scopes.add((row.task_id, row.song_id))
             creators.add(row.created_by)
             upload_uids.add(row.uid)
-            if row.type == UploadFileTypes.image:
+            if row.type != UploadFileTypes.folder:
                 index_uploads.add(row.uid)
             ctx.db.add(row)
         results = await query(

@@ -41,6 +41,10 @@ class UploadedFileAction(BaseModel):
         return cls(can_rename=allowed, can_delete=allowed, can_choose_to_move=allowed)
 
 
+class FailedUploadAction(BaseModel):
+    can_reupload: bool = True  # false while a sweep or manual upload holds the generation's re-upload lock
+
+
 class GeneratedFileAction(BaseModel):
     can_set_archieve: bool = True
     can_set_main: bool = False

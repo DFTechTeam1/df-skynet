@@ -20,7 +20,13 @@ from services.redis import (
     set_json_sync,
     sync_client,
 )
-from services.tasks.base import GenerationTask, classify_error, response_error_message, retry_countdown
+from services.tasks.base import (
+    GenerationStageError,
+    GenerationTask,
+    classify_error,
+    response_error_message,
+    retry_countdown,
+)
 from services.tasks.udin_uploader import udin_uploader
 from utils.formatter import format_idr, format_usd
 
@@ -93,7 +99,11 @@ def image_generation(
 
     body = response.json()
     usage = body.get("usage", {})
-    images = {f"image.{idx}": item["b64_json"] for idx, item in enumerate(body["data"])}
+    images = {
+        f"image.{idx}": item["b64_json"] for idx, item in enumerate(body.get("data") or []) if item.get("b64_json")
+    }
+    if not images:
+        raise GenerationStageError("openrouter returned no images", source="openrouter", final=True)
     with get_sync_db() as db:
         ctx = SyncedConnectionContext(db, sync_client(), CacheKeys())
         generation = ctx.db.get(DfEngineGenerations, generation_id)

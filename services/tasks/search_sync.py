@@ -114,7 +114,10 @@ def search_backfill() -> dict[str, int]:
         upload_uids = [
             uid
             for (uid,) in db.query(DfEngineUploadFiles.uid)
-            .filter(DfEngineUploadFiles.type == UploadFileTypes.image, _not_indexed(DfEngineUploadFiles))
+            .filter(
+                DfEngineUploadFiles.type.in_((UploadFileTypes.image, UploadFileTypes.video)),
+                _not_indexed(DfEngineUploadFiles),
+            )
             .limit(BACKFILL_BATCH)
             .all()
         ]

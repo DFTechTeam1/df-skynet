@@ -30,9 +30,10 @@ def test_generation_qualifies_only_main_successful_media():
     assert not docs.generation_qualifies(SimpleNamespace(generation=None, is_main=True))
 
 
-def test_upload_qualifies_only_images():
+def test_upload_qualifies_images_and_videos():
     assert docs.upload_qualifies(SimpleNamespace(type=UploadFileTypes.image))
-    assert not docs.upload_qualifies(SimpleNamespace(type=UploadFileTypes.video))
+    assert docs.upload_qualifies(SimpleNamespace(type=UploadFileTypes.video))
+    assert not docs.upload_qualifies(SimpleNamespace(type=UploadFileTypes.folder))
     assert not docs.upload_qualifies(SimpleNamespace(type=UploadFileTypes.folder))
 
 
