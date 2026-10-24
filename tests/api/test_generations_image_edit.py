@@ -13,6 +13,7 @@ from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuF
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model import DfEngineGenerationReferences, DfEngineGenerations, DfEngineUploadFileReferences
+from services.mysql.model.df_engine_generations import GenerationKinds
 from services.mysql.model.df_engine_model_options import DfEngineModelOptions, ModelUsageTypes
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
@@ -472,6 +473,38 @@ async def test_editing_someone_elses_file_without_override_role_is_refused(
     )
     assert resp.status_code == 422
     assert resp.json()["error"] == {"file_uid": ["You can only edit images you generated or uploaded yourself."]}
+    assert fake_generation_backends == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [GenerationKinds.video, GenerationKinds.element, GenerationKinds.storyboard])
+async def test_editing_a_generation_that_is_not_image_or_image_edit_is_rejected(
+    authed_client,
+    project_task,
+    user_id,
+    image_model,
+    generation_menu_feature,
+    fake_generation_backends,
+    kind,
+):
+    """422 file_edit_image_only; only `image` / `image_edit` generations can be edited, and nothing is dispatched."""
+    menu, feature = generation_menu_feature
+    generation = DfEngineGenerationsFactory.create(
+        project_id=project_task.project_id,
+        task_id=project_task.id,
+        created_by=int(user_id),
+        sourceable_id=1,
+        model_id=image_model.id,
+        menu_id=menu.id,
+        feature_id=feature.id,
+        kind=kind,
+    )
+    source = DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), is_main=True)
+    resp = await authed_client.call(
+        "POST", _url(source.uid), json=_payload(menu, feature, image_model), raise_for_status=False
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == {"file_uid": [resolve_message("file_edit_image_only")]}
     assert fake_generation_backends == []
 
 
