@@ -416,12 +416,16 @@ class GenerationsController(CoreDependencies):
                 prior = serialize(
                     await query(
                         db=self.db,
-                        columns=(DfEngineGenerations.task_id, DfEngineGenerations.song_id),
+                        columns=(DfEngineGenerations.task_id, DfEngineGenerations.song_id, DfEngineGenerations.kind),
                         table=DfEngineGenerations,
                         filters=(DfEngineGenerations.uid == generated_files[0]["generation_uid"],),
                         fetch_one=True,
                     )
                 )
+                if prior["kind"] not in (GenerationKinds.image, GenerationKinds.image_edit):
+                    raise DataValidationError(
+                        message="file_edit_image_only", error={"file_uid": ["file_edit_image_only"]}
+                    )
 
             task = await get_project_task(ctx, task_id=prior["task_id"], song_id=prior["song_id"])
             # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
