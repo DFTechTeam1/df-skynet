@@ -71,8 +71,8 @@ def generation_qualifies(result: DfEngineGenerationResults) -> bool:
 
 
 def upload_qualifies(file: DfEngineUploadFiles) -> bool:
-    """Only image uploads are indexed (no videos, no folders)."""
-    return file.type == UploadFileTypes.image
+    """Image and video uploads are indexed (no folders)."""
+    return file.type in (UploadFileTypes.image, UploadFileTypes.video)
 
 
 def build_generation_doc(result: DfEngineGenerationResults) -> dict[str, Any]:

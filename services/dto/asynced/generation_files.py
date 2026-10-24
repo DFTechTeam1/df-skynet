@@ -24,7 +24,7 @@ from log import logging
 from error import DataNotFoundError, DataValidationError
 from services.mysql import query
 from config.variables import USD_TO_IDR_RATE
-from schemas.format.action import GeneratedFileAction
+from schemas.format.action import FailedUploadAction, GeneratedFileAction
 from utils.formatter import format_datetime, format_idr, format_usd, format_user_employees
 from utils.serializer import serialize
 from services.dto import ConnectionContext
@@ -640,6 +640,12 @@ async def get_failed_upload_generations(
         order_by=(DfEngineGenerations.created_at.desc(),),  # type: ignore
     )
     items = [_failed_upload_variant(record) for record in serialize(generations)]
+    if items:
+        # the lock is the source of truth for "an upload is queued or running" (sweep or manual)
+        ids = [generation.id for generation in generations]
+        locks = await ctx.redis.mget([ctx.key.generation_reupload_lock(gid) for gid in ids])
+        for item, lock in zip(items, locks):
+            item["action"] = FailedUploadAction(can_reupload=lock is None).model_dump()
     logging.info(f"user={user_id} listed failed upload generations count={len(items)} override={can_override}")
     return items
 

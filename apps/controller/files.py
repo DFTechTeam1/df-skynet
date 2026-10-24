@@ -700,7 +700,7 @@ class FilesController(CoreDependencies):
             )
             await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
             await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
-            await dispatch_search_sync(self.db, uploads=[row.uid for row in rows if row.type == UploadFileTypes.image])
+            await dispatch_search_sync(self.db, uploads=[row.uid for row in rows])
 
             logging.info(
                 f"[upload-files] user={user_id} task_uid={task_uid} saved={len(uploaded)} rows, cache invalidated"
@@ -755,7 +755,7 @@ class FilesController(CoreDependencies):
                 uploaded, generated = await search_project_files(
                     str(project_uid), search, ("image", "image_edit", "video", "folder"), user_id, can_override, my_task
                 )
-                if not uploaded and not generated:  # no hit: no placeholder skeleton
+                if not uploaded and not generated:
                     response.data = None
                 else:
                     await overlay_favourites(ctx, generated, user_id)
@@ -1365,7 +1365,7 @@ class FilesController(CoreDependencies):
             await apply_folder_changes(ctx, project_task, user_id)
             await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
             await dispatch_search_sync(
-                self.db, deleted_uploads=[row.uid for row in rows if row.type == UploadFileTypes.image]
+                self.db, deleted_uploads=[row.uid for row in rows if row.type != UploadFileTypes.folder]
             )
 
             response.data = await build_file_tree_refactored(
