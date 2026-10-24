@@ -19,6 +19,7 @@ class APICaller:
         base_url: str = "",
         headers: Optional[dict[str, str]] = None,
     ) -> None:
+        self._custom_transport = transport is not None
         self.client = AsyncClient(
             verify=verify,
             timeout=timeout,
@@ -38,7 +39,7 @@ class APICaller:
 
     async def call(
         self,
-        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
+        method: Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
         url: str,
         raise_for_status: bool = True,
         **kwargs: Any,
@@ -77,6 +78,8 @@ class APICaller:
 
     async def close(self) -> None:
         await self.client.aclose()
+        if not self._custom_transport:  # a shared async transport has no sync close()
+            self.sync_client.close()
 
     async def __aenter__(self) -> "APICaller":
         return self

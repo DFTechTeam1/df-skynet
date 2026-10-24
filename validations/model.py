@@ -37,12 +37,20 @@ async def validate_image_availability(references: list[str]) -> list[str]:
     if not references:
         return []
 
-    api_caller = APICaller()
-    checks = await asyncio.gather(
-        *(api_caller.call("GET", url, raise_for_status=False) for url in references),
-        return_exceptions=True,
-    )
-    await api_caller.close()
+    async def check(url: str) -> Any:
+        # HEAD is cheap; some hosts reject it (405/403/501), so fall back to GET on a status error only
+        # (not on timeout, which would double the wait).
+        res = await api_caller.call("HEAD", url, raise_for_status=False, follow_redirects=True)
+        if res.is_error:
+            res = await api_caller.call("GET", url, raise_for_status=False, follow_redirects=True)
+        return res
+
+    # ponytail: 8s ceiling keeps the request under typical gateway limits; slow CDNs report file_not_found.
+    api_caller = APICaller(timeout=8)
+    try:
+        checks = await asyncio.gather(*(check(url) for url in references), return_exceptions=True)
+    finally:
+        await api_caller.close()
 
     errors: dict[str, list[str]] = {}
     for idx, check in enumerate(checks):

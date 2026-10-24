@@ -196,7 +196,8 @@ async def validate_prompt(
         messages.append({"role": "system", "content": f"Dimension {name}:\n{rule['instruction']}"})
         messages.append({"role": "user", "content": prompt})
 
-    caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"})
+    # ponytail: 30s ceiling (was 120s default); a timeout fails closed as prompt_ranking_failed.
+    caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"}, timeout=30)
     try:
         response = await caller.openrouter(
             "POST",
