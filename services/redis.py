@@ -373,6 +373,9 @@ class CacheKeys:
     def get_project_pics(self, project_id: int) -> str:
         return f"projects:pics:project_id={project_id}"
 
+    def get_project_pics_pattern(self) -> str:
+        return "projects:pics:project_id=*"
+
     # --- employees ---
     def active_employee(self, user_id: Optional[int] = None, employee_id: Optional[int] = None) -> str:
         return f"employees:active:user_id={user_id}:employee_id={employee_id}"
