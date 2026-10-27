@@ -36,7 +36,11 @@ async def get_api_key(ctx: ConnectionContext, employee_id: int, raise_if_missing
         return None
 
     result = serialize(api_key)
-    await set_json(ctx.redis, cache_key, result)
+    ttl = 86400
+    if api_key.expires_at:
+        ttl = min(ttl, int((api_key.expires_at - local_time()).total_seconds()))
+    if ttl > 0:
+        await set_json(ctx.redis, cache_key, result, ttl=ttl)
     return result
 
 

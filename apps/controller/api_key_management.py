@@ -173,7 +173,10 @@ class APIKeyManagementController(CoreDependencies):
                 f"user={self.user['user_id']} created API key {schema.name!r} for employee {employee.id} "
                 f"(is_main={is_main}) in {int((time.perf_counter() - started_at) * 1000)}ms"
             )
+            # commit before invalidating so a concurrent read cannot re-cache the pre-commit row
+            await self.db.commit()
             await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            await delete_pattern(self.redis, cache_key.get_project_pics_pattern())
             response.data = (await self.api_key_management_to_fetch_available_keys()).data
 
         except BaseError as e:
@@ -378,7 +381,10 @@ class APIKeyManagementController(CoreDependencies):
                 f"user={self.user['user_id']} rotation complete — {rotated} rotated, {removed} expired removed "
                 f"of {len(records)} candidate(s)"
             )
+            # commit before invalidating so a concurrent read cannot re-cache the pre-commit row
+            await self.db.commit()
             await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            await delete_pattern(self.redis, cache_key.get_project_pics_pattern())
             response.data = (await self.api_key_management_to_fetch_available_keys()).data
 
         except BaseError as e:
@@ -517,7 +523,10 @@ class APIKeyManagementController(CoreDependencies):
                 f"in {int((time.perf_counter() - started_at) * 1000)}ms"
             )
 
+            # commit before invalidating so a concurrent read cannot re-cache the pre-commit row
+            await self.db.commit()
             await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            await delete_pattern(self.redis, cache_key.get_project_pics_pattern())
             response.data = (await self.api_key_management_to_fetch_available_keys()).data
 
         except BaseError as e:
@@ -806,7 +815,10 @@ class APIKeyManagementController(CoreDependencies):
                 f"user={self.user['user_id']} updated API key {schema.name!r} (uid={uid}) — "
                 f"{'synced to OpenRouter' if openrouter_synced else 'local changes only'}, is_main={schema.is_main}"
             )
+            # commit before invalidating so a concurrent read cannot re-cache the pre-commit row
+            await self.db.commit()
             await delete_pattern(self.redis, cache_key.api_key_management_pattern())
+            await delete_pattern(self.redis, cache_key.get_project_pics_pattern())
             response.data = (await self.api_key_management_to_fetch_available_keys()).data
         except BaseError as e:
             logging.warning(

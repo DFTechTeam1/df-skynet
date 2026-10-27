@@ -241,7 +241,7 @@ class GenerationsController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
-        dependencies=[Depends(rate_limit(2, 60))],
+        dependencies=[Depends(rate_limit(5, 60))],
     )
     async def generation_with_uid_to_enhance_user_prompt(
         self, schema: PromptEnhancerPayload, task_uid: UUID = Path(..., description="Task UID.")
