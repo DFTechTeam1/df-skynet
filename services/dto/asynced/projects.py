@@ -2,7 +2,7 @@ import json
 from uuid import UUID
 from typing import Optional, Any
 from services.redis import get_json, set_json
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 from services.mysql.model import (
     Projects,
     ProjectTasks,
@@ -85,13 +85,26 @@ async def _resolve_song_task_row(
     if not filters:
         return None
 
-    song = await query(ctx.db, ProjectSongLists, filters=tuple(filters), fetch_one=True)
+    song = await query(
+        ctx.db,
+        ProjectSongLists,
+        options=(
+            load_only(ProjectSongLists.id, ProjectSongLists.uid, ProjectSongLists.project_id, ProjectSongLists.name),
+        ),
+        filters=tuple(filters),
+        fetch_one=True,
+    )
     if not song:
         return None
 
     assignment = await query(
         ctx.db,
         EntertainmentTaskSongs,
+        options=(
+            load_only(
+                EntertainmentTaskSongs.employee_id, EntertainmentTaskSongs.status, EntertainmentTaskSongs.time_tracker
+            ),
+        ),
         filters=(EntertainmentTaskSongs.project_song_list_id == song.id,),
         fetch_one=True,
     )
@@ -173,7 +186,12 @@ async def get_project_pics(ctx: ConnectionContext, project_id: int) -> list[dict
         logging.info(f"project pics cache hit key={pics_key}")
         return pics
 
-    rows = await query(ctx.db, ProjectPersonInCharges, filters=(ProjectPersonInCharges.project_id == project_id,))
+    rows = await query(
+        ctx.db,
+        ProjectPersonInCharges,
+        options=(load_only(ProjectPersonInCharges.pic_id, ProjectPersonInCharges.is_lead),),
+        filters=(ProjectPersonInCharges.project_id == project_id,),
+    )
     pics = [serialize(row) for row in rows]
     await set_json(ctx.redis, pics_key, pics)
     logging.info(f"project pics cache set key={pics_key}")

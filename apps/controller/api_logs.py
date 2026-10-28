@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import traceback
 from fastapi import status, Query
 from fastapi_controller import controller
@@ -64,6 +65,22 @@ class ApiLogsController(CoreDependencies):
             records = await query(
                 db=self.db,
                 table=DfEngineExternalApiCalls,
+                options=(
+                    load_only(
+                        DfEngineExternalApiCalls.created_at,
+                        DfEngineExternalApiCalls.uid,
+                        DfEngineExternalApiCalls.name,
+                        DfEngineExternalApiCalls.type,
+                        DfEngineExternalApiCalls.method,
+                        DfEngineExternalApiCalls.endpoint,
+                        DfEngineExternalApiCalls.request_payload,
+                        DfEngineExternalApiCalls.response_status_code,
+                        DfEngineExternalApiCalls.response_headers,
+                        DfEngineExternalApiCalls.response_body,
+                        DfEngineExternalApiCalls.error_message,
+                        DfEngineExternalApiCalls.duration_ms,
+                    ),
+                ),
                 filters=filters,
                 order_by=(DfEngineExternalApiCalls.created_at.desc(), DfEngineExternalApiCalls.id.desc()),  # type: ignore
                 limit=itemsPerPage,

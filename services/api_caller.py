@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import json
 import time
 from typing import Any, Literal, Optional
@@ -120,7 +121,13 @@ class APICaller:
             )
 
         async for db in get_db():
-            employee = await query(db=db, table=Employees, filters=(Employees.user_id == user_id,), fetch_one=True)
+            employee = await query(
+                db=db,
+                table=Employees,
+                options=(load_only(Employees.nickname),),
+                filters=(Employees.user_id == user_id,),
+                fetch_one=True,
+            )
             db.add(
                 DfEngineExternalApiCalls(
                     name=employee.nickname if employee else None,

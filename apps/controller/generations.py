@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import status, Path, Query, Depends
 from fastapi_controller import controller
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from config.variables import USD_TO_IDR_RATE
 from schemas.response import PromptEnhancerResult, Response
@@ -136,6 +136,7 @@ class GenerationsController(CoreDependencies):
             model = await query(
                 db=self.db,
                 table=DfEngineModelOptions,
+                options=(load_only(DfEngineModelOptions.id),),
                 filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
                 fetch_one=True,
             )

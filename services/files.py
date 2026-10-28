@@ -4,7 +4,7 @@ from urllib.parse import unquote
 from fastapi import status
 from httpx import Timeout, TimeoutException
 from sqlalchemy import or_
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 from error import BaseError, DataNotFoundError, DataValidationError
 from log import logging
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
@@ -332,6 +332,7 @@ async def ensure_task_assigned(ctx: ConnectionContext, project_task: dict[str, A
     assignment = await query(
         ctx.db,
         EntertainmentTaskSongs,
+        options=(load_only(EntertainmentTaskSongs.id),),
         filters=(
             EntertainmentTaskSongs.project_song_list_id == project_task["id"],
             EntertainmentTaskSongs.employee_id == employee["id"],

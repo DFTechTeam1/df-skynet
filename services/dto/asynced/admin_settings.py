@@ -2,7 +2,7 @@ import json
 from typing import Any, Optional, Union
 from uuid import UUID
 from sqlalchemy import func
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 from schemas.payload.setting import AdminGlobalSettingPayload
 from services.mysql import query
 from services.mysql.model import (
@@ -151,7 +151,12 @@ async def get_admin_settings(ctx: ConnectionContext) -> dict[str, Any]:
         logging.info(f"admin settings cache hit key={settings_key}")
         return settings
 
-    records = await query(ctx.db, DfEngineSettings, filters=(DfEngineSettings.code == SETTING_CODE,))  # type: ignore
+    records = await query(
+        ctx.db,
+        DfEngineSettings,
+        options=(load_only(DfEngineSettings.key, DfEngineSettings.value),),
+        filters=(DfEngineSettings.code == SETTING_CODE,),  # type: ignore
+    )
     settings = {row.key: (json.loads(row.value) if row.value else None) for row in records}
 
     await set_json(ctx.redis, settings_key, settings)
@@ -173,13 +178,20 @@ async def get_project_setting(
         filters.append(Projects.uid == str(project_uid))  # type: ignore
     if project_id is not None:
         filters.append(Projects.id == project_id)  # type: ignore
-    project = await query(ctx.db, Projects, filters=tuple(filters), fetch_one=True)
+    project = await query(
+        ctx.db,
+        Projects,
+        options=(load_only(Projects.id, Projects.name, Projects.classification, Projects.project_class_id),),
+        filters=tuple(filters),
+        fetch_one=True,
+    )
     if not project:
         raise DataNotFoundError(message="project_not_found")
 
     saved = await query(
         ctx.db,
         DfEngineProjectSettings,
+        options=(load_only(*(getattr(DfEngineProjectSettings, f) for f in PROJECT_SETTING_LIMIT_FIELDS)),),
         filters=(DfEngineProjectSettings.project_id == project.id,),  # type: ignore
         fetch_one=True,
     )
@@ -192,6 +204,7 @@ async def get_project_setting(
         class_limits_row = await query(
             ctx.db,
             DfEngineSettings,
+            options=(load_only(DfEngineSettings.value),),
             filters=(
                 DfEngineSettings.code == SETTING_CODE,  # type: ignore
                 DfEngineSettings.key == "project_class_limitations",  # type: ignore

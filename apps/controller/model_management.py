@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import json
 import time
 import traceback
@@ -386,6 +387,7 @@ class ModelManagementController(CoreDependencies):
                                 user_data = await query(
                                     db=self.db,
                                     table=Users,
+                                    options=(load_only(Users.email, Users.username),),
                                     filters=(Users.id == self.user["user_id"],),  # type: ignore
                                     fetch_one=True,
                                 )

@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import status, Query, Request, Path
 from fastapi_controller import controller
 from sqlalchemy import func
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from schemas.response import PaginationResponse, Response
 from schemas.payload.setting import AdminGlobalSettingPayload, ProjectClassLimitations, ProjectSettingPayload
@@ -191,6 +191,15 @@ class SettingController(CoreDependencies):
                 model = await query(
                     db=self.db,
                     table=DfEngineModelOptions,
+                    options=(
+                        load_only(
+                            DfEngineModelOptions.uid,
+                            DfEngineModelOptions.name,
+                            DfEngineModelOptions.type,
+                            DfEngineModelOptions.is_enabled,
+                            DfEngineModelOptions.is_available,
+                        ),
+                    ),
                     filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
                     fetch_one=True,
                 )
@@ -204,7 +213,11 @@ class SettingController(CoreDependencies):
                     raise DataValidationError(message="setting_engine_model_must_be_available")
                 resolved_model[field] = {"uid": model.uid, "name": model.name}
 
-            project_classes = await query(db=self.db, table=ProjectClasses)  # type: ignore
+            project_classes = await query(
+                db=self.db,
+                table=ProjectClasses,
+                options=(load_only(ProjectClasses.id, ProjectClasses.name, ProjectClasses.color),),
+            )  # type: ignore
             class_by_id = {pc.id: pc for pc in project_classes}
             unknown_class_fields = {
                 f"project_class_limitations.{index}.id": ["project_class_not_found"]
@@ -287,6 +300,7 @@ class SettingController(CoreDependencies):
                 user_row = await query(
                     db=self.db,
                     table=Users,
+                    options=(load_only(Users.email, Users.username),),
                     filters=(Users.id == int(self.user["user_id"]),),  # type: ignore
                     fetch_one=True,
                 )
@@ -383,6 +397,7 @@ class SettingController(CoreDependencies):
             project = await query(
                 db=self.db,
                 table=Projects,
+                options=(load_only(Projects.id, Projects.name, Projects.classification),),
                 filters=(Projects.uid == str(uid),),  # type: ignore
                 fetch_one=True,
             )

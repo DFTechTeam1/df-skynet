@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import sys
 import time
 import asyncio
@@ -23,7 +24,7 @@ async def seed() -> None:
         return
 
     async with make_session(DB_ASYNC_URL)() as db:
-        user = await query(db=db, table=Users, order_by=(Users.id,), fetch_one=True)  # type: ignore
+        user = await query(db=db, table=Users, options=(load_only(Users.id),), order_by=(Users.id,), fetch_one=True)  # type: ignore
         if not user:
             logging.error("seeder=api_key aborted, users table is empty")
             return

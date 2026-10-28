@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import sys
 import json
 import asyncio
@@ -167,10 +168,19 @@ def validation_config() -> list[dict]:
 
 async def seed() -> None:
     async with make_session(DB_ASYNC_URL)() as db:
-        existing = await query(db=db, table=DfEngineSettings, filters=(DfEngineSettings.code == SETTING_CODE,))
+        existing = await query(
+            db=db,
+            table=DfEngineSettings,
+            options=(load_only(DfEngineSettings.key),),
+            filters=(DfEngineSettings.code == SETTING_CODE,),
+        )
         existing_keys = {row.key for row in existing}
 
-        project_classes = await query(db=db, table=ProjectClasses)
+        project_classes = await query(
+            db=db,
+            table=ProjectClasses,
+            options=(load_only(ProjectClasses.id, ProjectClasses.name, ProjectClasses.color),),
+        )
         if not project_classes:
             logging.error(f"seeder={SETTING_CODE} aborted, project_classes table is empty")
             return

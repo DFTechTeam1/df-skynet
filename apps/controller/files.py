@@ -27,6 +27,7 @@ from schemas.payload.files import (
     SetFavoritedPayload,
 )
 from sqlalchemy import or_, update
+from sqlalchemy.orm import load_only
 from schemas.response import Response
 from services.api_caller import APICaller
 from services.redis import CacheKeys, delete_pattern, invalidate_project_files
@@ -339,6 +340,7 @@ class FilesController(CoreDependencies):
             family = await query(
                 self.db,
                 DfEngineGenerationResults,
+                options=(load_only(DfEngineGenerationResults.uid),),
                 filters=(
                     or_(
                         DfEngineGenerationResults.id == group,  # type: ignore
@@ -353,6 +355,9 @@ class FilesController(CoreDependencies):
             generation = await query(
                 self.db,
                 DfEngineGenerations,
+                options=(
+                    load_only(DfEngineGenerations.task_id, DfEngineGenerations.song_id, DfEngineGenerations.project_id),
+                ),
                 filters=(DfEngineGenerations.id == row.generation_id,),  # type: ignore
                 fetch_one=True,
             )
@@ -440,6 +445,7 @@ class FilesController(CoreDependencies):
             result = await query(
                 self.db,
                 DfEngineGenerationResults,
+                options=(load_only(DfEngineGenerationResults.id),),
                 filters=(DfEngineGenerationResults.uid == str(file_uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -509,6 +515,14 @@ class FilesController(CoreDependencies):
             generation = await query(
                 self.db,
                 DfEngineGenerations,
+                options=(
+                    load_only(
+                        DfEngineGenerations.task_id,
+                        DfEngineGenerations.song_id,
+                        DfEngineGenerations.created_by,
+                        DfEngineGenerations.project_id,
+                    ),
+                ),
                 joins=((DfEngineGenerationResults, DfEngineGenerationResults.generation_id == DfEngineGenerations.id),),
                 filters=(DfEngineGenerationResults.uid == str(file_uid),),
                 fetch_one=True,
