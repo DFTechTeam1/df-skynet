@@ -33,14 +33,18 @@ async def get_project(
     if project_id is not None:
         filters.append(Projects.id == project_id)
 
-    row = await query(ctx.db, Projects, filters=tuple(filters), fetch_one=True)
+    row = await query(
+        ctx.db,
+        Projects,
+        options=(load_only(Projects.id, Projects.uid, Projects.name),),
+        filters=tuple(filters),
+        fetch_one=True,
+    )
     if not row:
         logging.warning(f"project not found project_uid={project_uid} project_id={project_id}")
         raise DataNotFoundError(message="project_not_found")
 
     project = serialize(row)
-    if project.get("led_detail"):
-        project["led_detail"] = json.loads(project["led_detail"])
     await set_json(ctx.redis, project_key, project)
     logging.info(f"project cache set key={project_key}")
     return project
@@ -61,15 +65,18 @@ async def _resolve_project_task_row(
         ctx.db,
         ProjectTasks,
         filters=tuple(filters),
-        options=(selectinload(ProjectTasks.project),),  # type: ignore
+        options=(
+            load_only(
+                ProjectTasks.id, ProjectTasks.uid, ProjectTasks.project_id, ProjectTasks.name, ProjectTasks.status
+            ),
+            selectinload(ProjectTasks.project).load_only(Projects.id, Projects.uid, Projects.name),  # type: ignore
+        ),
         fetch_one=True,
     )
     if not row:
         return None
 
     task = serialize(row)
-    if task["project"]["led_detail"]:
-        task["project"]["led_detail"] = json.loads(task["project"]["led_detail"])
     task["is_song"] = False
     return task
 

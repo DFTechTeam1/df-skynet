@@ -1,4 +1,4 @@
-import json
+from sqlalchemy.orm import load_only
 from uuid import UUID
 from typing import Optional, Any
 from services.redis import get_json_sync, set_json_sync
@@ -28,14 +28,18 @@ def get_project(
     if project_id is not None:
         filters.append(Projects.id == project_id)
 
-    row = query_sync(ctx.db, Projects, filters=tuple(filters), fetch_one=True)
+    row = query_sync(
+        ctx.db,
+        Projects,
+        options=(load_only(Projects.id, Projects.uid, Projects.name),),
+        filters=tuple(filters),
+        fetch_one=True,
+    )
     if not row:
         logging.warning(f"project not found project_uid={project_uid} project_id={project_id}")
         raise DataNotFoundError(message="project_not_found")
 
     project = serialize(row)
-    if project.get("led_detail"):
-        project["led_detail"] = json.loads(project["led_detail"])
     set_json_sync(ctx.redis, project_key, project)
     logging.info(f"project cache set key={project_key}")
     return project

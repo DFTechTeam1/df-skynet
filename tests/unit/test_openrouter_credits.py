@@ -66,3 +66,86 @@ async def test_logged_openrouter_call_triggers_refresh_and_failure_does_not_brea
     caller = APICaller(base_url="https://openrouter.ai/api/v1")
     res = await caller.openrouter("POST", "/chat/completions", user_id=1)
     assert res.status_code == 200 and calls == ["refresh"]
+
+
+def _settings_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool
+    from services.mysql.model import DfEngineSettings
+
+    eng = create_engine("sqlite://", poolclass=StaticPool)
+    DfEngineSettings.__table__.create(eng)
+    return Session(eng)
+
+
+def test_get_stored_credits_sync_reads_only_the_value_column():
+    from sqlalchemy import inspect
+
+    db = _settings_session()
+    assert oc.get_stored_credits_sync(db) is None
+    row = oc._apply(None, {"total_credits": 7, "total_usage": 1})
+    row.id = 1
+    db.add(row)
+    db.commit()
+    assert oc.get_stored_credits_sync(db) == {"total_credits": 7, "total_usage": 1}
+    db.expunge_all()
+    row = oc.query_sync(db, oc.DfEngineSettings, options=(oc.load_only(oc.DfEngineSettings.value),), fetch_one=True)
+    assert "updated_at" in inspect(row).unloaded
+
+
+@pytest.mark.asyncio
+async def test_get_stored_credits_async_uses_query_helper():
+    db = _settings_session()
+    row = oc._apply(None, {"total_credits": 3, "total_usage": 2})
+    row.id = 1
+    db.add(row)
+    db.commit()
+
+    class _Async:
+        async def execute(self, stmt):
+            return db.execute(stmt)
+
+    assert await oc.get_stored_credits(_Async()) == {"total_credits": 3, "total_usage": 2}
+
+
+def test_logged_call_sync_looks_up_employee_nickname_via_query_sync(monkeypatch):
+    import services.api_caller as ac
+
+    added = []
+
+    class _Db:
+        def add(self, obj):
+            added.append(obj)
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    seen = {}
+
+    def fake_query_sync(db, table, **kw):
+        seen.update(kw)
+        return SimpleNamespace(nickname="Zola")
+
+    monkeypatch.setattr(ac, "make_sync_session", lambda url: lambda: _Db())
+    monkeypatch.setattr(ac, "query_sync", fake_query_sync)
+    monkeypatch.setattr(ac, "OPENROUTER_MANAGEMENT_KEY", "")
+
+    class _Resp:
+        content = b"{}"
+        is_error = False
+        status_code = 200
+        headers = {}
+        request = SimpleNamespace(url="http://x")
+
+        def json(self):
+            return {}
+
+    caller = ac.APICaller.__new__(ac.APICaller)
+    caller.sync_client = SimpleNamespace(headers={})
+    caller.call_sync = lambda *a, **k: _Resp()
+    caller._logged_call_sync("udin", "GET", "http://x", False, 5)
+    assert added[0].name == "Zola" and len(seen["options"]) == 1

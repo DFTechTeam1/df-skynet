@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import random
 import time
 import httpx
@@ -133,7 +134,13 @@ def _generation_broadcast_context(generation_id: int, user_id: int) -> Optional[
 def _mark_generation_failed(generation_id: int) -> None:
     try:
         with get_sync_db() as db:
-            generation = db.get(DfEngineGenerations, generation_id)
+            generation = db.get(
+                DfEngineGenerations,
+                generation_id,
+                options=[
+                    load_only(DfEngineGenerations.status, DfEngineGenerations.task_id, DfEngineGenerations.project_id)
+                ],
+            )
             if generation is None or generation.status == GenerationStatuses.success:
                 return
             generation.status = GenerationStatuses.failed

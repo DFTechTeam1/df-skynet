@@ -3,8 +3,9 @@ from typing import Any, Optional
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from apps.secret import OPENROUTER_BASE_URL, OPENROUTER_MANAGEMENT_KEY
+from services.mysql import query, query_sync
 from services.mysql.model import DfEngineSettings
 from utils import local_time
 
@@ -36,12 +37,16 @@ def _apply(row: Optional[DfEngineSettings], credits: dict[str, Any]) -> DfEngine
 
 
 async def get_stored_credits(db: AsyncSession) -> Optional[dict[str, Any]]:
-    row = (await db.execute(select(DfEngineSettings).where(*_filters()))).scalars().first()
+    row = await query(
+        db, DfEngineSettings, options=(load_only(DfEngineSettings.value),), filters=_filters(), fetch_one=True
+    )
     return json.loads(row.value) if row and row.value else None
 
 
 def get_stored_credits_sync(db: Session) -> Optional[dict[str, Any]]:
-    row = db.execute(select(DfEngineSettings).where(*_filters())).scalars().first()
+    row = query_sync(
+        db, DfEngineSettings, options=(load_only(DfEngineSettings.value),), filters=_filters(), fetch_one=True
+    )
     return json.loads(row.value) if row and row.value else None
 
 
