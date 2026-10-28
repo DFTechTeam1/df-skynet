@@ -697,3 +697,33 @@ async def test_editing_a_missing_upload_is_404(authed_client, generation_menu_fe
         "POST", _url(uuid4()), json=_payload(menu, feature, image_model, source="upload"), raise_for_status=False
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "task, project, key",
+    [
+        ({"id": 1, "is_song": False, "status": 4, "project_id": 1}, {"status": 1}, "project_task_already_completed"),
+        ({"id": 1, "is_song": True, "status": 6, "project_id": 1}, {"status": 1}, "song_task_already_completed"),
+        ({"id": 1, "is_song": False, "status": 1, "project_id": 1}, {"status": 2}, "project_not_ongoing"),
+    ],
+)
+async def test_editing_is_refused_for_completed_task_or_inactive_project(
+    authed_client, source_root, generation_menu_feature, image_model, monkeypatch, task, project, key
+):
+    """422; a completed task/song or a non-ongoing project blocks the edit before anything is dispatched."""
+
+    async def _task(ctx, *a, **k):
+        return task
+
+    async def _project(ctx, *a, **k):
+        return project
+
+    monkeypatch.setattr("apps.controller.generations.get_project_task", _task)
+    monkeypatch.setattr("apps.controller.generations.get_project", _project)
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST", _url(source_root.uid), json=_payload(menu, feature, image_model), raise_for_status=False
+    )
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message(key, "en")

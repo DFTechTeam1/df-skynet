@@ -583,20 +583,11 @@ class FilesController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         can_override = has_override(self.user["roles"])
         try:
-            employee = await get_employee(ctx, user_id=user_id)
             project_task = await get_project_task(ctx, task_uid)
 
             task_id = project_task["id"] if project_task["is_song"] is False else None
             song_id = project_task["id"] if project_task["is_song"] is True else None
             project_uid = project_task["project"]["uid"]
-
-            if can_override is False:
-                """
-                Create a validation to ensure user is assigned on this tasks.
-                Will raised an error if user is not assigned to this tasks, unless the accessed user has override roles.
-                Validation will be enabled later.
-                """
-                # await assigned_to_task(ctx, employee['id'], task_id, song_id)
 
             if path:
                 """
@@ -754,16 +745,6 @@ class FilesController(CoreDependencies):
         can_override = has_override(self.user["roles"])
         try:
             project = await get_project(ctx, project_uid=project_uid)
-            employee = await get_employee(ctx, user_id=user_id)
-
-            if can_override is False:
-                """
-                Create a validation to ensure user is assigned on this tasks.
-                Will raised an error if user is not assigned to this tasks, unless the accessed user has override roles.
-                Validation will be enabled later.
-                """
-                # await assigned_to_task(ctx, employee['id'], task_id, song_id)
-                pass
 
             if search:
                 uploaded, generated = await search_project_files(

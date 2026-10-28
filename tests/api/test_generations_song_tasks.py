@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+from middlewares.lang import resolve_message
 from uuid import uuid4
 from sqlalchemy import delete, select
 from services.mysql.factory.df_engine_api_keys import DfEngineApiKeysFactory
@@ -295,7 +296,7 @@ async def test_generating_against_a_song_task_sets_song_id_not_task_id(
 
 
 @pytest.mark.asyncio
-async def test_generating_against_a_completed_song_task_currently_still_succeeds(
+async def test_generating_against_a_completed_song_task_is_refused(
     authed_client,
     make_song,
     generation_menu_feature,
@@ -305,12 +306,12 @@ async def test_generating_against_a_completed_song_task_currently_still_succeeds
     generation_project_settings,
     fake_generation_backends,
 ):
-    """The `song_task_already_completed` check is deliberately commented out in
-    apps/controller/generations.py for now, so every song status (including
-    completed) can still be generated against. Flip this assertion back to 422
-    (and restore resolve_message(...)) once that check is re-enabled."""
+    """422 song_task_already_completed; a completed song can no longer be generated against."""
     song = await make_song(SONG_STATUS_COMPLETED)
     menu, feature = generation_menu_feature
-    resp = await authed_client.call("POST", f"{URL}/{song.uid}", json=_payload(menu, feature, image_model))
-    assert resp.status_code == 200
-    assert len(fake_generation_backends) == 1
+    resp = await authed_client.call(
+        "POST", f"{URL}/{song.uid}", json=_payload(menu, feature, image_model), raise_for_status=False
+    )
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message("song_task_already_completed", "en")
+    assert fake_generation_backends == []

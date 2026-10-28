@@ -36,7 +36,7 @@ async def get_project(
     row = await query(
         ctx.db,
         Projects,
-        options=(load_only(Projects.id, Projects.uid, Projects.name),),
+        options=(load_only(Projects.id, Projects.uid, Projects.name, Projects.status),),
         filters=tuple(filters),
         fetch_one=True,
     )
@@ -69,7 +69,7 @@ async def _resolve_project_task_row(
             load_only(
                 ProjectTasks.id, ProjectTasks.uid, ProjectTasks.project_id, ProjectTasks.name, ProjectTasks.status
             ),
-            selectinload(ProjectTasks.project).load_only(Projects.id, Projects.uid, Projects.name),  # type: ignore
+            selectinload(ProjectTasks.project).load_only(Projects.id, Projects.uid, Projects.name, Projects.status),  # type: ignore
         ),
         fetch_one=True,
     )
