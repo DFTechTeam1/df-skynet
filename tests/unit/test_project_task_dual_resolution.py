@@ -18,7 +18,7 @@ async def test_resolves_a_regular_project_task_by_uid(monkeypatch):
     monkeypatch.setattr(
         projects,
         "serialize",
-        lambda row: {"id": 1, "uid": "task-uid", "project": {"led_detail": None}},
+        lambda row: {"id": 1, "uid": "task-uid", "project": {"uid": "p-uid", "name": "P"}},
     )
     monkeypatch.setattr(projects, "query", AsyncMock(return_value=task_row))
 

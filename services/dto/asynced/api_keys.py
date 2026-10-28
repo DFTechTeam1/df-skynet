@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 from typing import Any, Optional
 from sqlalchemy import func, or_
 from services.mysql import query
@@ -72,6 +73,7 @@ async def get_employee_api_key(ctx: ConnectionContext, project_id: int, employee
     transfer = await query(
         ctx.db,
         TransferTeamMembers,
+        options=(load_only(TransferTeamMembers.requested_by),),
         filters=(
             TransferTeamMembers.project_id == project_id,
             TransferTeamMembers.status == TRANSFER_STATUS_APPROVED,

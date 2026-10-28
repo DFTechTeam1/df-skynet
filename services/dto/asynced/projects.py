@@ -2,7 +2,7 @@ import json
 from uuid import UUID
 from typing import Optional, Any
 from services.redis import get_json, set_json
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 from services.mysql.model import (
     Projects,
     ProjectTasks,
@@ -33,14 +33,18 @@ async def get_project(
     if project_id is not None:
         filters.append(Projects.id == project_id)
 
-    row = await query(ctx.db, Projects, filters=tuple(filters), fetch_one=True)
+    row = await query(
+        ctx.db,
+        Projects,
+        options=(load_only(Projects.id, Projects.uid, Projects.name, Projects.status),),
+        filters=tuple(filters),
+        fetch_one=True,
+    )
     if not row:
         logging.warning(f"project not found project_uid={project_uid} project_id={project_id}")
         raise DataNotFoundError(message="project_not_found")
 
     project = serialize(row)
-    if project.get("led_detail"):
-        project["led_detail"] = json.loads(project["led_detail"])
     await set_json(ctx.redis, project_key, project)
     logging.info(f"project cache set key={project_key}")
     return project
@@ -61,15 +65,18 @@ async def _resolve_project_task_row(
         ctx.db,
         ProjectTasks,
         filters=tuple(filters),
-        options=(selectinload(ProjectTasks.project),),  # type: ignore
+        options=(
+            load_only(
+                ProjectTasks.id, ProjectTasks.uid, ProjectTasks.project_id, ProjectTasks.name, ProjectTasks.status
+            ),
+            selectinload(ProjectTasks.project).load_only(Projects.id, Projects.uid, Projects.name, Projects.status),  # type: ignore
+        ),
         fetch_one=True,
     )
     if not row:
         return None
 
     task = serialize(row)
-    if task["project"]["led_detail"]:
-        task["project"]["led_detail"] = json.loads(task["project"]["led_detail"])
     task["is_song"] = False
     return task
 
@@ -85,13 +92,26 @@ async def _resolve_song_task_row(
     if not filters:
         return None
 
-    song = await query(ctx.db, ProjectSongLists, filters=tuple(filters), fetch_one=True)
+    song = await query(
+        ctx.db,
+        ProjectSongLists,
+        options=(
+            load_only(ProjectSongLists.id, ProjectSongLists.uid, ProjectSongLists.project_id, ProjectSongLists.name),
+        ),
+        filters=tuple(filters),
+        fetch_one=True,
+    )
     if not song:
         return None
 
     assignment = await query(
         ctx.db,
         EntertainmentTaskSongs,
+        options=(
+            load_only(
+                EntertainmentTaskSongs.employee_id, EntertainmentTaskSongs.status, EntertainmentTaskSongs.time_tracker
+            ),
+        ),
         filters=(EntertainmentTaskSongs.project_song_list_id == song.id,),
         fetch_one=True,
     )
@@ -173,7 +193,12 @@ async def get_project_pics(ctx: ConnectionContext, project_id: int) -> list[dict
         logging.info(f"project pics cache hit key={pics_key}")
         return pics
 
-    rows = await query(ctx.db, ProjectPersonInCharges, filters=(ProjectPersonInCharges.project_id == project_id,))
+    rows = await query(
+        ctx.db,
+        ProjectPersonInCharges,
+        options=(load_only(ProjectPersonInCharges.pic_id, ProjectPersonInCharges.is_lead),),
+        filters=(ProjectPersonInCharges.project_id == project_id,),
+    )
     pics = [serialize(row) for row in rows]
     await set_json(ctx.redis, pics_key, pics)
     logging.info(f"project pics cache set key={pics_key}")

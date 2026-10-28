@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import sys
 import asyncio
 import traceback
@@ -33,10 +34,17 @@ SEED = [
     ("Elements", "generate_element_style", "image-asset-style"),
 ]
 
+# Vuetify (Material Design Icons) icon per menu
+MENU_ICONS = {
+    "Gen": "mdi-creation",
+    "Storyboard": "mdi-movie-open",
+    "Elements": "mdi-shape",
+}
+
 
 async def seed() -> None:
     async with make_session(DB_ASYNC_URL)() as db:
-        user = await query(db=db, table=Users, order_by=(Users.id,), fetch_one=True)  # type: ignore
+        user = await query(db=db, table=Users, options=(load_only(Users.id),), order_by=(Users.id,), fetch_one=True)  # type: ignore
         if not user:
             logging.error("seeder=menu aborted, users table is empty")
             return
@@ -65,7 +73,9 @@ async def seed() -> None:
         for menu_name, ftype, tpl in SEED:
             if menu_name not in menus:
                 menus[menu_name] = await upsert(
-                    DfEngineMenus, (DfEngineMenus.name == menu_name,), {"name": menu_name, "is_active": True}
+                    DfEngineMenus,
+                    (DfEngineMenus.name == menu_name,),
+                    {"name": menu_name, "icon": MENU_ICONS[menu_name], "is_active": True},
                 )
             if tpl not in templates:
                 templates[tpl] = await upsert(
@@ -83,6 +93,7 @@ async def seed() -> None:
             link = await query(
                 db=db,
                 table=DfEngineMenuFeatureMappings,
+                options=(load_only(DfEngineMenuFeatureMappings.id),),
                 filters=(DfEngineMenuFeatureMappings.feature_id == feature.id,),
                 fetch_one=True,
             )
@@ -94,6 +105,7 @@ async def seed() -> None:
             link = await query(
                 db=db,
                 table=DfEngineFeaturePromptMappings,
+                options=(load_only(DfEngineFeaturePromptMappings.id),),
                 filters=(DfEngineFeaturePromptMappings.feature_id == feature.id,),
                 fetch_one=True,
             )

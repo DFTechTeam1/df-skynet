@@ -27,6 +27,7 @@ from schemas.payload.files import (
     SetFavoritedPayload,
 )
 from sqlalchemy import or_, update
+from sqlalchemy.orm import load_only
 from schemas.response import Response
 from services.api_caller import APICaller
 from services.redis import CacheKeys, delete_pattern, invalidate_project_files
@@ -339,6 +340,7 @@ class FilesController(CoreDependencies):
             family = await query(
                 self.db,
                 DfEngineGenerationResults,
+                options=(load_only(DfEngineGenerationResults.uid),),
                 filters=(
                     or_(
                         DfEngineGenerationResults.id == group,  # type: ignore
@@ -353,6 +355,9 @@ class FilesController(CoreDependencies):
             generation = await query(
                 self.db,
                 DfEngineGenerations,
+                options=(
+                    load_only(DfEngineGenerations.task_id, DfEngineGenerations.song_id, DfEngineGenerations.project_id),
+                ),
                 filters=(DfEngineGenerations.id == row.generation_id,),  # type: ignore
                 fetch_one=True,
             )
@@ -440,6 +445,7 @@ class FilesController(CoreDependencies):
             result = await query(
                 self.db,
                 DfEngineGenerationResults,
+                options=(load_only(DfEngineGenerationResults.id),),
                 filters=(DfEngineGenerationResults.uid == str(file_uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -509,6 +515,14 @@ class FilesController(CoreDependencies):
             generation = await query(
                 self.db,
                 DfEngineGenerations,
+                options=(
+                    load_only(
+                        DfEngineGenerations.task_id,
+                        DfEngineGenerations.song_id,
+                        DfEngineGenerations.created_by,
+                        DfEngineGenerations.project_id,
+                    ),
+                ),
                 joins=((DfEngineGenerationResults, DfEngineGenerationResults.generation_id == DfEngineGenerations.id),),
                 filters=(DfEngineGenerationResults.uid == str(file_uid),),
                 fetch_one=True,
@@ -569,20 +583,11 @@ class FilesController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         can_override = has_override(self.user["roles"])
         try:
-            employee = await get_employee(ctx, user_id=user_id)
             project_task = await get_project_task(ctx, task_uid)
 
             task_id = project_task["id"] if project_task["is_song"] is False else None
             song_id = project_task["id"] if project_task["is_song"] is True else None
             project_uid = project_task["project"]["uid"]
-
-            if can_override is False:
-                """
-                Create a validation to ensure user is assigned on this tasks.
-                Will raised an error if user is not assigned to this tasks, unless the accessed user has override roles.
-                Validation will be enabled later.
-                """
-                # await assigned_to_task(ctx, employee['id'], task_id, song_id)
 
             if path:
                 """
@@ -740,16 +745,6 @@ class FilesController(CoreDependencies):
         can_override = has_override(self.user["roles"])
         try:
             project = await get_project(ctx, project_uid=project_uid)
-            employee = await get_employee(ctx, user_id=user_id)
-
-            if can_override is False:
-                """
-                Create a validation to ensure user is assigned on this tasks.
-                Will raised an error if user is not assigned to this tasks, unless the accessed user has override roles.
-                Validation will be enabled later.
-                """
-                # await assigned_to_task(ctx, employee['id'], task_id, song_id)
-                pass
 
             if search:
                 uploaded, generated = await search_project_files(

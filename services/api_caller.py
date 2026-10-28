@@ -1,10 +1,10 @@
+from sqlalchemy.orm import load_only
 import json
 import time
 from typing import Any, Literal, Optional
 from httpx import AsyncBaseTransport, AsyncClient, Client, Response
-from sqlalchemy import select
 from apps.secret import DB_SYNC_URL, OPENROUTER_MANAGEMENT_KEY
-from services.mysql import get_db, make_sync_session, query
+from services.mysql import get_db, make_sync_session, query, query_sync
 from services.mysql.model import DfEngineExternalApiCalls, Employees
 from services.openrouter_credits import refresh_credits, refresh_credits_sync
 from log import logging
@@ -120,7 +120,13 @@ class APICaller:
             )
 
         async for db in get_db():
-            employee = await query(db=db, table=Employees, filters=(Employees.user_id == user_id,), fetch_one=True)
+            employee = await query(
+                db=db,
+                table=Employees,
+                options=(load_only(Employees.nickname),),
+                filters=(Employees.user_id == user_id,),
+                fetch_one=True,
+            )
             db.add(
                 DfEngineExternalApiCalls(
                     name=employee.nickname if employee else None,
@@ -183,7 +189,13 @@ class APICaller:
 
         db = make_sync_session(DB_SYNC_URL)()
         try:
-            employee = db.execute(select(Employees).where(Employees.user_id == user_id)).scalars().first()
+            employee = query_sync(
+                db,
+                Employees,
+                options=(load_only(Employees.nickname),),
+                filters=(Employees.user_id == user_id,),
+                fetch_one=True,
+            )
             db.add(
                 DfEngineExternalApiCalls(
                     name=employee.nickname if employee else None,

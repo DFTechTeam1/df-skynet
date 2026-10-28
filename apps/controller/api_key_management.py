@@ -640,7 +640,6 @@ class APIKeyManagementController(CoreDependencies):
                 table=DfEngineApiKeys,
                 columns=(
                     DfEngineApiKeys.key,
-                    DfEngineApiKeys.hash,
                     DfEngineApiKeys.employee_id,
                     DfEngineApiKeys.name,
                     DfEngineApiKeys.expires_at,

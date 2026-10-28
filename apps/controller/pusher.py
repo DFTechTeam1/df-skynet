@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import re
 from uuid import UUID
 from fastapi import status
@@ -33,7 +34,11 @@ class PusherController(CoreDependencies):
             raise AuthorizationError(message="channel_access_denied")
         project_uid, task_uid, user_uid = match.groups()
         user_row = await query(
-            db=self.db, table=Users, filters=(Users.id == int(self.user["user_id"]),), fetch_one=True
+            db=self.db,
+            table=Users,
+            options=(load_only(Users.uid),),
+            filters=(Users.id == int(self.user["user_id"]),),
+            fetch_one=True,
         )
         if not user_row or user_uid != str(user_row.uid):
             raise AuthorizationError(message="channel_access_denied")

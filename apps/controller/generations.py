@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import status, Path, Query, Depends
 from fastapi_controller import controller
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from config.variables import USD_TO_IDR_RATE
 from schemas.response import PromptEnhancerResult, Response
@@ -30,7 +30,7 @@ from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLO
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.redis import get_json, set_json, delete_pattern, invalidate_project_files, CacheKeys
 from services.dto.asynced.projects import get_project, get_project_task
-from services.dto.asynced.employees import get_employee
+from services.dto.asynced.employees import get_employee, assigned_to_task
 from services.dto.asynced.files import get_user_uploaded_files_refactored
 from services.dto.asynced.generation_files import (
     get_generation_main_files,
@@ -136,6 +136,7 @@ class GenerationsController(CoreDependencies):
             model = await query(
                 db=self.db,
                 table=DfEngineModelOptions,
+                options=(load_only(DfEngineModelOptions.id),),
                 filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -249,22 +250,34 @@ class GenerationsController(CoreDependencies):
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
+        can_override = has_override(self.user["roles"])
 
-        # PROJECT_STATUS_ONGOING = 1
+        PROJECT_STATUS_ONGOING = 1
+        SONG_STATUS_COMPLETED = 6
+        TASK_STATUS_COMPLETED = 4
 
         try:
             task = await get_project_task(ctx, task_uid)
-            # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
-            #     raise DataValidationError(message="song_task_already_completed")
+            if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
+                raise DataValidationError(message="song_task_already_completed")
 
-            # if not task.get("is_song") and task["status"] != TASK_STATUS_ONPROCESS:
-            #     raise DataValidationError(message="project_task_not_onprocess")
+            if not task.get("is_song") and task["status"] == TASK_STATUS_COMPLETED:
+                raise DataValidationError(message="project_task_already_completed")
 
             project = await get_project(ctx, project_id=task["project_id"])
-            # if project['status'] != PROJECT_STATUS_ONGOING:
-            #     raise DataValidationError(message="project_not_ongoing")
+            if project["status"] != PROJECT_STATUS_ONGOING:
+                raise DataValidationError(message="project_not_ongoing")
 
             employee_user = await get_employee(ctx, user_id=user_id)
+
+            task_id = task["id"] if task["is_song"] is False else None
+            song_id = task["id"] if task["is_song"] is True else None
+
+            if can_override is False:
+                """
+                Ensure the user is assigned to this task, unless the accessed user has override roles.
+                """
+                await assigned_to_task(ctx, employee_user["id"], task_id, song_id)
 
             admin_setting = await get_admin_settings(ctx)
             project_setting = await get_project_setting(ctx, project_uid=project["uid"])
@@ -361,11 +374,13 @@ class GenerationsController(CoreDependencies):
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
+        can_override = has_override(self.user["roles"])
 
         PROJECT_STATUS_ONGOING = 1
+        SONG_STATUS_COMPLETED = 6
+        TASK_STATUS_COMPLETED = 4
 
         try:
-            can_override = has_override(self.user["roles"])
             is_upload_source = schema.source == "upload"
             if is_upload_source:
                 source_upload = serialize(
@@ -428,14 +443,14 @@ class GenerationsController(CoreDependencies):
                     )
 
             task = await get_project_task(ctx, task_id=prior["task_id"], song_id=prior["song_id"])
-            # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
-            #     raise DataValidationError(message="song_task_already_completed")
-            # if not task.get("is_song") and task["status"] != TASK_STATUS_ONPROCESS:
-            #     raise DataValidationError(message="project_task_not_onprocess")
+            if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
+                raise DataValidationError(message="song_task_already_completed")
+            if not task.get("is_song") and task["status"] == TASK_STATUS_COMPLETED:
+                raise DataValidationError(message="project_task_already_completed")
 
             project = await get_project(ctx, project_id=task["project_id"])
-            # if project['status'] != PROJECT_STATUS_ONGOING:
-            #     raise DataValidationError(message="project_not_ongoing")
+            if project["status"] != PROJECT_STATUS_ONGOING:
+                raise DataValidationError(message="project_not_ongoing")
 
             employee_user = await get_employee(ctx, user_id=user_id)
 
@@ -644,21 +659,33 @@ class GenerationsController(CoreDependencies):
         response = Response()
         user_id = int(self.user["user_id"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
+        can_override = has_override(self.user["roles"])
 
-        # PROJECT_STATUS_ONGOING = 1
+        PROJECT_STATUS_ONGOING = 1
+        SONG_STATUS_COMPLETED = 6
+        TASK_STATUS_COMPLETED = 4
 
         try:
             task = await get_project_task(ctx, task_uid)
-            # if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
-            #     raise DataValidationError(message="song_task_already_completed")
-            # if not task.get("is_song") and task["status"] != TASK_STATUS_ONPROCESS:
-            #     raise DataValidationError(message="project_task_not_onprocess")
+            if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
+                raise DataValidationError(message="song_task_already_completed")
+            if not task.get("is_song") and task["status"] == TASK_STATUS_COMPLETED:
+                raise DataValidationError(message="project_task_already_completed")
 
             project = await get_project(ctx, project_id=task["project_id"])
-            # if project['status'] != PROJECT_STATUS_ONGOING:
-            #     raise DataValidationError(message="project_not_ongoing")
+            if project["status"] != PROJECT_STATUS_ONGOING:
+                raise DataValidationError(message="project_not_ongoing")
 
             employee_user = await get_employee(ctx, user_id=user_id)
+
+            task_id = task["id"] if task["is_song"] is False else None
+            song_id = task["id"] if task["is_song"] is True else None
+
+            if can_override is False:
+                """
+                Ensure the user is assigned to this task, unless the accessed user has override roles.
+                """
+                await assigned_to_task(ctx, employee_user["id"], task_id, song_id)
 
             admin_setting = await get_admin_settings(ctx)
             project_setting = await get_project_setting(ctx, project_uid=project["uid"])

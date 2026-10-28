@@ -1,3 +1,4 @@
+from sqlalchemy.orm import load_only
 import sys
 import json
 import asyncio
@@ -50,12 +51,22 @@ async def sync_models() -> bool:
 
 async def seed(force_sync: bool = False) -> None:
     async with make_session(DB_ASYNC_URL)() as db:
-        has_models = await query(db=db, table=DfEngineModelOptions, fetch_one=True) is not None
+        has_models = (
+            await query(
+                db=db, table=DfEngineModelOptions, options=(load_only(DfEngineModelOptions.id),), fetch_one=True
+            )
+            is not None
+        )
     if force_sync or not has_models:
         synced = await sync_models()
         if synced:
             async with make_session(DB_ASYNC_URL)() as db:
-                if await query(db=db, table=DfEngineModelOptions, fetch_one=True) is None:
+                if (
+                    await query(
+                        db=db, table=DfEngineModelOptions, options=(load_only(DfEngineModelOptions.id),), fetch_one=True
+                    )
+                    is None
+                ):
                     logging.warning(
                         "seeder=model sync returned OK but df_engine_model_options is still empty, check OPENROUTER_API_KEY / df_engine_external_api_calls"
                     )

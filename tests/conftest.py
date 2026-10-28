@@ -318,7 +318,11 @@ async def project_task(db_session) -> ProjectTasks:
     row = (
         (
             await db_session.execute(
-                select(ProjectTasks).options(selectinload(ProjectTasks.project)).limit(1)  # type: ignore
+                select(ProjectTasks)
+                .join(Projects, Projects.id == ProjectTasks.project_id)  # type: ignore
+                .where(Projects.status == 1, ProjectTasks.status != 4)  # ongoing project, task not completed
+                .options(selectinload(ProjectTasks.project))  # type: ignore
+                .limit(1)
             )
         )
         .scalars()

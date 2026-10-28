@@ -48,7 +48,7 @@ def test_soft_time_limit_is_retryable():
 def _fake_get_sync_db(generation):
     @contextmanager
     def _ctx():
-        yield SimpleNamespace(get=lambda model, id_: generation, add=lambda obj: None)
+        yield SimpleNamespace(get=lambda model, id_, **kw: generation, add=lambda obj: None)
 
     return _ctx
 
