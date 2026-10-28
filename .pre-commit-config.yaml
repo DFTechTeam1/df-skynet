@@ -1,3 +1,4 @@
+default_install_hook_types: [pre-commit, pre-push]
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: v6.0.0
@@ -13,3 +14,12 @@ repos:
   rev: v0.16.1
   hooks:
     - id: ruff-format
+- repo: local
+  hooks:
+    - id: all-tests
+      name: all tests (RUN_TESTS=1 to run on push)
+      entry: script/pre_push_tests.sh
+      language: script
+      pass_filenames: false
+      always_run: true
+      stages: [pre-push]

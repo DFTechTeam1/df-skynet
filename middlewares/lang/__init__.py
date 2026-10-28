@@ -1,16 +1,74 @@
+from contextvars import ContextVar
 from middlewares.lang.en.auth import AuthMessage as _EnAuth
 from middlewares.lang.en.common import CommonMessage as _EnCommon
+from middlewares.lang.en.employees import EmployeesMessage as _EnEmployees
 from middlewares.lang.en.equipment import EquipmentMessage as _EnEquipment
+from middlewares.lang.en.files import FilesMessage as _EnFiles
+from middlewares.lang.en.generations import GenerationsMessage as _EnGenerations
+from middlewares.lang.en.feature_management import (
+    FeatureManagementMessage as _EnFeatureManagement,
+)
+from middlewares.lang.en.api_key_management import ApiKeyManagementMessage as _EnKeyManagement
+from middlewares.lang.en.menu_management import (
+    MenuManagementMessage as _EnMenuManagement,
+)
+from middlewares.lang.en.model_management import ModelManagementMessage as _EnModelManagement
+from middlewares.lang.en.prompt_template import (
+    PromptTemplateMessage as _EnPromptTemplate,
+)
+from middlewares.lang.en.setting import SettingMessage as _EnSetting
 from middlewares.lang.id.auth import AuthMessage as _IdAuth
 from middlewares.lang.id.common import CommonMessage as _IdCommon
+from middlewares.lang.id.employees import EmployeesMessage as _IdEmployees
 from middlewares.lang.id.equipment import EquipmentMessage as _IdEquipment
+from middlewares.lang.id.files import FilesMessage as _IdFiles
+from middlewares.lang.id.generations import GenerationsMessage as _IdGenerations
+from middlewares.lang.id.feature_management import (
+    FeatureManagementMessage as _IdFeatureManagement,
+)
+from middlewares.lang.id.api_key_management import ApiKeyManagementMessage as _IdKeyManagement
+from middlewares.lang.id.menu_management import (
+    MenuManagementMessage as _IdMenuManagement,
+)
+from middlewares.lang.id.model_management import ModelManagementMessage as _IdModelManagement
+from middlewares.lang.id.prompt_template import (
+    PromptTemplateMessage as _IdPromptTemplate,
+)
+from middlewares.lang.id.setting import SettingMessage as _IdSetting
 
 DEFAULT_LANG = "en"
 SUPPORTED_LANGUAGES = {"id", "en"}
+current_lang: ContextVar[str] = ContextVar("current_lang", default=DEFAULT_LANG)
 
 MESSAGES: dict[str, dict[str, str]] = {
-    "en": {**_EnAuth().message, **_EnCommon().message, **_EnEquipment().message},
-    "id": {**_IdAuth().message, **_IdCommon().message, **_IdEquipment().message},
+    "en": {
+        **_EnAuth().message,
+        **_EnCommon().message,
+        **_EnEmployees().message,
+        **_EnEquipment().message,
+        **_EnFiles().message,
+        **_EnGenerations().message,
+        **_EnFeatureManagement().message,
+        **_EnKeyManagement().message,
+        **_EnMenuManagement().message,
+        **_EnModelManagement().message,
+        **_EnPromptTemplate().message,
+        **_EnSetting().message,
+    },
+    "id": {
+        **_IdAuth().message,
+        **_IdCommon().message,
+        **_IdEmployees().message,
+        **_IdEquipment().message,
+        **_IdFiles().message,
+        **_IdGenerations().message,
+        **_IdFeatureManagement().message,
+        **_IdKeyManagement().message,
+        **_IdMenuManagement().message,
+        **_IdModelManagement().message,
+        **_IdPromptTemplate().message,
+        **_IdSetting().message,
+    },
 }
 
 

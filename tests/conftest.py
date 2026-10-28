@@ -1,0 +1,604 @@
+from urllib.parse import urlencode
+from types import SimpleNamespace
+from typing import Any, Optional
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport
+from jose import jwt
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.orm import selectinload
+from uuid import uuid4
+from apps.secret import DB_ASYNC_URL, DB_SYNC_URL, ERP_EMAIL, ERP_PASSWORD, LOGIN_URL
+from services.api_caller import APICaller
+from services.mysql import make_session, make_sync_session
+from services.mysql.model import (
+    DfEngineApiKeys,
+    Employees,
+    PositionBackups,
+    ProjectClasses,
+    ProjectTasks,
+    Projects,
+    Users,
+)
+
+EMPLOYEE_STATUS_RESIGNED = 6
+ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager"]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cleanup_factory_created_rows():
+    import services.mysql.factory as _factories
+
+    session = make_sync_session(DB_SYNC_URL)
+    models = {getattr(_factories, name)._meta.model for name in _factories.__all__}
+    watermarks = {model: session.execute(select(func.max(model.id))).scalar() or 0 for model in models}
+    yield
+    session.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+    for model, watermark in watermarks.items():
+        session.execute(delete(model).where(model.id > watermark))
+    session.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+    session.commit()
+
+
+@pytest.fixture(scope="session")
+def app():
+    from apps.main import app
+
+    return app
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """`rate_limit()` builds one `RateLimiter` (and its `KeyedBucketFactory`)
+    per controller class at import time, shared for the life of the process —
+    not per request or per test. A path with no path params (e.g. `/api/setting`)
+    keys to a single bucket for the whole test run, so a test file that legitimately
+    calls the same fixed path many times (unlike `/api/models/{uid}`, where a random
+    uid gives every call its own bucket) can trip the real 15/second cap purely from
+    test volume. Clearing every bucket before each test keeps that budget scoped to
+    the current test instead of accumulating across the whole session.
+    """
+    from apps.controller.core import CoreDependencies
+    from apps.dependency.rate_limitter import RateLimiter
+    from apps.main import app
+
+    CoreDependencies.throttle.dependency.limiter.bucket_factory.buckets.clear()
+    # per-route `dependencies=[Depends(rate_limit(n, s))]` limiters (e.g. the 5/min generation create)
+    # are separate instances, so clear those too
+    for route in app.routes:
+        for dep in getattr(route, "dependencies", None) or []:
+            if isinstance(dep.dependency, RateLimiter):
+                dep.dependency.limiter.bucket_factory.buckets.clear()
+    yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_all_redis_caches():
+    """Every controller now caches its GET responses in Redis. Tests build
+    state either through the API itself (which invalidates its own cache on
+    every write) or directly via SQLModel factories / raw DB deletes, which
+    bypass that invalidation entirely. A stale cache entry left by an earlier
+    test can then hide a later test's freshly-inserted (or freshly-removed)
+    row, regardless of which file that earlier test lived in. Clearing every
+    known cache namespace before each test keeps the whole suite cache-cold
+    by default — one blanket fix instead of chasing down every individual
+    factory-then-GET combination file by file.
+    """
+    from services.redis import client as redis_client, delete_pattern
+
+    redis = redis_client()
+    for pattern in (
+        "feature_management:list:*",
+        "feature_management:detail:*",
+        "menu_management:list:*",
+        "menu_management:detail:*",
+        "prompt_template:list:*",
+        "prompt_template:detail:*",
+        "model_option:*",
+        "api_key_management:*",
+        "setting:*",
+        "user_preference:*",
+        "user_files:*",
+        "references_picker:*",
+        "global_references_picker:*",
+        "user_galleries:*",
+        "generation_file_detail:*",
+        "generation_files:*",
+        "main_generations:*",
+        "user_uploaded_files:*",
+        "employees:*",
+        "projects:pics:*",
+    ):
+        await delete_pattern(redis, pattern)
+    yield
+
+
+@pytest_asyncio.fixture
+async def db_session():
+    async with make_session(DB_ASYNC_URL)() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+@pytest_asyncio.fixture(scope="session")
+async def access_token() -> str:
+    async with APICaller() as caller:
+        resp = await caller.call(
+            "POST",
+            f"{LOGIN_URL}/auth/login",
+            json={"email": ERP_EMAIL, "password": ERP_PASSWORD, "remember_me": True},
+            headers={"Accept": "application/json"},
+        )
+        return resp.json()["data"]["access_token"]
+
+
+@pytest.fixture(scope="session")
+def user_id(access_token: str) -> str:
+    return jwt.get_unverified_claims(access_token)["sub"]
+
+
+@pytest_asyncio.fixture
+async def client(app):
+    async with APICaller(transport=ASGITransport(app=app), base_url="http://test") as caller:
+        yield caller
+
+
+@pytest_asyncio.fixture
+async def authed_client(app, access_token):
+    async with APICaller(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as caller:
+        yield caller
+
+
+@pytest_asyncio.fixture
+async def active_employee_uid(db_session) -> str:
+    """uid of a real, non-resigned employee holding an allowed PIC position
+    (Project Manager / Assistant Project Manager) — a valid `employee_uid`
+    fixture for API key management tests. Queried from existing staging data
+    rather than inserted, so tests never add rows to `employees`.
+
+    API key management tests exercise creating/deleting *main* keys for this
+    employee, and several deliberately leave one behind (e.g. to trigger the
+    "already has a main key" 409) without cleaning up — which would otherwise
+    permanently taint this real employee's real data and 409 every subsequent
+    run. So any `df_engine_api_keys` rows already on this employee are cleared
+    before the test and restored after, and anything the test itself created
+    is wiped on teardown.
+    """
+    row = (
+        (
+            await db_session.execute(
+                select(Employees)
+                .join(PositionBackups, Employees.position_id == PositionBackups.id)
+                .where(Employees.status == 1, func.lower(PositionBackups.name).in_(ALLOWED_PIC_POSITIONS))
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no active PM/APM employee to fixture against"
+    employee_id, employee_uid = row.id, row.uid
+
+    preexisting = (
+        (await db_session.execute(select(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == employee_id)))
+        .scalars()
+        .all()
+    )
+    preexisting_data = [key.model_dump() for key in preexisting]
+    if preexisting_data:
+        await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == employee_id))
+        await db_session.commit()
+
+    try:
+        yield employee_uid
+    finally:
+        await db_session.execute(delete(DfEngineApiKeys).where(DfEngineApiKeys.employee_id == employee_id))
+        for data in preexisting_data:
+            db_session.add(DfEngineApiKeys(**data))
+        await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def resigned_employee_uid(db_session) -> str:
+    """uid of a real employee with `status == 6` (resigned) — exercises the resigned-PIC guard."""
+    row = (
+        (await db_session.execute(select(Employees).where(Employees.status == EMPLOYEE_STATUS_RESIGNED).limit(1)))
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no resigned employee to fixture against"
+    return row.uid
+
+
+@pytest_asyncio.fixture
+async def wrong_position_employee_uid(db_session) -> str:
+    """uid of a real, non-resigned employee holding a position other than
+    Project Manager / Assistant Project Manager — exercises the position guard."""
+    row = (
+        (
+            await db_session.execute(
+                select(Employees)
+                .join(PositionBackups, Employees.position_id == PositionBackups.id)
+                .where(
+                    Employees.status == 1,
+                    func.lower(PositionBackups.name).notin_(ALLOWED_PIC_POSITIONS),
+                )
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no non-PM/APM active employee to fixture against"
+    return row.uid
+
+
+@pytest_asyncio.fixture
+async def project_uid(db_session) -> str:
+    """uid of an arbitrary existing project — the setting endpoints validate the
+    `project_limit_override` target against `projects.uid`."""
+    row = (await db_session.execute(select(Projects).limit(1))).scalars().first()
+    assert row is not None, "staging DB has no project row to fixture against"
+    return row.uid
+
+
+@pytest_asyncio.fixture
+async def project_class_id(db_session) -> int:
+    """id of an arbitrary existing project class — for the per-class limits payload."""
+    row = (await db_session.execute(select(ProjectClasses).limit(1))).scalars().first()
+    assert row is not None, "staging DB has no project_classes row to fixture against"
+    return row.id
+
+
+@pytest_asyncio.fixture
+async def project_with_class(db_session) -> tuple[str, int, str]:
+    """`(uid, project_class_id, classification)` of an existing project that has a
+    project class assigned — the project-setting fallback path needs one."""
+    row = (
+        (
+            await db_session.execute(
+                select(Projects).where(Projects.project_class_id.isnot(None)).limit(1)  # type: ignore
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no project with a project_class_id to fixture against"
+    return row.uid, row.project_class_id, row.classification
+
+
+@pytest_asyncio.fixture
+async def project_without_class(db_session):
+    """uid of a project temporarily stripped of its project class, restored on teardown."""
+    row = (
+        (
+            await db_session.execute(
+                select(Projects).where(Projects.project_class_id.isnot(None)).limit(1)  # type: ignore
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no project to fixture against"
+    original = row.project_class_id
+    row.project_class_id = None
+    db_session.add(row)
+    await db_session.commit()
+    try:
+        yield row.uid
+    finally:
+        row.project_class_id = original
+        db_session.add(row)
+        await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def other_user_id(db_session, user_id) -> int:
+    """id of a real users row distinct from the authenticated user — for
+    ownership-permission tests, since `df_engine_upload_files.created_by`
+    has a foreign key onto `users.id` and won't accept an arbitrary int."""
+    row = (await db_session.execute(select(Users).where(Users.id != int(user_id)).limit(1))).scalars().first()
+    assert row is not None, "staging DB has no second users row to fixture against"
+    return row.id
+
+
+@pytest_asyncio.fixture
+async def project_task(db_session) -> ProjectTasks:
+    """An arbitrary existing project_tasks row, with its project loaded — Files
+    endpoints proxy to udin using the real project's `uid`, so this must be a
+    real row rather than a factory-built one."""
+    row = (
+        (
+            await db_session.execute(
+                select(ProjectTasks)
+                .join(Projects, Projects.id == ProjectTasks.project_id)  # type: ignore
+                .where(Projects.status == 1, ProjectTasks.status != 4)  # ongoing project, task not completed
+                .options(selectinload(ProjectTasks.project))  # type: ignore
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert row is not None, "staging DB has no project_tasks row to fixture against"
+    return row
+
+
+class _FakeUdinRequest:
+    """Stands in for `httpx.Request` — just carries `.url`, mirroring how
+    `call_udin`/`upload_files` read `upstream.request.url` for the full endpoint."""
+
+    def __init__(self, url: str):
+        self.url = url
+
+
+class _FakeUdinResponse:
+    """Stands in for the subset of `httpx.Response` the Files controller reads off a udin
+    call: status_code, headers, request.url, and .json()/.content."""
+
+    def __init__(self, status_code: int, payload: Optional[dict[str, Any]] = None, url: str = ""):
+        self.status_code = status_code
+        self._payload = payload
+        self.content = b"{}" if payload is not None else b""
+        self.headers: dict[str, str] = {}
+        self.request = _FakeUdinRequest(url)
+
+    @property
+    def is_error(self) -> bool:
+        return self.status_code >= 400
+
+    def json(self) -> dict[str, Any]:
+        return self._payload or {}
+
+
+class _FakeUdinStreamResponse:
+    """Stands in for the subset of `httpx.Response` the Files controller's download route reads
+    off a streamed udin GET: status_code, raise_for_status(), and aiter_bytes()."""
+
+    def __init__(self, status_code: int, content: bytes):
+        self.status_code = status_code
+        self._content = content
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"udin stream failed with status {self.status_code}")
+
+    async def aiter_bytes(self):
+        yield self._content
+
+
+class _FakeUdinStreamCtx:
+    """Async-context-manager wrapper so `_FakeUdinCaller.stream()` matches `httpx.AsyncClient.stream()`."""
+
+    def __init__(self, response: _FakeUdinStreamResponse):
+        self._response = response
+
+    async def __aenter__(self) -> _FakeUdinStreamResponse:
+        return self._response
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+
+class _FakeUdinCaller:
+    """Drop-in replacement for `services.api_caller.APICaller` scoped to the
+    Files controller/service. Both `apps.controller.files` (upload streaming)
+    and `services.files` (every other mutation) import their own `APICaller`
+    name, so `mock_udin` patches both. Matches a configured response by the
+    first keyword found as a substring of the request path (e.g.
+    "delete-folder") since the real path also embeds a per-test project uid;
+    an unconfigured path defaults to a 200 with empty `data` (a no-op success).
+    Every call is recorded in `.calls` as `(method, path, json)`."""
+
+    responses: dict[str, tuple[int, Optional[dict[str, Any]]]] = {}
+    stream_responses: dict[str, tuple[int, bytes]] = {}
+    calls: list[tuple[str, str, Optional[dict[str, Any]]]] = []
+    raise_on_udin: Optional[BaseException] = None
+
+    def __init__(self, *args: Any, base_url: str = "", **kwargs: Any) -> None:
+        self.base_url = base_url
+
+    async def __aenter__(self) -> "_FakeUdinCaller":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def call(
+        self,
+        method: str,
+        path: str,
+        json: Optional[dict[str, Any]] = None,
+        raise_for_status: bool = False,
+        **kwargs: Any,
+    ) -> _FakeUdinResponse:
+        type(self).calls.append((method, path, json))
+        url = f"{self.base_url}{path}"
+        for keyword, (status_code, payload) in type(self).responses.items():
+            if keyword in path:
+                return _FakeUdinResponse(status_code, payload, url=url)
+        return _FakeUdinResponse(200, {"data": []}, url=url)
+
+    async def udin(self, method: str, path: str, user_id: Optional[int] = None, **kwargs: Any) -> _FakeUdinResponse:
+        """Same as `call` — mirrors `APICaller.udin()`, which the upload endpoint uses."""
+        if isinstance(self.raise_on_udin, BaseException):
+            raise self.raise_on_udin
+        if kwargs.get("params"):
+            path = f"{path}?{urlencode(kwargs['params'])}"
+        return await self.call(method, path, **{k: v for k, v in kwargs.items() if k == "json"})
+
+    def stream(self, method: str, path: str, **kwargs: Any) -> _FakeUdinStreamCtx:
+        type(self).calls.append((method, path, None))
+        for keyword, (status_code, content) in type(self).stream_responses.items():
+            if keyword in path:
+                return _FakeUdinStreamCtx(_FakeUdinStreamResponse(status_code, content))
+        return _FakeUdinStreamCtx(_FakeUdinStreamResponse(200, b""))
+
+
+@pytest.fixture
+def mock_udin(monkeypatch):
+    """Bypasses every real DiVA-V2 (udin) storage call so Files tests never
+    touch a real udin instance. `.set(keyword, status_code, payload)`
+    configures the response for one endpoint (matched by a path substring);
+    `.set_stream(keyword, status_code, content)` does the same for a streamed
+    GET (e.g. downloads), keyed separately since its payload is raw bytes, not
+    JSON. `.calls` is the list of every `(method, path, json)` sent upstream."""
+    _FakeUdinCaller.responses = {}
+    _FakeUdinCaller.stream_responses = {}
+    _FakeUdinCaller.calls = []
+    _FakeUdinCaller.raise_on_udin = None
+    monkeypatch.setattr("apps.controller.files.APICaller", _FakeUdinCaller)
+    monkeypatch.setattr("services.files.APICaller", _FakeUdinCaller)
+    return SimpleNamespace(
+        set=lambda keyword, status_code, payload=None: _FakeUdinCaller.responses.__setitem__(
+            keyword, (status_code, payload)
+        ),
+        set_stream=lambda keyword, status_code, content=b"": _FakeUdinCaller.stream_responses.__setitem__(
+            keyword, (status_code, content)
+        ),
+        calls=_FakeUdinCaller.calls,
+        raise_on_udin=lambda exc: setattr(_FakeUdinCaller, "raise_on_udin", exc),
+    )
+
+
+class _FakeOpenRouterResponse:
+    """Stands in for the subset of `httpx.Response` the API key management
+    controller reads off an OpenRouter call: status_code, is_error, content,
+    text, headers, request.url, and .json()."""
+
+    def __init__(self, status_code: int, json_data: Optional[dict[str, Any]] = None, path: str = "/keys"):
+        self.status_code = status_code
+        self.is_error = status_code >= 400
+        self._json_data = json_data
+        self.content = b"{}" if json_data is not None else b""
+        self.text = "{}" if json_data is not None else ""
+        self.headers: dict[str, str] = {}
+        self.request = SimpleNamespace(url=f"https://openrouter.ai/api/v1{path}")
+
+    def json(self) -> dict[str, Any]:
+        return self._json_data or {}
+
+
+class _FakeOpenRouterCaller:
+    """Drop-in replacement for `services.api_caller.APICaller` scoped to
+    `apps.controller.api_key_management` only — fabricates OpenRouter
+    responses instead of making a real HTTP call, so tests never touch a
+    real OpenRouter account. POST /keys returns a fresh, unique key/hash
+    pair each call; PATCH/DELETE return an empty 200 (matching a real
+    disable/delete call)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> "_FakeOpenRouterCaller":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    credits_status = 200
+
+    async def openrouter(self, method: str, path: str, user_id: int = 0, **kwargs: Any):
+        if path == "/credits":
+            body = {"data": {"total_credits": 100, "total_usage": 40}} if self.credits_status < 400 else {"error": {}}
+            return _FakeOpenRouterResponse(self.credits_status, body, path=path)
+        return await self.call(method, path, **kwargs)
+
+    async def call(self, method: str, path: str, json: Optional[dict[str, Any]] = None, **kwargs: Any):
+        if method == "POST":
+            return _FakeOpenRouterResponse(
+                201,
+                {"key": f"sk-or-v1-fake{uuid4().hex}", "data": {"hash": uuid4().hex}},
+                path=path,
+            )
+        return _FakeOpenRouterResponse(200, path=path)
+
+
+@pytest.fixture
+def mock_openrouter(monkeypatch):
+    """Bypasses every real OpenRouter call made through
+    `apps.controller.api_key_management.call_openrouter` — the controller
+    module's own `APICaller` reference is replaced, so this has no effect on
+    `client`/`authed_client` (which hold their own `services.api_caller.APICaller`
+    reference for talking to this app itself)."""
+    monkeypatch.setattr("apps.controller.api_key_management.APICaller", _FakeOpenRouterCaller)
+
+
+class _FakeModelSyncResponse:
+    """Stands in for the subset of `httpx.Response` that the sync endpoint
+    reads off an OpenRouter call."""
+
+    def __init__(self, status_code: int, payload: Optional[dict[str, Any]], path: str):
+        self.status_code = status_code
+        self._payload = payload
+        self.content = b"{}" if payload is not None else b""
+        self.headers: dict[str, str] = {}
+        self.request = SimpleNamespace(url=f"https://openrouter.ai/api/v1{path}")
+        self.is_error = status_code >= 400
+
+    def json(self) -> dict[str, Any]:
+        return self._payload or {}
+
+
+class _FakeModelSyncCaller:
+    """Drop-in replacement for `APICaller` scoped to
+    `apps.controller.model_management`. `GET` returns a 200 `{"data": [...]}`
+    for any path a test configured via `mock_model_sync.set(path, items)`;
+    an unconfigured path returns a 5xx so the endpoint's `is_error` guard
+    skips that usage type instead of treating it as "OpenRouter returned zero
+    models" — critical, since `df_engine_model_options` is shared, real data
+    and an empty list would flag every row of that type unavailable.
+    """
+
+    responses: dict[str, list[dict[str, Any]]] = {}
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> "_FakeModelSyncCaller":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def call(
+        self, method: str, path: str, raise_for_status: bool = True, **kwargs: Any
+    ) -> _FakeModelSyncResponse:
+        if path in self.responses:
+            return _FakeModelSyncResponse(200, {"data": self.responses[path]}, path)
+        return _FakeModelSyncResponse(502, {"error": {"message": "not configured for this test"}}, path)
+
+
+@pytest.fixture
+def mock_model_sync(monkeypatch):
+    """Bypasses every real OpenRouter call made through the model-management
+    sync endpoint. `.set(path, items)` configures one usage type's response;
+    the endpoint's paths are `/models?output_modalities=text`, `/videos/models`
+    and `/images/models`. See `_FakeModelSyncCaller` for why unconfigured
+    paths fail safe rather than default to an empty model list."""
+    _FakeModelSyncCaller.responses = {}
+    monkeypatch.setattr("apps.controller.model_management.APICaller", _FakeModelSyncCaller)
+    return SimpleNamespace(set=lambda path, items: _FakeModelSyncCaller.responses.__setitem__(path, items))
+
+
+@pytest.fixture
+def as_roles(app, user_id):
+    """`as_roles([...])` makes the authenticated user carry exactly those JWT roles for the rest of the test."""
+    from apps.dependency.auth import get_user
+
+    def _set(roles: list[str]) -> None:
+        app.dependency_overrides[get_user] = lambda: {"user_id": user_id, "roles": roles, "permissions": []}
+
+    yield _set
+    app.dependency_overrides.pop(get_user, None)

@@ -18,7 +18,8 @@ def scalar_config(app: FastAPI):
         }
     }
     openapi_schema["servers"] = [
-        {"url": "http://localhost:10000", "description": "DEV"},
+        {"url": "http://engine.localhost:9000", "description": "DEV"},
+        {"url": "https://staging-py-engine.dfactory.pro", "description": "STG"},
     ]
     openapi_schema["security"] = [{"BearerAuth": []}]
     app.openapi_schema = openapi_schema

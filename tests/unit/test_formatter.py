@@ -1,0 +1,59 @@
+import pytest
+from datetime import datetime
+from decimal import Decimal
+from utils.formatter import format_user_employees, format_datetime, format_idr
+
+
+class TestFormatCreator:
+    def test_none_returns_none(self):
+        """None input returns None."""
+        assert format_user_employees(None) is None
+
+    def test_full_shape(self):
+        """Full user dict flattens employees.nickname into a top-level nickname alongside user_id/image."""
+        user = {"id": 1, "image": "pic.png", "employees": {"nickname": "Bastian"}}
+        assert format_user_employees(user) == {"user_id": 1, "image": "pic.png", "nickname": "Bastian"}
+
+    def test_missing_employees_key_gives_none_nickname(self):
+        """Missing employees key still returns user_id/image with a None nickname."""
+        user = {"id": 1, "image": "pic.png"}
+        assert format_user_employees(user) == {"user_id": 1, "image": "pic.png", "nickname": None}
+
+    def test_employees_explicitly_none_gives_none_nickname(self):
+        """employees explicitly set to None also yields a None nickname."""
+        user = {"id": None, "image": None, "employees": None}
+        assert format_user_employees(user) == {"user_id": None, "image": None, "nickname": None}
+
+
+class TestFormatDatetime:
+    def test_none_returns_none(self):
+        """None input returns None."""
+        assert format_datetime(None) is None
+
+    def test_datetime_object(self):
+        """datetime object is formatted as "day Month year, HH:MM"."""
+        value = datetime(2026, 8, 17, 0, 7)
+        assert format_datetime(value) == "17 August 2026, 00:07"
+
+    def test_iso_string_is_parsed_then_formatted(self):
+        """ISO datetime string is parsed and formatted the same way as a datetime object."""
+        assert format_datetime("2026-08-17T00:07:39.395134") == "17 August 2026, 00:07"
+
+    def test_malformed_string_raises(self):
+        """Malformed date string raises ValueError."""
+        with pytest.raises(ValueError):
+            format_datetime("not-a-date")
+
+
+class TestFormatIdr:
+    def test_none_returns_none(self):
+        """None cost returns None."""
+        assert format_idr(None, Decimal("16000")) is None
+
+    def test_converts_and_dot_groups(self):
+        """USD cost * rate is rounded to whole rupiah and dot-grouped."""
+        assert format_idr(Decimal("1.5"), Decimal("16000")) == "Rp 24.000"
+
+    def test_accepts_float_inputs(self):
+        """Plain floats work the same as Decimal inputs."""
+        assert format_idr(0.001, 16000.0) == "Rp 16"

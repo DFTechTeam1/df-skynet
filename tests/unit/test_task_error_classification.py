@@ -1,0 +1,147 @@
+from contextlib import contextmanager
+from types import SimpleNamespace
+
+import httpx
+from celery.exceptions import SoftTimeLimitExceeded
+
+import services.tasks.base as base
+from services.mysql.model.df_engine_generations import GenerationStatuses
+from services.tasks.base import classify_error
+
+REQUEST = httpx.Request("GET", "https://example.test")
+
+
+def _http_error(status_code: int) -> httpx.HTTPStatusError:
+    return httpx.HTTPStatusError("x", request=REQUEST, response=httpx.Response(status_code, request=REQUEST))
+
+
+def test_5xx_is_retryable():
+    """A 5xx upstream error classifies as retryable and not final."""
+    err = classify_error(_http_error(500), source="openrouter")
+    assert err.retryable and not err.final
+
+
+def test_429_is_retryable():
+    """A 429 rate-limit error classifies as retryable and not final."""
+    err = classify_error(_http_error(429), source="udin")
+    assert err.retryable and not err.final
+
+
+def test_plain_400_is_retryable():
+    """A plain 400 still classifies as retryable and not final."""
+    err = classify_error(_http_error(400), source="openrouter")
+    assert err.retryable and not err.final
+
+
+def test_timeout_is_retryable():
+    """A request timeout classifies as retryable."""
+    err = classify_error(httpx.TimeoutException("timeout"), source="udin")
+    assert err.retryable
+
+
+def test_soft_time_limit_is_retryable():
+    """A Celery soft time limit hit classifies as retryable."""
+    err = classify_error(SoftTimeLimitExceeded(), source="openrouter")
+    assert err.retryable
+
+
+def _fake_get_sync_db(generation):
+    @contextmanager
+    def _ctx():
+        yield SimpleNamespace(get=lambda model, id_, **kw: generation, add=lambda obj: None)
+
+    return _ctx
+
+
+def test_mark_generation_failed_sets_status(monkeypatch):
+    """A non-success generation is flipped to failed once retries are exhausted, and the
+    task's user-galleries cache is busted so the stale pending entry disappears promptly."""
+    generation = SimpleNamespace(status=GenerationStatuses.processing, task_id=42, project_id=9)
+    monkeypatch.setattr(base, "get_sync_db", _fake_get_sync_db(generation))
+    busted = []
+    monkeypatch.setattr(base, "delete_pattern_sync", lambda redis, pattern: busted.append(pattern))
+    monkeypatch.setattr("services.redis.delete_pattern_sync", lambda redis, pattern: busted.append(pattern))
+    base._mark_generation_failed(1)
+    keys = base.CacheKeys()
+    assert generation.status == GenerationStatuses.failed
+    assert busted == [
+        keys.generation_files_main_list_pattern(42),
+        keys.main_generations_project_pattern(9),
+        keys.user_uploaded_files_project_pattern(9),
+    ]
+
+
+def test_mark_generation_failed_skips_cache_bust_without_a_task(monkeypatch):
+    """A generation with no task_id (e.g. prompt enhancement) has nothing to bust."""
+    generation = SimpleNamespace(status=GenerationStatuses.processing, task_id=None, project_id=None)
+    monkeypatch.setattr(base, "get_sync_db", _fake_get_sync_db(generation))
+    busted = []
+    monkeypatch.setattr(base, "delete_pattern_sync", lambda redis, pattern: busted.append(pattern))
+    monkeypatch.setattr("services.redis.delete_pattern_sync", lambda redis, pattern: busted.append(pattern))
+    base._mark_generation_failed(1)
+    assert busted == []
+
+
+def test_mark_generation_failed_does_not_downgrade_success(monkeypatch):
+    """A generation that already succeeded is never overwritten as failed."""
+    generation = SimpleNamespace(status=GenerationStatuses.success)
+    monkeypatch.setattr(base, "get_sync_db", _fake_get_sync_db(generation))
+    base._mark_generation_failed(1)
+    assert generation.status == GenerationStatuses.success
+
+
+def test_mark_generation_failed_swallows_errors(monkeypatch):
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(base, "get_sync_db", boom)
+    base._mark_generation_failed(1)  # must not raise
+
+
+def _task(request):
+    task = base.GenerationTask.__new__(base.GenerationTask)
+    task.request_stack = SimpleNamespace(top=request)
+    return task
+
+
+def test_attempt_duration_is_none_before_the_attempt_starts():
+    """No `before_start` yet (or it failed) means there is nothing to time."""
+    task = _task(SimpleNamespace())
+    assert task._attempt_duration_ms() is None
+
+
+def test_attempt_duration_measures_milliseconds_since_start(monkeypatch):
+    """The elapsed time since `attempt_started_at` is returned as whole milliseconds."""
+    monkeypatch.setattr(base.time, "perf_counter", lambda: 12.5)
+    task = _task(SimpleNamespace(attempt_started_at=10.0))
+    assert task._attempt_duration_ms() == 2500
+
+
+def test_log_queue_stores_the_duration(monkeypatch):
+    """`log_queue` writes the given duration on the queue row."""
+    added = []
+
+    @contextmanager
+    def _ctx():
+        yield SimpleNamespace(add=added.append)
+
+    monkeypatch.setattr(base, "get_sync_db", _ctx)
+    base.log_queue(7, "q", base.QueueEventTypes.succeeded, 1, "tid", duration_ms=1234)
+    assert added[0].duration_ms == 1234 and added[0].generation_id == 7
+
+
+def _retry_task(retries, jitter=True, maximum=20):
+    return SimpleNamespace(request=SimpleNamespace(retries=retries), retry_backoff_max=maximum, retry_jitter=jitter)
+
+
+def test_retry_countdown_without_jitter_doubles_up_to_the_cap():
+    """With jitter off the delay is exactly 1, 2, 4, 8, 16 and then stays at the cap."""
+    delays = [base.retry_countdown(_retry_task(r, jitter=False)) for r in range(7)]
+    assert delays == [1, 2, 4, 8, 16, 20, 20]
+
+
+def test_retry_countdown_with_jitter_never_drops_below_half_the_backoff():
+    """Half-jitter keeps every delay in [backoff/2, backoff], so a retry is never sent instantly."""
+    for retries, backoff in enumerate([1, 2, 4, 8, 16, 20]):
+        samples = {base.retry_countdown(_retry_task(retries)) for _ in range(200)}
+        assert min(samples) >= backoff // 2 and max(samples) <= backoff

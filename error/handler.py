@@ -1,16 +1,28 @@
+import traceback
 from typing import Any
 
 from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from error import BaseError
+from log import logging
 from middlewares.lang import DEFAULT_LANG, resolve_message
+from utils import get_project_root
+
+
+def _wants_html(request: Request) -> bool:
+    return "text/html" in request.headers.get("accept", "")
+
+
+def _error_page(filename: str, status_code: int) -> FileResponse:
+    return FileResponse(get_project_root() / "static" / "html" / filename, status_code=status_code)
 
 
 class CustomError:
     def pydantic_handler(self):
-        async def handler(_: Request, exc: Exception) -> JSONResponse:
+        async def handler(request: Request, exc: Exception) -> JSONResponse:
             if not isinstance(exc, RequestValidationError):
                 return JSONResponse(
                     status_code=500,
@@ -19,6 +31,8 @@ class CustomError:
 
             error: dict[str, Any] = {}
             status_code = 422
+            lang = getattr(request.state, "lang", DEFAULT_LANG)
+            message = "Malformed JSON."
 
             try:
                 for err in exc.errors():
@@ -37,7 +51,13 @@ class CustomError:
                         )
                     else:
                         key = loc[-1]
-                        error[key] = [err.get("msg", None)]
+                        # `ValueError("some_key")` raised in a validator: show the translated key, not "Value error, some_key"
+                        msg = err.get("msg", None)
+                        if err.get("type") == "value_error" and "error" in err.get("ctx", {}):
+                            msg = resolve_message(str(err["ctx"]["error"]), lang)
+                            if message == "Malformed JSON.":
+                                message = msg  # first translated validator error doubles as the headline
+                        error[key] = [msg]
 
             except IndexError as e:
                 error["unknown"] = [str(e)]
@@ -45,25 +65,51 @@ class CustomError:
             return JSONResponse(
                 status_code=status_code,
                 content={
-                    "message": "Malformed JSON.",
+                    "message": message,
                     "error": error,
                 },
             )
 
         return handler
 
-    def base_handler(self, request: Request, exc: Exception) -> JSONResponse:
+    def base_handler(self, request: Request, exc: Exception) -> Any:
         if isinstance(exc, BaseError):
             lang = getattr(request.state, "lang", DEFAULT_LANG)
+
+            def _resolve(msg: str) -> str:
+                resolved = resolve_message(msg, lang)
+                return resolved.format(**exc.context) if exc.context else resolved
+
+            error = (
+                {field: [_resolve(msg) for msg in messages] for field, messages in exc.error.items()}
+                if exc.error
+                else exc.error
+            )
+            if exc.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and _wants_html(request):
+                return _error_page("server_error.html", exc.status_code)
+            message = _resolve(exc.message)
             return JSONResponse(
                 status_code=exc.status_code,
                 content={
-                    "message": resolve_message(exc.message, lang),
-                    "error": exc.error,
+                    "message": message,
+                    "error": error,
                 },
             )
 
+        logging.error(traceback.format_exc())
+        if _wants_html(request):
+            return _error_page("server_error.html", status.HTTP_500_INTERNAL_SERVER_ERROR)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"message": "Internal server error.", "error": str(exc)},
+            content={"message": "Internal server error.", "error": None},
         )
+
+    def http_handler(self, request: Request, exc: Exception) -> Any:
+        if isinstance(exc, StarletteHTTPException) and exc.status_code == status.HTTP_404_NOT_FOUND:
+            return _error_page("not_found.html", status.HTTP_404_NOT_FOUND)
+
+        status_code = (
+            exc.status_code if isinstance(exc, StarletteHTTPException) else status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+        detail = exc.detail if isinstance(exc, StarletteHTTPException) else str(exc)
+        return JSONResponse(status_code=status_code, content={"detail": detail})

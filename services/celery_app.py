@@ -1,0 +1,41 @@
+from celery import Celery
+from apps.secret import CELERY_BROKER_URL, CELERY_RESULT_BACKEND
+
+
+celery_app = Celery(
+    "df_engine",
+    broker=CELERY_BROKER_URL,
+    backend=CELERY_RESULT_BACKEND,
+    include=[
+        "services.tasks.image_generation",
+        "services.tasks.video_generation",
+        "services.tasks.udin_uploader",
+        "services.tasks.udin_sweep",
+        "services.tasks.search_sync",
+    ],
+)
+
+celery_app.conf.update(
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_prefetch_multiplier=1,
+    broker_transport_options={"visibility_timeout": 600},
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="Asia/Jakarta",
+    enable_utc=True,
+    task_routes={
+        "df_engine.image_generation": {"queue": "image_generation"},
+        "df_engine.video_generation": {"queue": "video_generation"},
+        "df_engine.udin_uploader": {"queue": "udin_uploads"},
+        "df_engine.udin_sweep": {"queue": "udin_uploads"},
+        "df_engine.search_upsert": {"queue": "search_sync"},
+        "df_engine.search_delete": {"queue": "search_sync"},
+        "df_engine.search_backfill": {"queue": "search_sync"},
+    },
+    beat_schedule={
+        "udin-sweep-every-5-minutes": {"task": "df_engine.udin_sweep", "schedule": 300.0},
+        "search-backfill-hourly": {"task": "df_engine.search_backfill", "schedule": 3600.0},
+    },
+)

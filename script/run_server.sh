@@ -74,6 +74,10 @@ export $(grep -v '^#' "$ENV_FILE" | xargs)
 echo "Checking OS Environment"
 if uname | grep -qiE "linux|darwin"; then
     echo "Unix-based OS detected"
+    if [ ! -f "$PROJECT_DIR/.venv/bin/activate" ]; then
+        echo "No virtual environment found. Please run: sh script/setup.sh"
+        exit 1
+    fi
     . "$PROJECT_DIR/.venv/bin/activate"
 else
     echo "Unsupported OS. Please turn-on server manually."

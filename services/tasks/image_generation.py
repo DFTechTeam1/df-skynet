@@ -1,0 +1,130 @@
+import json
+import uuid
+from pathlib import Path
+from typing import Any, Optional
+from celery.exceptions import SoftTimeLimitExceeded
+from httpx import HTTPStatusError, NetworkError, Timeout, TimeoutException
+from apps.secret import OPENROUTER_BASE_URL
+from services.api_caller import APICaller
+from services.celery_app import celery_app
+from services.dto import SyncedConnectionContext
+from services.mysql import get_sync_db, get_usd_rate
+from services.mysql.model import DfEngineGenerations
+from config.variables import USD_TO_IDR_RATE
+from services.mysql.model.df_engine_generations import GenerationStatuses
+from services.redis import (
+    CacheKeys,
+    delete_pattern_sync,
+    get_json_sync,
+    invalidate_project_files_sync,
+    set_json_sync,
+    sync_client,
+)
+from services.tasks.base import (
+    GenerationStageError,
+    GenerationTask,
+    classify_error,
+    response_error_message,
+    retry_countdown,
+)
+from services.tasks.udin_uploader import udin_uploader
+from utils.formatter import format_idr, format_usd
+
+
+OPENROUTER_IMAGE_TIMEOUT = Timeout(connect=10, read=240, write=30, pool=10)
+
+
+@celery_app.task(
+    bind=True,
+    base=GenerationTask,
+    name="df_engine.image_generation",
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=5,
+    soft_time_limit=280,
+    time_limit=300,
+    rate_limit="10/s",
+)
+def image_generation(
+    self,
+    generation_id: int,
+    user_id: int,
+    headers: Optional[dict[str, str]] = None,
+    payload: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    with get_sync_db() as db:
+        ctx = SyncedConnectionContext(db, sync_client(), CacheKeys())
+        generation = ctx.db.get(DfEngineGenerations, generation_id)
+        if generation is None:
+            raise ValueError("Generation record not found.")
+
+        if generation.status == GenerationStatuses.success:
+            return {"generation_id": generation_id, "status": "success", "skipped": True}
+
+        if generation.response and generation.status_code == 200:
+            return {"generation_id": generation_id, "status": "already_processed", "skipped": True}
+
+        generation.status = GenerationStatuses.processing
+        ctx.db.add(generation)
+        if generation.task_id is not None:
+            delete_pattern_sync(ctx.redis, ctx.key.generation_files_main_list_pattern(generation.task_id))
+        invalidate_project_files_sync(ctx.redis, ctx.key, generation.project_id)
+        generation_detail_key = ctx.key.generation_detail(user_id, str(generation.uid))
+        cached_generation_detail = get_json_sync(ctx.redis, generation_detail_key)
+        if cached_generation_detail is not None:
+            set_json_sync(ctx.redis, generation_detail_key, {**cached_generation_detail, "status": generation.status})
+
+    caller = APICaller(base_url=OPENROUTER_BASE_URL, headers=headers or {})
+    try:
+        response = caller.openrouter_sync(
+            "POST", "/images", user_id=user_id, json=payload or {}, timeout=OPENROUTER_IMAGE_TIMEOUT
+        )
+    except (TimeoutException, NetworkError, SoftTimeLimitExceeded) as exc:
+        stage_error = classify_error(exc, source="openrouter")
+        if stage_error.retryable and self.request.retries < self.max_retries:
+            raise self.retry(exc=stage_error, countdown=retry_countdown(self))
+        raise stage_error
+    finally:
+        caller.sync_client.close()
+
+    if response.is_error:
+        stage_error = classify_error(
+            HTTPStatusError(response_error_message(response), request=response.request, response=response),
+            source="openrouter",
+        )
+        if stage_error.retryable and self.request.retries < self.max_retries:
+            raise self.retry(exc=stage_error, countdown=retry_countdown(self))
+        raise stage_error
+
+    body = response.json()
+    usage = body.get("usage", {})
+    images = {
+        f"image.{idx}": item["b64_json"] for idx, item in enumerate(body.get("data") or []) if item.get("b64_json")
+    }
+    if not images:
+        raise GenerationStageError("openrouter returned no images", source="openrouter", final=True)
+    with get_sync_db() as db:
+        ctx = SyncedConnectionContext(db, sync_client(), CacheKeys())
+        generation = ctx.db.get(DfEngineGenerations, generation_id)
+        generation.response = json.dumps(images)  # type: ignore
+        generation.status_code = response.status_code  # type: ignore
+        generation.token_usage = usage.get("total_tokens")  # type: ignore
+        generation.cost = usage.get("cost")  # type: ignore
+        generation.exchange_rate = get_usd_rate(db)  # type: ignore
+        ctx.db.add(generation)
+        generation_detail_key = ctx.key.generation_detail(user_id, str(generation.uid))  # type: ignore
+        cached_generation_detail = get_json_sync(ctx.redis, generation_detail_key)
+        if cached_generation_detail is not None:
+            set_json_sync(
+                ctx.redis,
+                generation_detail_key,
+                {
+                    **cached_generation_detail,
+                    "cost_usd": format_usd(generation.cost),  # type: ignore
+                    "cost_idr": format_idr(generation.cost, USD_TO_IDR_RATE),  # type: ignore
+                },
+            )
+
+    udin_uploader.delay(generation_id, user_id)  # type:ignore
+    return {"generation_id": generation_id, "status": "openrouter_success"}
