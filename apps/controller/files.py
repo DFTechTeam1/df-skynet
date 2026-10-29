@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 import mimetypes
 from contextlib import AsyncExitStack
 from pathlib import PurePosixPath
@@ -698,7 +699,10 @@ class FilesController(CoreDependencies):
                 )
             self.db.add_all(rows)
 
-            await self.db.flush()
+            try:
+                await self.db.flush()
+            except IntegrityError:  # task/song deleted by the owning service after it was resolved
+                raise DataNotFoundError(message="project_task_not_found")
             await delete_pattern(
                 self.redis,
                 cache_key.user_files_pattern(task_id=task_id, song_id=song_id),

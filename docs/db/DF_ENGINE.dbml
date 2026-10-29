@@ -437,8 +437,8 @@ Table df_engine_generations {
     feature_id bigint [not null]
     sourceable_id bigint [not null]
     sourceable_type varchar(255) [not null, note: "Polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
-    project_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
-    task_id bigint [default: null, note: "NOT NULL enforced at app/CHECK level when kind = 'element' or 'enhancer'"]
+    project_id bigint [default: null, note: "NULL when the task was deleted by the owning service (FK ON DELETE SET NULL)"]
+    task_id bigint [default: null, note: "NULL when the task was deleted by the owning service (FK ON DELETE SET NULL)"]
     song_id bigint [default: null, note: "Set instead of task_id when this generation was made against an entertainment song (project_song_lists) rather than a project_tasks row — mutually exclusive with task_id, enforced at the app level"]
     prompt text [not null]
     full_prompt text [default: null, note: "prompt merged with feature prompt templates"]
@@ -732,11 +732,11 @@ Ref: users.id < df_engine_model_options.deleted_by
 Ref: projects.id < project_tasks.project_id
 Ref: projects.id < df_engine_project_settings.project_id
 Ref: projects.id < df_engine_upload_files.project_id
-Ref: project_tasks.id < df_engine_upload_files.task_id
-Ref: project_song_lists.id < df_engine_upload_files.song_id
+Ref: project_tasks.id < df_engine_upload_files.task_id [delete: set null]
+Ref: project_song_lists.id < df_engine_upload_files.song_id [delete: set null]
 Ref: projects.id < df_engine_generations.project_id
-Ref: project_tasks.id < df_engine_generations.task_id
-Ref: project_song_lists.id < df_engine_generations.song_id
+Ref: project_tasks.id < df_engine_generations.task_id [delete: set null]
+Ref: project_song_lists.id < df_engine_generations.song_id [delete: set null]
 
 // menus / features
 Ref: df_engine_features.id < df_engine_feature_prompt_mappings.feature_id

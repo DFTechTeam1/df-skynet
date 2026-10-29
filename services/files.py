@@ -313,6 +313,11 @@ async def resolve_files(
     if len(scopes) != 1:
         raise DataValidationError(message="file_not_found", error={"file_uids": ["file_not_found"]})
     task_id, song_id = scopes.pop()
+    if task_id is None and song_id is None:
+        project_ids = {(row.project_id if source == "upload" else row.generation.project_id) for row in found.values()}
+        if len(project_ids) != 1 or None in project_ids:
+            raise DataValidationError(message="file_not_found", error={"file_uids": ["file_not_found"]})
+        return [found[uid] for uid in uids], {"id": None, "is_song": False, "project_id": project_ids.pop()}
     project_task = await get_project_task(ctx, task_id=task_id, song_id=song_id)
     return [found[uid] for uid in uids], project_task
 
@@ -535,7 +540,7 @@ async def apply_folder_changes(
     await invalidate_project_files(ctx.redis, ctx.key, project_task["project_id"])
 
     creators.discard(None)
-    for task_id, song_id in scopes:
+    for task_id, song_id in scopes - {(None, None)}:  # (None, None) = orphan whose task/song was deleted
         await delete_pattern(ctx.redis, ctx.key.user_files_pattern(task_id=task_id, song_id=song_id))
     for task_id in generation_task_ids:
         await delete_pattern(ctx.redis, ctx.key.generation_files_main_list_pattern(task_id))

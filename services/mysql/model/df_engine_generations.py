@@ -73,10 +73,14 @@ class DfEngineGenerations(SQLModel, table=True):
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("projects.id"), nullable=True)
     )
     task_id: Optional[int] = Field(
-        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id"), nullable=True)
+        default=None,
+        sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id", ondelete="SET NULL"), nullable=True),
     )
     song_id: Optional[int] = Field(
-        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_song_lists.id"), nullable=True)
+        default=None,
+        sa_column=Column(
+            BIGINT(unsigned=True), ForeignKey("project_song_lists.id", ondelete="SET NULL"), nullable=True
+        ),
     )
     prompt: str = Field(sa_column=Column(Text, nullable=False))
     full_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
