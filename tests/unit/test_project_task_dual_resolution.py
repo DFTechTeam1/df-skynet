@@ -4,16 +4,12 @@ import services.dto.asynced.projects as projects
 
 
 def _ctx():
-    return type(
-        "Ctx", (), {"db": object(), "redis": object(), "key": type("K", (), {"get_project_task": lambda *a: "k"})()}
-    )()
+    return type("Ctx", (), {"db": object()})()
 
 
 @pytest.mark.asyncio
 async def test_resolves_a_regular_project_task_by_uid(monkeypatch):
     ctx = _ctx()
-    monkeypatch.setattr(projects, "get_json", AsyncMock(return_value=None))
-    monkeypatch.setattr(projects, "set_json", AsyncMock())
     task_row = type("Row", (), {})()
     monkeypatch.setattr(
         projects,
@@ -31,8 +27,6 @@ async def test_resolves_a_regular_project_task_by_uid(monkeypatch):
 @pytest.mark.asyncio
 async def test_falls_back_to_song_when_uid_is_not_a_project_task(monkeypatch):
     ctx = _ctx()
-    monkeypatch.setattr(projects, "get_json", AsyncMock(return_value=None))
-    monkeypatch.setattr(projects, "set_json", AsyncMock())
 
     song_row = type("Row", (), {"id": 9, "uid": "song-uid", "project_id": 300, "name": "My Song"})()
     assignment_row = type("Row", (), {"employee_id": 40, "status": 2, "time_tracker": None})()
@@ -63,8 +57,20 @@ async def test_raises_when_neither_table_matches(monkeypatch):
     from error import DataNotFoundError
 
     ctx = _ctx()
-    monkeypatch.setattr(projects, "get_json", AsyncMock(return_value=None))
     monkeypatch.setattr(projects, "query", AsyncMock(return_value=None))
 
     with pytest.raises(DataNotFoundError):
         await projects.get_project_task(ctx, task_uid="unknown-uid")
+
+
+@pytest.mark.asyncio
+async def test_deleted_task_is_not_served_stale(monkeypatch):
+    from error import DataNotFoundError
+
+    rows = [type("Row", (), {})(), None, None]  # task exists once, then deleted (project_tasks + song misses)
+    monkeypatch.setattr(projects, "serialize", lambda row: {"id": 1, "uid": "t"})
+    monkeypatch.setattr(projects, "query", AsyncMock(side_effect=lambda *a, **k: rows.pop(0)))
+
+    assert (await projects.get_project_task(_ctx(), task_uid="t"))["id"] == 1
+    with pytest.raises(DataNotFoundError):
+        await projects.get_project_task(_ctx(), task_uid="t")

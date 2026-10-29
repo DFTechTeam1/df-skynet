@@ -11,7 +11,7 @@ from celery.utils.time import get_exponential_backoff_interval
 from log import logging
 from services.celery_app import celery_app
 from services.mysql import get_sync_db
-from services.mysql.model import DfEngineGenerations, DfEngineQueues, ProjectTasks, Projects, Users
+from services.mysql.model import DfEngineGenerations, DfEngineQueues, ProjectSongLists, ProjectTasks, Projects, Users
 from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.mysql.model.df_engine_queues import QueueEventTypes
 from services.pusher import broadcast_generation_status
@@ -110,22 +110,24 @@ def log_queue(
 
 
 def _generation_broadcast_context(generation_id: int, user_id: int) -> Optional[tuple[str, str, str, str]]:
-    """Returns (gid, project_uid, task_uid, user_uid) for the pusher channel, or None if any is missing."""
+    """Returns (gid, project_uid, task_or_song_uid, user_uid) for the pusher channel, or None if any is missing
+    (including an orphan whose task/song was deleted, which has nothing to broadcast to)."""
     try:
         with get_sync_db() as db:
             row = (
-                db.query(DfEngineGenerations.uid, Projects.uid, ProjectTasks.uid)
+                db.query(DfEngineGenerations.uid, Projects.uid, ProjectTasks.uid, ProjectSongLists.uid)
                 .outerjoin(Projects, Projects.id == DfEngineGenerations.project_id)
                 .outerjoin(ProjectTasks, ProjectTasks.id == DfEngineGenerations.task_id)
+                .outerjoin(ProjectSongLists, ProjectSongLists.id == DfEngineGenerations.song_id)
                 .filter(DfEngineGenerations.id == generation_id)
                 .first()
             )
-            if row is None or row[1] is None or row[2] is None:
+            if row is None or row[1] is None or (row[2] or row[3]) is None:
                 return None
             user_row = db.query(Users.uid).filter(Users.id == user_id).first()
             if user_row is None:
                 return None
-        return str(row[0]), str(row[1]), str(row[2]), str(user_row[0])
+        return str(row[0]), str(row[1]), str(row[2] or row[3]), str(user_row[0])
     except Exception:
         logging.exception(f"failed to resolve generation broadcast context generation_id={generation_id}")
         return None

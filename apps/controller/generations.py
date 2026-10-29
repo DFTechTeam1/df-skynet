@@ -29,6 +29,7 @@ from services.mysql.model import (
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR, GenerationKinds, GenerationStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.redis import get_json, set_json, delete_pattern, invalidate_project_files, CacheKeys
+from sqlalchemy.exc import IntegrityError
 from services.dto.asynced.projects import get_project, get_project_task
 from services.dto.asynced.employees import get_employee, assigned_to_task
 from services.dto.asynced.files import get_user_uploaded_files_refactored
@@ -333,7 +334,10 @@ class GenerationsController(CoreDependencies):
                 created_by=user_id,
             )
             self.db.add(generation)
-            await self.db.flush()
+            try:
+                await self.db.flush()
+            except IntegrityError:
+                raise DataNotFoundError(message="project_task_not_found")
 
             response.data = PromptEnhancerResult(prompt=enhanced["text"], enhance_uid=generation.uid)  # type: ignore
             await set_json(
@@ -554,7 +558,10 @@ class GenerationsController(CoreDependencies):
                 enhance_id=enhance_id,
             )
             self.db.add(generation)
-            await self.db.flush()
+            try:
+                await self.db.flush()
+            except IntegrityError:
+                raise DataNotFoundError(message="project_task_not_found")
 
             """Insert reference records using data already fetched via get_uploaded_files/get_generation_files"""
             for file in uploaded_files:
@@ -779,7 +786,10 @@ class GenerationsController(CoreDependencies):
                 enhance_id=enhance_id,
             )
             self.db.add(generation)
-            await self.db.flush()
+            try:
+                await self.db.flush()
+            except IntegrityError:
+                raise DataNotFoundError(message="project_task_not_found")
 
             """Insert reference records using data already fetched via get_uploaded_files/get_generation_files"""
             for file in uploaded_files:

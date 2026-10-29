@@ -21,12 +21,6 @@ from services.dto import ConnectionContext
 async def get_project(
     ctx: ConnectionContext, project_uid: Optional[UUID] = None, project_id: Optional[int] = None
 ) -> dict[str, Any]:
-    project_key = ctx.key.get_project(project_uid, project_id)
-    project = await get_json(ctx.redis, project_key)
-    if project:
-        logging.info(f"project cache hit key={project_key}")
-        return project
-
     filters = []
     if project_uid is not None:
         filters.append(Projects.uid == str(project_uid))
@@ -44,10 +38,7 @@ async def get_project(
         logging.warning(f"project not found project_uid={project_uid} project_id={project_id}")
         raise DataNotFoundError(message="project_not_found")
 
-    project = serialize(row)
-    await set_json(ctx.redis, project_key, project)
-    logging.info(f"project cache set key={project_key}")
-    return project
+    return serialize(row)
 
 
 async def _resolve_project_task_row(
@@ -137,13 +128,8 @@ async def get_project_task(
     song_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """Resolves either a `project_tasks` or `project_song_lists` row. `task_uid` auto-detects
-    between the two (tries project_tasks first); `task_id`/`song_id` resolve directly."""
-    task_key = ctx.key.get_project_task(task_uid, task_id, song_id)
-    project_task = await get_json(ctx.redis, task_key)
-    if project_task:
-        logging.info(f"project task cache hit key={task_key}")
-        return project_task
-
+    between the two (tries project_tasks first); `task_id`/`song_id` resolve directly.
+    Never cached: callers use it to validate existence, and other services may delete the row."""
     if task_id is not None:
         project_task = await _resolve_project_task_row(ctx, task_id=task_id)
     elif song_id is not None:
@@ -157,8 +143,6 @@ async def get_project_task(
         logging.warning(f"project task not found task_uid={task_uid} task_id={task_id} song_id={song_id}")
         raise DataNotFoundError(message="project_task_not_found")
 
-    await set_json(ctx.redis, task_key, project_task)
-    logging.info(f"project task cache set key={task_key}")
     return project_task
 
 
