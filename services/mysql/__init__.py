@@ -44,7 +44,7 @@ def sync_engine(db_url: str) -> Engine:
         db_url,
         pool_recycle=1800,
         pool_pre_ping=True,
-        connect_args={"connect_timeout": 10, "read_timeout": 30, "write_timeout": 30},
+        connect_args={"connect_timeout": 10, "read_timeout": 15, "write_timeout": 15},
     )
 
 
