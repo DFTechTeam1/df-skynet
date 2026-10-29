@@ -39,7 +39,13 @@ def sync_engine(db_url: str) -> Engine:
     services/mysql/factory/base.py), which requires a sync Session to persist.
     The app itself stays async-only; this pool exists only for factories/tests.
     """
-    return create_engine(db_url, pool_recycle=1800)
+    # ponytail: pymysql defaults to no timeouts, so a half-dead socket blocks a worker forever; pre_ping drops stale pooled conns.
+    return create_engine(
+        db_url,
+        pool_recycle=1800,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 10, "read_timeout": 30, "write_timeout": 30},
+    )
 
 
 @lru_cache
