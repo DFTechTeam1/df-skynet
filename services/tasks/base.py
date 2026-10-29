@@ -169,6 +169,23 @@ def _release_reupload_lock(generation_id: int) -> None:
         logging.exception(f"failed to release reupload lock generation_id={generation_id}")
 
 
+MAX_REDELIVERIES = 3  # same task id + same attempt logged `started` this many times = worker keeps dying on it
+
+
+def _redelivery_count(generation_id: int, task_id: str, attempt: int) -> int:
+    with get_sync_db() as db:
+        return (
+            db.query(DfEngineQueues.id)
+            .filter(
+                DfEngineQueues.generation_id == generation_id,
+                DfEngineQueues.event_type == QueueEventTypes.started,
+                DfEngineQueues.attempt == attempt,
+                DfEngineQueues.detail["celery_task_id"].as_string() == task_id,  # type: ignore
+            )
+            .count()
+        )
+
+
 class GenerationTask(celery_app.Task):
     def _attempt_duration_ms(self) -> Optional[int]:
         """Milliseconds since this attempt's `before_start`, or None if it never ran. The start time lives on
@@ -179,6 +196,19 @@ class GenerationTask(celery_app.Task):
     def before_start(self, task_id: str, args: tuple, kwargs: dict[str, Any]) -> None:
         self.request.attempt_started_at = time.perf_counter()
         generation_id = args[0] if args else kwargs["generation_id"]
+        attempt = self.request.retries + 1
+        try:
+            redeliveries = _redelivery_count(generation_id, task_id, attempt)
+        except Exception:
+            logging.exception(f"failed to count redeliveries generation_id={generation_id}")
+            redeliveries = 0
+        if redeliveries >= MAX_REDELIVERIES - 1:
+            # raised from before_start, Celery routes this to on_failure (marks failed) and acks the message
+            raise GenerationStageError(
+                f"task redelivered {redeliveries + 1} times without finishing (worker killed?)",
+                source="udin" if self.name == "df_engine.udin_uploader" else "openrouter",
+                final=True,
+            )
         log_queue(
             generation_id=generation_id,
             queue_name=self.name,
