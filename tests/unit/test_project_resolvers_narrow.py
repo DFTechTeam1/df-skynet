@@ -6,12 +6,12 @@ from sqlalchemy import inspect
 
 import services.dto.asynced.projects as ap
 import services.dto.synced.projects as sp
+from error import DataNotFoundError
 from services.mysql.model import Projects
 
 
 def _ctx(db):
-    key = type("K", (), {"get_project": lambda *a: "pk", "get_project_task": lambda *a: "tk"})()
-    return type("Ctx", (), {"db": db, "redis": object(), "key": key})()
+    return type("Ctx", (), {"db": db})()
 
 
 def _project():
@@ -25,17 +25,25 @@ async def test_async_get_project_loads_only_needed_columns(monkeypatch):
         seen.update(kw)
         return _project()
 
-    monkeypatch.setattr(ap, "get_json", AsyncMock(return_value=None))
-    monkeypatch.setattr(ap, "set_json", AsyncMock())
     monkeypatch.setattr(ap, "query", fake_query)
     result = await ap.get_project(_ctx(object()), project_id=1)
     assert {"id", "uid", "name"} <= result.keys()
     assert "load_only" in str(seen["options"][0]).lower() or seen["options"]
 
 
+async def test_get_project_never_serves_stale_after_delete(monkeypatch):
+    rows = [_project(), None]  # second lookup: row deleted by another service
+
+    async def fake_query(db, table, **kw):
+        return rows.pop(0)
+
+    monkeypatch.setattr(ap, "query", fake_query)
+    await ap.get_project(_ctx(object()), project_id=1)
+    with pytest.raises(DataNotFoundError):
+        await ap.get_project(_ctx(object()), project_id=1)
+
+
 def test_sync_get_project_serializes_loaded_columns(monkeypatch):
-    monkeypatch.setattr(sp, "get_json_sync", lambda *a: None)
-    monkeypatch.setattr(sp, "set_json_sync", lambda *a: None)
     monkeypatch.setattr(sp, "query_sync", lambda *a, **k: _project())
     result = sp.get_project(_ctx(object()), project_uid="p-uid")
     assert result["uid"] == "p-uid"

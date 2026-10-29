@@ -38,10 +38,14 @@ class DfEngineUploadFiles(SQLModel, table=True):
     size: int = Field(sa_column=Column(BigInteger, nullable=False))
     project_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("projects.id"), nullable=False))
     task_id: Optional[int] = Field(
-        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id"), nullable=True)
+        default=None,
+        sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id", ondelete="SET NULL"), nullable=True),
     )
     song_id: Optional[int] = Field(
-        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_song_lists.id"), nullable=True)
+        default=None,
+        sa_column=Column(
+            BIGINT(unsigned=True), ForeignKey("project_song_lists.id", ondelete="SET NULL"), nullable=True
+        ),
     )
     created_by: Optional[int] = Field(
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
