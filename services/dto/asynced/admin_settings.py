@@ -247,9 +247,7 @@ async def get_model(ctx: ConnectionContext, model_uid: UUID, type: ModelUsageTyp
     if type == ModelUsageTypes.video:
         filters.append(func.json_length(DfEngineModelOptions.supported_resolutions) >= 1)  # type: ignore
         filters.append(func.json_length(DfEngineModelOptions.supported_aspect_ratios) >= 1)  # type: ignore
-        filters.append(func.json_length(DfEngineModelOptions.supported_sizes) >= 1)  # type: ignore
         filters.append(func.json_length(DfEngineModelOptions.supported_durations) >= 1)  # type: ignore
-        filters.append(func.json_length(DfEngineModelOptions.supported_frame_images) >= 1)  # type: ignore
 
     row = await query(ctx.db, DfEngineModelOptions, filters=tuple(filters), fetch_one=True)
     if not row:

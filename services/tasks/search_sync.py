@@ -26,7 +26,9 @@ from utils import local_time
 
 BACKFILL_BATCH = 500
 SyncKind = Literal["generation", "upload"]
-_RETRY = dict(retry_backoff=True, retry_backoff_max=60, retry_jitter=True, max_retries=5)
+TIMEOUT = dict(
+    retry_backoff=True, retry_backoff_max=60, retry_jitter=True, max_retries=5, soft_time_limit=45, time_limit=60
+)  # a hung Algolia/DB call must raise (-> retry), never sit in STARTED
 
 
 @worker_ready.connect
@@ -40,7 +42,7 @@ def ensure_index_settings(**_: Any) -> None:
         logging.exception("search index settings could not be applied")
 
 
-@celery_app.task(bind=True, name="df_engine.search_upsert", **_RETRY)
+@celery_app.task(bind=True, name="df_engine.search_upsert", **TIMEOUT)
 def search_upsert(self, kind: SyncKind, uid: str) -> dict[str, Any]:
     """Make the index agree with the DB for one file: index it when it qualifies, otherwise remove it. Safe to repeat,
     so it covers create, rename, move and "stopped being main" alike. `indexed_at` is set only after Algolia accepted
@@ -77,7 +79,7 @@ def search_upsert(self, kind: SyncKind, uid: str) -> dict[str, Any]:
         raise self.retry(exc=exc, countdown=retry_countdown(self))
 
 
-@celery_app.task(bind=True, name="df_engine.search_delete", **_RETRY)
+@celery_app.task(bind=True, name="df_engine.search_delete", **TIMEOUT)
 def search_delete(self, index: str, uids: list[str]) -> dict[str, Any]:
     """Remove documents of rows that no longer exist (the DB row is gone, so there is nothing to reload)."""
     try:
