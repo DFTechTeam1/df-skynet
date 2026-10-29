@@ -29,6 +29,8 @@ def client() -> Redis:
         host=REDIS_HOST,
         port=REDIS_PORT,
         password=REDIS_PASSWORD,
+        socket_connect_timeout=5,
+        socket_timeout=10,  # ponytail: redis-py blocks forever by default
     )
 
 
