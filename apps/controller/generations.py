@@ -674,9 +674,6 @@ class GenerationsController(CoreDependencies):
         TASK_STATUS_COMPLETED = 4
 
         try:
-            #  Will be used for testing pusposes
-            response.data = "anjay"
-            return response
             task = await get_project_task(ctx, task_uid)
             if task.get("is_song") and task["status"] == SONG_STATUS_COMPLETED:
                 raise DataValidationError(message="song_task_already_completed")
