@@ -1,5 +1,5 @@
-from fastapi import Request, Response, status
-from error import BaseError
+from fastapi import Request, Response
+from error import RateLimitedError
 from pyrate_limiter import (
     AbstractBucket,
     BucketFactory,
@@ -38,10 +38,20 @@ class RateLimiter:
         ip = request.headers.get("X-Forwarded-For", "").split(",")[0] or (
             request.client.host if request.client else "127.0.0.1"
         )
-        key = f"{ip}:{request.method}:{request.scope['path']}"
+        key = f"ip:{ip}"
         if not await self.limiter.try_acquire_async(key, blocking=False):
-            raise BaseError(status.HTTP_429_TOO_MANY_REQUESTS, "Too Many Requests")
+            raise RateLimitedError()
 
 
 def rate_limit(times: int = 15, seconds: int = 1):
     return RateLimiter(limiter=Limiter(KeyedBucketFactory([Rate(times, Duration.SECOND * seconds)])))
+
+
+generation_limiter = rate_limit(10, 60)  # 10 Generation per 1 Minute!
+
+
+async def generation_throttle(request: Request, response: Response):
+    try:
+        await generation_limiter(request, response)
+    except RateLimitedError as e:
+        raise RateLimitedError(message="generation_rate_limit_exceeded") from e

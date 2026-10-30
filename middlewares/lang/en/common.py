@@ -1,6 +1,7 @@
 class CommonMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
+            "too_many_requests": "Too many requests. Please wait a moment before trying again.",
             "success": "Success",
             "data_not_found_error": "We couldn't find what you're looking for.",
             "data_validation_error": "Some of the information you entered isn't valid. Please check and try again.",

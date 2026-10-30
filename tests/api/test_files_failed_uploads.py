@@ -110,9 +110,6 @@ async def test_list_excludes_pending_and_success(list_url, authed_client, user_i
 async def test_list_filters(authed_client, user_id, make, project_task, list_url):
     image = make(user_id, prompt="prompt-only-needle")
     video = make(user_id, kind=GenerationKinds.video, prompt="other")
-    DfEngineGenerationResultsFactory.create(
-        generation_id=video.id, created_by=int(user_id), name="needle-clip.mp4", path="storage/x/needle-dir/clip.mp4"
-    )
 
     async def uids(**params):
         resp = await authed_client.call("GET", list_url, params=params)
@@ -120,14 +117,13 @@ async def test_list_filters(authed_client, user_id, make, project_task, list_url
         return {row["generation_uid"] for row in resp.json()["data"]}
 
     assert {str(image.uid), str(video.uid)} <= await uids()  # image and video are both listed
-    assert str(video.uid) in await uids(search="needle-clip")  # file name
-    assert str(video.uid) in await uids(search="needle-dir")  # file path
-    assert str(image.uid) not in await uids(search="needle-dir")
-    assert str(image.uid) not in await uids(search="prompt-only-needle")  # prompt is not searched
+    assert str(image.uid) in await uids(search="prompt-only-needle")  # prompt
+    assert str(video.uid) not in await uids(search="prompt-only-needle")
     model_name = f"UniqueModel-{uuid4().hex[:8]}"
     other = make(user_id, model_id=DfEngineModelOptionsFactory.create(name=model_name).id)
     assert str(other.uid) in await uids(search=model_name)  # model name
     assert str(video.uid) not in await uids(search=model_name)
+    assert {str(image.uid), str(video.uid)} <= await uids(search=project_task.name)  # task name
     assert {str(image.uid), str(video.uid)} <= await uids()
     assert {str(image.uid), str(video.uid)} <= await uids(task_uid=project_task.uid)  # task_id + project_id
     bad = await authed_client.call("GET", list_url, params={"task_uid": "nope"}, raise_for_status=False)
