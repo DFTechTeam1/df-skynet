@@ -1,0 +1,64 @@
+sequenceDiagram
+    actor Overrider
+    actor Staff
+    participant FE as Frontend
+    participant BE as Backend
+    participant DB@{ "type": "database", "alias": "Internal DB" } as Database
+
+    Note over Overrider: Root, Director, PM (all kinds), Lead 3D
+    Note over Staff: All except overrider
+    Note over BE: Auth middleware validates the token on every /storyboards route
+
+    par Staff
+        Staff->>FE: Select Project and Task
+    and Overrider
+        Overrider->>FE: Select Project and Task
+    end
+
+    FE-->>Staff: Open Storyboard menu
+    FE-->>Overrider: Open Storyboard menu
+
+    rect rgb(113, 27, 27)
+        Note over FE,BE: Fetch storyboards
+        FE->>+BE: GET /storyboards/{task_uid}
+        BE->>BE: Validate access token
+        alt Token invalid or expired
+            BE-->>FE: 401 Unauthorized
+        else Token active
+            BE->>DB: Find task (project tasks or song lists)
+            alt Task not found
+                BE-->>FE: 404 Task not found
+            else Task exists
+                alt User as Overrider
+                    BE->>DB: Get storyboards filtered by project
+                else User as Staff
+                    BE->>DB: Get storyboards filtered by user and task
+                end
+                DB-->>BE: List storyboards
+                BE-->>FE: 200 List of storyboards depend on user roles
+                Note over FE: Available actions: can_fetch_detail, can_delete, can_update<br/>can_fetch_detail: always true<br/>can_delete: true if no generations performed, else false<br/>can_update: always true
+                Note over FE: Response [<br>{uid: xxx, name: xxx, creator: {}, updater: {}, action: {}, icon: xxx, color: xxx}<br>...<br>{uid: xxx, name: xxx, creator: {}, updater: {}, action: {}, icon: xxx, color: xxx}<br>]
+            end
+        end
+        deactivate BE
+    end
+
+    rect rgb(105, 79, 18)
+        Note over FE,BE: Fetch storyboard details
+        FE->>+BE: GET /storyboards/{storyboard_uid}
+        BE->>BE: Validate access token
+        alt Token invalid or expired
+            BE-->>FE: 401 Unauthorized
+        else Token active
+            BE->>DB: Find storyboard generations
+            alt Not found
+                BE-->>FE: 404 Storyboard not found
+            else Staff accessing storyboard created by another user
+                BE-->>FE: 401 Unauthorized
+            else Found
+                DB-->>BE: Storyboard with generations
+                BE-->>FE: 200 Storyboard details
+            end
+        end
+        deactivate BE
+    end
