@@ -1,5 +1,6 @@
 from fastapi import Request, Response
-from error import RateLimitedError
+from apps.dependency.auth import bearer_scheme, get_user
+from error import AuthenticationError, RateLimitedError
 from pyrate_limiter import (
     AbstractBucket,
     BucketFactory,
@@ -30,6 +31,18 @@ class KeyedBucketFactory(BucketFactory):
         return bucket
 
 
+async def _get_user(request: Request) -> dict | None:
+    """Authenticated user claims, or None. Route-level limiters run before the controller's own `get_user`,
+    so `request.state.user` may not be set yet; resolve it here instead of relying on dependency order."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        try:
+            user = await get_user(request, await bearer_scheme(request))
+        except AuthenticationError:
+            return None  # unauthenticated: the caller falls back to the IP
+    return user
+
+
 class RateLimiter:
     def __init__(self, limiter: Limiter):
         self.limiter = limiter
@@ -38,7 +51,8 @@ class RateLimiter:
         ip = request.headers.get("X-Forwarded-For", "").split(",")[0] or (
             request.client.host if request.client else "127.0.0.1"
         )
-        key = f"ip:{ip}"
+        user = await _get_user(request)
+        key = f"user_id:{user['user_id']}:ip:{ip}" if user else f"ip:{ip}"
         if not await self.limiter.try_acquire_async(key, blocking=False):
             raise RateLimitedError()
 
