@@ -102,6 +102,10 @@ class DfEngineGenerations(SQLModel, table=True):
         default=None,
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_generations.id"), nullable=True),
     )
+    chat_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_chat_assistants.id"), nullable=True),
+    )
     x_min: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
     x_max: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
     y_min: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))

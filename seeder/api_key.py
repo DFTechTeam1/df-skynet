@@ -15,7 +15,7 @@ from services.mysql import engine, make_session, query
 from services.mysql.model import DfEngineApiKeys, DfEngineExternalApiCalls, Employees, PositionBackups, Users
 from services.redis import client as redis_client, delete_pattern, CacheKeys
 
-PIC_POSITIONS = ["project manager", "assistant project manager"]
+PIC_POSITIONS = ["project manager", "assistant project manager", "direktur", "direktur utama"]
 
 
 async def seed() -> None:

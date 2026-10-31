@@ -57,7 +57,7 @@ class RateLimiter:
             raise RateLimitedError()
 
 
-def rate_limit(times: int = 15, seconds: int = 1):
+def rate_limit(times: int = 30, seconds: int = 1):
     return RateLimiter(limiter=Limiter(KeyedBucketFactory([Rate(times, Duration.SECOND * seconds)])))
 
 

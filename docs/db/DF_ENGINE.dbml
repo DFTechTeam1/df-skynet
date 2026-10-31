@@ -450,6 +450,7 @@ Table df_engine_generations {
     cost decimal(10, 2) [default: null]
     exchange_rate decimal(20, 8) [not null, default: 0]
     created_by bigint [default: null]
+    chat_id bigint [default: null, note: "References df_engine_chat_assistants.id"]
     enhance_id bigint [default: null, note: "References df_engine_generations.id where kind = 'enhancer'. If filled (kind = 'image'), prompt is overridden by that row's own prompt/full_prompt"]
     x_min decimal(10, 2) [default: null, note: "kind = 'image' only"]
     x_max decimal(10, 2) [default: null, note: "kind = 'image' only"]
@@ -516,15 +517,26 @@ Table df_engine_motion_details {
     }
 }
 
-// --- kind = chat ---
-Table df_engine_chat_details {
+// --- chat assistants ---
+Table df_engine_chat_assistants {
     id bigint [pk, increment]
-    generation_id bigint [not null]
-    parent_id bigint [default: null, note: "Parent chat turn — references another df_engine_generations.id where kind = 'chat'"]
+    uid char(36) [not null, unique]
+    placeholder longtext [not null]
+    created_by bigint [not null]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: `now()`]
+    archived_at timestamp [default: null, note: "NULL = active; set = archived (read-only until unarchived)"]
 
     indexes {
-        parent_id [name: 'idx_chat_details_parent_id']
+        (created_by, archived_at) [name: 'idx_chat_assistants_created_by_archived_at']
     }
+}
+
+Table df_engine_chat_assistant_image_references {
+    id bigint [pk, increment]
+    chat_id bigint [not null]
+    generation_id bigint [default: null, note: "The chat turn (kind = 'chat') that sent this image"]
+    path varchar(512) [not null, note: "Relative to the chat storage dir: <chat_uid>/<file>"]
 }
 
 
@@ -767,11 +779,13 @@ Ref: df_engine_generations.id < df_engine_generation_references.generation_id
 Ref: df_engine_generations.id < df_engine_generation_results.generation_id
 
 // unified generations -> details (1:1 subtype tables)
+Ref: df_engine_chat_assistants.id < df_engine_generations.chat_id
+Ref: df_engine_chat_assistants.id < df_engine_chat_assistant_image_references.chat_id
+Ref: df_engine_generations.id < df_engine_chat_assistant_image_references.generation_id
 Ref: df_engine_generations.id - df_engine_video_generation_details.generation_id
 Ref: df_engine_generations.id - df_engine_storyboard_details.generation_id
 Ref: df_engine_generations.id - df_engine_keyframe_details.generation_id
 Ref: df_engine_generations.id - df_engine_motion_details.generation_id
-Ref: df_engine_generations.id - df_engine_chat_details.generation_id
 
 // unified generations -> upload tracking (1:1, only for uploadable kinds)
 Ref: df_engine_generations.id - df_engine_generation_uploads.generation_id
@@ -785,6 +799,3 @@ Ref: df_engine_generations.id < df_engine_storyboard_scenes.story_id
 Ref: df_engine_storyboard_scenes.id < df_engine_scene_shots.scene_id
 Ref: df_engine_scene_shots.id < df_engine_keyframe_details.shot_id
 Ref: df_engine_scene_shots.id < df_engine_motion_details.shot_id
-
-// chat self-reference (parent turn)
-Ref: df_engine_generations.id < df_engine_chat_details.parent_id
