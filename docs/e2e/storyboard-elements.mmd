@@ -30,14 +30,14 @@ sequenceDiagram
                 BE-->>FE: 404 Task not found
             else Task exists
                 alt User as Overrider
-                    BE->>DB: Get storyboards filtered by project
+                    BE->>DB: Get storyboards filtered by task / song (all users on these task)
                 else User as Staff
                     BE->>DB: Get storyboards filtered by user and task
                 end
                 DB-->>BE: List storyboards
                 BE-->>FE: 200 List of storyboards depend on user roles
                 Note over FE: Available actions: can_fetch_detail, can_delete, can_update<br/>can_fetch_detail: always true<br/>can_delete: true if no generations performed, else false<br/>can_update: always true
-                Note over FE: Response [<br>{uid: xxx, name: xxx, creator: {}, updater: {}, action: {}, icon: xxx, color: xxx}<br>...<br>{uid: xxx, name: xxx, creator: {}, updater: {}, action: {}, icon: xxx, color: xxx}<br>]
+                Note over FE: Response [<br>{uid: xxx, name: xxx, prompt: user_prompt, creator: {}, updater: {}, action: {}, icon: xxx, color: xxx}<br>...<br>{uid: xxx, name: xxx, prompt: user_prompt, creator: {}, updater: {}, action: {}, icon: xxx, color: xxx}<br>]
             end
         end
         deactivate BE
@@ -59,6 +59,13 @@ sequenceDiagram
                 DB-->>BE: Storyboard with generations
                 BE-->>FE: 200 Storyboard details
             end
+            Note over FE: Response <br>{<br>uid: xxx,<br> name: xxx,<br> prompt: user_prompt,<br> creator: {},<br> updater: {},<br> action: {},<br> icon: xxx,<br> color: xxx,<br> scenes: [<br>{<br>name: scene 1,<br> shots: [<br>{<br>name: shot 1,<br>interior_style: interior, <br>time_of_day: sunrise, <br>, lighting_mood: natural<br>},<br>...<br>{another shot}<br>]<br>}<br>]<br>}
         end
         deactivate BE
     end
+
+
+
+%% interior_style interior_styles [default: "interior"]
+%%     time_of_day time_of_days [default: "sunrise"]
+%%     lighting_mood lighting_moods [default: 'natural']

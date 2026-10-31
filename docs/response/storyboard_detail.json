@@ -1,0 +1,60 @@
+{
+  "uid": "uid",
+  "created_at": "30 October 2026, 15:48",
+  "updated_at": null,
+  "name": "name of the storyboard",
+  "prompt": "raw user prompt, not the long version",
+  "creator": {},
+  "updater": {},
+  "action": {
+    "can_fetch_detail": true,
+    "can_delete": "true if not any generation has made, else false",
+    "can_update": true
+  },
+  "scenes": [
+    {
+      "uid": "uid",
+      "created_at": "30 October 2026, 15:48",
+      "updated_at": null,
+      "name": "name of the scene",
+      "prompt": "raw user prompt, not the long version",
+      "url": "will be replaced based on latest user generation, option always either an image, video or null",
+      "elements": [
+        {
+          "uid": "uid",
+          "name": "name of the element",
+          "prompt": "placeholder prompt",
+          "url": "result of element generation, either null or http data",
+          "need_generation": true
+        }
+      ],
+      "shots": [
+        {
+          "uid": "uid",
+          "name": "name of the shots",
+          "keyframes": [
+            {
+              "uid": "uid"
+            }
+          ],
+          "motions": [
+            {
+              "uid": "uid"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "can_delete": "true if not any generation has made IN this scene, else false",
+        "can_update": true
+      }
+    },
+    {
+      "created_at": "30 October 2026, 15:48",
+      "updated_at": null,
+      "name": "another scene",
+      "prompt": "raw user prompt, not the long version",
+      "url": "will be replaced based on latest user generation, option always either an image or a video"
+    }
+  ]
+}
