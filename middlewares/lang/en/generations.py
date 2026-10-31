@@ -1,6 +1,7 @@
 class GenerationsMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
+            "generation_rate_limit_exceeded": "You're generating too fast. Please wait a moment before generating again.",
             "input_references_exceeded": "You've added too many references for this model.",
             "input_references_required": "This model requires at least {min} reference image(s).",
             "unsupported_generation_parameter": "This parameter isn't supported by the selected model.",

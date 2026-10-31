@@ -4,7 +4,8 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
-from fastapi import status, Path, Query, Depends
+from fastapi import status, Path, Query, Depends, Request
+from fastapi import Response as FastAPIResponse
 from fastapi_controller import controller
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload, load_only
@@ -14,7 +15,6 @@ from schemas.response import PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql import get_usd_rate, query
-from apps.dependency.rate_limitter import rate_limit
 from services.mysql.model import (
     DfEngineModelOptions,
     DfEngineGenerations,
@@ -50,7 +50,7 @@ from services.dto.asynced.admin_settings import get_admin_settings, get_project_
 from log import logging
 from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhancerPayload, EditImageGenerationPayload
 from services.files import has_override
-from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
+from error import ServiceError, BaseError, RateLimitedError, DataNotFoundError, DataValidationError
 from services.generations import dispatch_generation, global_reference_sections, reference_sections, validation_record
 from services.search.query import group_reference_picker, search_project_files, search_task_generations
 from services.model_management import ModelManagement
@@ -69,6 +69,7 @@ from services.tasks.image_generation import image_generation
 from services.tasks.video_generation import video_generation
 from services.dto.format_response import GenerationResultRecord
 from utils.formatter import format_datetime, format_user_employees
+from apps.dependency.rate_limitter import generation_throttle
 
 cache_key = CacheKeys()
 
@@ -137,7 +138,7 @@ class GenerationsController(CoreDependencies):
             model = await query(
                 db=self.db,
                 table=DfEngineModelOptions,
-                options=(load_only(DfEngineModelOptions.id),),
+                options=(load_only(DfEngineModelOptions.id),),  # type: ignore
                 filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
                 fetch_one=True,
             )
@@ -243,7 +244,7 @@ class GenerationsController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
-        dependencies=[Depends(rate_limit(5, 60))],
+        dependencies=[Depends(generation_throttle)],
     )
     async def generation_with_uid_to_enhance_user_prompt(
         self, schema: PromptEnhancerPayload, task_uid: UUID = Path(..., description="Task UID.")
@@ -370,7 +371,7 @@ class GenerationsController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
-        dependencies=[Depends(rate_limit(5, 60))],
+        dependencies=[Depends(generation_throttle)],
     )
     async def generation_with_uid_to_edit_generated_image(
         self, schema: EditImageGenerationPayload, file_uid: UUID = Path(description="File UID.")
@@ -658,7 +659,7 @@ class GenerationsController(CoreDependencies):
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
         response_model=Response,
-        dependencies=[Depends(rate_limit(5, 60))],
+        dependencies=[Depends(generation_throttle)],
     )
     async def generation_with_uid_to_generate_an_image_or_video(
         self, schema: ImageVideoGenerationPayload, task_uid: UUID = Path(description="Task UID")

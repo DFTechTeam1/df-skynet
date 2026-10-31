@@ -93,7 +93,7 @@ class FilesController(CoreDependencies):
     @controller.get(
         "/files/failed-uploads/{project_uid}",
         summary="Get generations that need a manual re-upload.",
-        description="Shows generated images, edited images and videos of a project whose upload to Udin failed after every automatic retry. Only your own generations are listed, unless you have an override role. Optionally narrow by task or song (`task_uid`), or search by file name, file path or model name.",
+        description="Shows generated images, edited images and videos of a project whose upload to Udin failed after every automatic retry. Only your own generations are listed, unless you have an override role. Optionally narrow by task or song (`task_uid`), or search by prompt, model name, song or task name.",
         status_code=status.HTTP_200_OK,
         tags=["Files"],
         response_model=Response,
@@ -102,7 +102,7 @@ class FilesController(CoreDependencies):
         self,
         project_uid: UUID = Path(..., description="Project UID."),
         task_uid: Optional[UUID] = Query(None, description="Project task UID or project song UID."),
-        search: Optional[str] = Query(None, description="Match prompt or model name."),
+        search: Optional[str] = Query(None, description="Match prompt, model name, song or task name."),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
