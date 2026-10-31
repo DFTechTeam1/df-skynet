@@ -75,3 +75,13 @@ class GeneratedFileAction(BaseModel):
             can_rename=allowed,
             can_choose_to_move=allowed and not archived,
         )
+
+
+class ChatAssistantAction(BaseModel):
+    can_fetch_detail: bool = True
+    can_rename: bool = True
+    can_set_archieve: bool = True
+
+    @classmethod
+    def action(cls, archived_at: Any) -> "ChatAssistantAction":
+        return cls(can_set_archieve=archived_at is None)

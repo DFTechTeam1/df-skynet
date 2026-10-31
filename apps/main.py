@@ -1,4 +1,6 @@
+import os
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi_controller import register_controllers_to_app
 from starlette.middleware.cors import CORSMiddleware
 from apps.controller.common import CommonController  # noqa
@@ -13,11 +15,13 @@ from apps.controller.setting import SettingController  # noqa
 from apps.controller.files import FilesController  # noqa
 from apps.controller.generations import GenerationsController  # noqa
 from apps.controller.pusher import PusherController  # noqa
+from apps.controller.chat import ChatController  # noqa
 from apps.controller.core import CoreDependencies, PlainDependencies
 from config.openapi import scalar_config
 from error.register import register_exception_handlers
 from middlewares.language import LanguageMiddleware
 from apps.secret import CORS_ALLOWED_ORIGINS
+from services.chat_assistant import CHAT_STORAGE_DIR
 
 app = FastAPI(title="DF-Skynet", version="1.0", docs_url=None, redoc_url=None)
 
@@ -31,6 +35,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(LanguageMiddleware)
+
+os.makedirs(CHAT_STORAGE_DIR, exist_ok=True)
+app.mount("/api/storages/chat_assistants", StaticFiles(directory=CHAT_STORAGE_DIR), name="chat_assistants")
 
 register_exception_handlers(app)
 register_controllers_to_app(app, CoreDependencies)

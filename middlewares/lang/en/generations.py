@@ -37,4 +37,13 @@ class GenerationsMessage:
             "prompt_not_generation_related": "This prompt doesn't look related to {type_label} (score: {score}). Please describe what you'd like the {type_label} to look like.",
             "generation_file_not_found": "This generated file could not be found.",
             "main_generation_file_not_found": "The main version of this generated file could not be found.",
+            "chat_assistant_not_found": "This chat could not be found.",
+            "chat_assistant_not_owner": "Only the person who started this chat can access it.",
+            "chat_assistant_archived": "This chat is archived. Unarchive it first to continue the conversation.",
+            "chat_assistant_limit_reached": "This chat has reached its limit of {max} messages. Start a new chat to continue.",
+            "chat_model_not_configured": "No text model is configured for the chat assistant. Please contact an administrator.",
+            "chat_assistant_failed": "The chat assistant couldn't answer right now. Please try again.",
+            "chat_image_invalid": "Only PNG, JPEG or WebP images are allowed.",
+            "chat_images_exceeded": "You've attached too many images (max {max}).",
+            "chat_image_too_large": "Each image must be {max_mb} MB or smaller.",
         }

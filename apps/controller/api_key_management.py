@@ -49,7 +49,7 @@ class APIKeyManagementController(CoreDependencies):
     async def api_key_management_to_create_api_management(self, schema: CreateApiKeyPayload) -> Response:
         response = Response()
         cache_key = CacheKeys()
-        ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager"]
+        ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager", "direktur", "direktur utama"]
         try:
             if schema.expires_at and schema.expires_at <= local_time():
                 raise DataValidationError(message="api_key_expiry_must_be_in_future")
