@@ -7,7 +7,7 @@ class FilesMessage:
             "project_task_already_completed": "This task has already been completed and can no longer be modified.",
             "employee_not_assigned_task": "This employee isn't assigned to this task.",
             "task_already_finished": "You cannot upload files because this task has already finished.",
-            "project_not_ongoing": "Files can only be uploaded while the project is ongoing.",
+            "project_not_ongoing": "Generation can only be performed while the project is ongoing.",
             "folder_not_found": "We couldn't find that folder.",
             "folder_path_not_found": "This folder path doesn't belong to this project. Choose a folder from this project's file tree.",
             "invalid_upload_path": "Files can only be uploaded into the upload/images or upload/videos folder of this project, or a folder inside them.",
