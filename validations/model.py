@@ -106,12 +106,30 @@ def validate_image_model_parameter(parameter: dict[str, Any], model: dict[str, A
         raise DataValidationError(message="generation_parameters_invalid", error=errors)
 
 
-def validate_video_model_parameter(parameter: dict[str, Any], model: dict[str, Any]) -> None:
+def validate_video_model_parameter(
+    parameter: dict[str, Any], model: dict[str, Any], color: Optional[str] = None
+) -> Optional[str]:
     """Validates a video generation `parameter` dict against the model's declared video
     capabilities (supported_resolutions/aspect_ratios/durations/frame_images, generate_audio),
     before the request is sent to OpenRouter. Mirrors `validate_image_model_parameter` in
-    shape and error style."""
+    shape and error style.
+
+    When `color` is set, the model must support BOTH first_frame and last_frame. The color fills the
+    slot the user did not supply and that slot is returned. Raises if the model lacks either frame,
+    the user supplied no frame (nothing to pair the color with), or the user supplied both."""
     errors: dict[str, list[str]] = {}
+    color_frame_type: Optional[str] = None
+    if color is not None:
+        supported = model.get("supported_frame_images") or []
+        supplied = {f.get("frame_type") for f in (parameter.get("frame_images") or []) if isinstance(f, dict)}
+        if not {"first_frame", "last_frame"} <= set(supported):
+            errors.setdefault("default_frame_reference_color", []).append("frame_reference_color_requires_two_frames")
+        elif not supplied:  # the color only fills the *other* slot, so the user must pick one frame first
+            errors.setdefault("default_frame_reference_color", []).append("frame_reference_color_requires_one_frame")
+        else:
+            color_frame_type = next((t for t in supported if t not in supplied), None)
+            if color_frame_type is None:  # user already supplied both frames
+                errors.setdefault("default_frame_reference_color", []).append("no_free_frame_slot")
 
     resolution = parameter.get("resolution")
     if resolution is None:
@@ -162,3 +180,4 @@ def validate_video_model_parameter(parameter: dict[str, Any], model: dict[str, A
 
     if errors:
         raise DataValidationError(message="generation_parameters_invalid", error=errors)
+    return color_frame_type

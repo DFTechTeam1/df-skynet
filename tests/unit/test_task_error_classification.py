@@ -56,7 +56,9 @@ def _fake_get_sync_db(generation):
 def test_mark_generation_failed_sets_status(monkeypatch):
     """A non-success generation is flipped to failed once retries are exhausted, and the
     task's user-galleries cache is busted so the stale pending entry disappears promptly."""
-    generation = SimpleNamespace(status=GenerationStatuses.processing, task_id=42, project_id=9)
+    generation = SimpleNamespace(
+        status=GenerationStatuses.processing, task_id=42, project_id=9, status_code=None, response=None
+    )
     monkeypatch.setattr(base, "get_sync_db", _fake_get_sync_db(generation))
     busted = []
     monkeypatch.setattr(base, "delete_pattern_sync", lambda redis, pattern: busted.append(pattern))
@@ -73,7 +75,9 @@ def test_mark_generation_failed_sets_status(monkeypatch):
 
 def test_mark_generation_failed_skips_cache_bust_without_a_task(monkeypatch):
     """A generation with no task_id (e.g. prompt enhancement) has nothing to bust."""
-    generation = SimpleNamespace(status=GenerationStatuses.processing, task_id=None, project_id=None)
+    generation = SimpleNamespace(
+        status=GenerationStatuses.processing, task_id=None, project_id=None, status_code=None, response=None
+    )
     monkeypatch.setattr(base, "get_sync_db", _fake_get_sync_db(generation))
     busted = []
     monkeypatch.setattr(base, "delete_pattern_sync", lambda redis, pattern: busted.append(pattern))

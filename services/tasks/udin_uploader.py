@@ -8,6 +8,7 @@ from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
 from services.api_caller import APICaller
 from services.celery_app import celery_app
+from services.frame_reference_color import cleanup_generation
 from services.slack_notifier import notify_udin_upload_failed
 from services.dto import SyncedConnectionContext
 from services.dto.synced.projects import get_project
@@ -344,6 +345,7 @@ def udin_uploader(
 
             if task_uid is not None and user_uid is not None:
                 broadcast_generation_status(project_uid, task_uid, user_uid, generation_uid, "success")
+            cleanup_generation(generation_id)  # video color frame no longer needed; cronjob is the backup
             return {"generation_id": generation_id, "status": "success", "result_ids": result_ids}
         except Exception:
             logging.exception(f"udin_uploader local commit failed attempt={attempt} generation_id={generation_id}")

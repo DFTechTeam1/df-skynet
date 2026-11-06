@@ -11,6 +11,7 @@ from celery.exceptions import Retry
 from celery.utils.time import get_exponential_backoff_interval
 from log import logging
 from services.celery_app import celery_app
+from services.frame_reference_color import cleanup_generation
 from services.mysql import get_sync_db
 from services.mysql.model import DfEngineGenerations, DfEngineQueues, ProjectSongLists, ProjectTasks, Projects, Users
 from services.mysql.model.df_engine_generations import GenerationStatuses
@@ -305,6 +306,7 @@ class GenerationTask(celery_app.Task):
             _mark_generation_failed(generation_id, str(exc), exc.source, exc.status_code)
         else:
             _mark_generation_failed(generation_id, str(exc) or exc.__class__.__name__)
+        cleanup_generation(generation_id)  # final failure only: retries return early above
         log_queue(
             generation_id=generation_id,
             queue_name=self.name,

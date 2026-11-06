@@ -86,3 +86,32 @@ async def test_override_role_skips_assignment_check(authed_client, stub, as_role
     as_roles(["director"])
     await _call(authed_client, name)  # outcome past the guards is irrelevant here
     assert stub["assigned"] == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_frame_reference_color_returns_readable_message(authed_client):
+    """A bad hex is a 422 whose headline is the translated sentence, not 'Malformed JSON.'"""
+    payload = {"prompt": "a mountain", "type": "video", "parameter": {"aspect_ratio": "21:9"}}
+    resp = await authed_client.call(
+        "POST",
+        ENDPOINTS["generate"][0],
+        json={**payload, "default_frame_reference_color": "tes"},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    expected = resolve_message("default_frame_reference_color_invalid_format", "en")
+    assert body["message"] == expected != "default_frame_reference_color_invalid_format"
+    assert body["error"]["default_frame_reference_color"] == [expected]
+
+
+@pytest.mark.asyncio
+async def test_frame_reference_color_on_image_generation_is_422(authed_client):
+    resp = await authed_client.call(
+        "POST",
+        ENDPOINTS["generate"][0],
+        json={"prompt": "a mountain", "type": "image", "parameter": {}, "default_frame_reference_color": "#fb542b"},
+        raise_for_status=False,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["message"] == resolve_message("default_frame_reference_color_invalid", "en")
