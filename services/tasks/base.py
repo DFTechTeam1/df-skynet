@@ -1,4 +1,5 @@
 from sqlalchemy.orm import load_only
+import json
 import random
 import time
 import httpx
@@ -10,6 +11,7 @@ from celery.exceptions import Retry
 from celery.utils.time import get_exponential_backoff_interval
 from log import logging
 from services.celery_app import celery_app
+from services.frame_reference_color import cleanup_generation
 from services.mysql import get_sync_db
 from services.mysql.model import DfEngineGenerations, DfEngineQueues, ProjectSongLists, ProjectTasks, Projects, Users
 from services.mysql.model.df_engine_generations import GenerationStatuses
@@ -133,19 +135,40 @@ def _generation_broadcast_context(generation_id: int, user_id: int) -> Optional[
         return None
 
 
-def _mark_generation_failed(generation_id: int) -> None:
+def _mark_generation_failed(
+    generation_id: int,
+    message: str = "Generation failed",
+    source: Literal["openrouter", "udin", "system"] = "system",
+    status_code: Optional[int] = None,
+) -> None:
     try:
         with get_sync_db() as db:
             generation = db.get(
                 DfEngineGenerations,
                 generation_id,
                 options=[
-                    load_only(DfEngineGenerations.status, DfEngineGenerations.task_id, DfEngineGenerations.project_id)
+                    load_only(
+                        DfEngineGenerations.status,
+                        DfEngineGenerations.task_id,
+                        DfEngineGenerations.project_id,
+                        DfEngineGenerations.status_code,
+                        DfEngineGenerations.response,
+                    )
                 ],
             )
             if generation is None or generation.status == GenerationStatuses.success:
                 return
             generation.status = GenerationStatuses.failed
+            if not (generation.status_code == 200 and generation.response):
+                try:
+                    payload = json.loads(generation.response) if generation.response else {}
+                except ValueError:
+                    payload = {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                payload["error"] = {"message": message, "source": source}  # keeps polling_url for video rows
+                generation.response = json.dumps(payload)
+                generation.status_code = status_code or 500
             db.add(generation)
             task_id, project_id = generation.task_id, generation.project_id
         if task_id is not None:
@@ -279,7 +302,11 @@ class GenerationTask(celery_app.Task):
         )
         generation_id = args[0] if args else kwargs["generation_id"]
         _release_reupload_lock(generation_id)
-        _mark_generation_failed(generation_id)
+        if isinstance(exc, GenerationStageError):
+            _mark_generation_failed(generation_id, str(exc), exc.source, exc.status_code)
+        else:
+            _mark_generation_failed(generation_id, str(exc) or exc.__class__.__name__)
+        cleanup_generation(generation_id)  # final failure only: retries return early above
         log_queue(
             generation_id=generation_id,
             queue_name=self.name,

@@ -38,7 +38,9 @@ def generation_reaper() -> dict[str, Any]:
         )
 
     for generation_id, user_id in stale:
-        _mark_generation_failed(generation_id)
+        _mark_generation_failed(
+            generation_id, f"Generation timed out: no queue activity for {STALE_AFTER}", status_code=504
+        )
         log_queue(
             generation_id=generation_id,
             queue_name="df_engine.generation_reaper",
