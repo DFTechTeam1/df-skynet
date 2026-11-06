@@ -223,3 +223,4 @@ CLAUDE.md
 .claude*
 coverage/
 secrets/*
+storages/*

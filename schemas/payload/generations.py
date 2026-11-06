@@ -116,7 +116,7 @@ class ImageVideoGenerationPayload(BaseModel):
                 error={"frame_images": ["frame_images_requires_video_type"]},
             )
 
-        types = [ref.type for ref in self.frame_images]
+        types = [ref.frame_type for ref in self.frame_images]
         if len(types) != len(set(types)):
             raise DataValidationError(
                 message="frame_images_duplicate_type",

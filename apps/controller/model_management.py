@@ -387,7 +387,7 @@ class ModelManagementController(CoreDependencies):
                                 user_data = await query(
                                     db=self.db,
                                     table=Users,
-                                    options=(load_only(Users.email, Users.username),),
+                                    options=(load_only(Users.email, Users.username),),  # type: ignore
                                     filters=(Users.id == self.user["user_id"],),  # type: ignore
                                     fetch_one=True,
                                 )

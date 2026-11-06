@@ -37,4 +37,13 @@ class GenerationsMessage:
             "prompt_not_generation_related": "Prompt ini sepertinya tidak berkaitan dengan {type_label} (skor: {score}). Tolong jelaskan {type_label} seperti apa yang kamu inginkan.",
             "generation_file_not_found": "File hasil generate ini tidak ditemukan.",
             "main_generation_file_not_found": "Versi utama dari file hasil generate ini tidak ditemukan.",
+            "chat_assistant_not_found": "Chat ini tidak ditemukan.",
+            "chat_assistant_not_owner": "Hanya pembuat chat ini yang dapat mengaksesnya.",
+            "chat_assistant_archived": "Chat ini diarsipkan. Batalkan pengarsipan dulu untuk melanjutkan percakapan.",
+            "chat_assistant_limit_reached": "Chat ini sudah mencapai batas {max} pesan. Mulai chat baru untuk melanjutkan.",
+            "chat_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk asisten chat. Silakan hubungi admin.",
+            "chat_assistant_failed": "Asisten chat belum bisa menjawab saat ini. Silakan coba lagi.",
+            "chat_image_invalid": "Hanya gambar PNG, JPEG, atau WebP yang diizinkan.",
+            "chat_images_exceeded": "Gambar yang dilampirkan terlalu banyak (maks {max}).",
+            "chat_image_too_large": "Setiap gambar harus berukuran {max_mb} MB atau lebih kecil.",
         }

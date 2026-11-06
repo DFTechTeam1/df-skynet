@@ -7,7 +7,7 @@ class FilesMessage:
             "project_task_already_completed": "Tugas ini sudah selesai dan tidak dapat diubah lagi.",
             "employee_not_assigned_task": "Employee ini tidak ditugaskan pada task ini.",
             "task_already_finished": "Anda tidak dapat mengunggah file karena tugas ini sudah selesai.",
-            "project_not_ongoing": "File hanya dapat diunggah selama proyek masih berjalan.",
+            "project_not_ongoing": "Generasi hanya dapat dilakukan selama proyek masih berjalan.",
             "folder_not_found": "Folder tidak ditemukan.",
             "folder_path_not_found": "Path folder ini bukan milik proyek ini. Pilih folder dari file tree proyek ini.",
             "invalid_upload_path": "File hanya dapat diunggah ke folder upload/images atau upload/videos milik proyek ini, atau folder di dalamnya.",

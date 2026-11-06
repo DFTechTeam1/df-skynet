@@ -1,7 +1,8 @@
 from services.mysql.factory.df_engine_api_key_rotation_issues import DfEngineApiKeyRotationIssuesFactory
 from services.mysql.factory.df_engine_api_key_snapshots import DfEngineApiKeySnapshotsFactory
 from services.mysql.factory.df_engine_api_keys import DfEngineApiKeysFactory
-from services.mysql.factory.df_engine_chat_details import DfEngineChatDetailsFactory
+from services.mysql.factory.df_engine_chat_assistants import DfEngineChatAssistantsFactory
+from services.mysql.factory.df_engine_chat_assistant_image_references import DfEngineChatAssistantImageReferencesFactory
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_generation_reconciliation_issues import (
@@ -34,7 +35,8 @@ __all__ = [
     "DfEngineApiKeyRotationIssuesFactory",
     "DfEngineApiKeySnapshotsFactory",
     "DfEngineApiKeysFactory",
-    "DfEngineChatDetailsFactory",
+    "DfEngineChatAssistantsFactory",
+    "DfEngineChatAssistantImageReferencesFactory",
     "DfEngineFeaturePromptMappingsFactory",
     "DfEngineFeaturesFactory",
     "DfEngineGenerationReconciliationIssuesFactory",
