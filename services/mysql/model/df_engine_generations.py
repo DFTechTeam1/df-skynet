@@ -106,6 +106,7 @@ class DfEngineGenerations(SQLModel, table=True):
         default=None,
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_chat_assistants.id"), nullable=True),
     )
+    color_code: Optional[str] = Field(default=None, sa_column=Column(String(7), nullable=True, server_default=None))
     x_min: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
     x_max: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))
     y_min: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(10, 2), nullable=True))

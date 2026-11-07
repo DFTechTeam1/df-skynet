@@ -1,3 +1,4 @@
+import json
 import traceback
 from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,5 +79,9 @@ async def dispatch_generation(db: AsyncSession, generation: Any, task: Any, user
     except Exception:
         logging.error(traceback.format_exc())
         generation.status = GenerationStatuses.failed
+        generation.status_code = 500
+        generation.response = json.dumps(
+            {"error": {"message": "Failed to enqueue generation task", "source": "system"}}
+        )
         await db.commit()
         raise
