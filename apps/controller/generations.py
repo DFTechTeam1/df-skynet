@@ -869,7 +869,7 @@ class GenerationsController(CoreDependencies):
                         model_id=generation_model["model_id"],
                         prompt=merged_prompt,
                         parameter=schema.parameter,
-                        references=[],  # Override references to empty list, forcing user to use frame_images for video generation instead of references
+                        references=validated_image_references,
                         type=schema.type,
                         frame_images=validated_frame_images,
                     )
