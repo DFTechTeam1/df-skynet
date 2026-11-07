@@ -45,3 +45,9 @@ def test_color_without_exactly_one_frame_is_rejected(frames, key):
 def test_no_color_allows_any_frames():
     assert P(**BASE, frame_images=[_frame("first_frame"), _frame("last_frame")]).default_frame_reference_color is None
     assert P(**BASE).default_frame_reference_color is None
+
+
+@pytest.mark.parametrize("frames, kept", [([], 1), (["first_frame"], 0)])
+def test_frame_images_override_references(frames, kept):
+    ref = {"type": "diva", "diva_url": "https://example.com/a.jpg"}
+    assert len(P(**BASE, references=[ref], frame_images=[_frame(t) for t in frames]).references) == kept

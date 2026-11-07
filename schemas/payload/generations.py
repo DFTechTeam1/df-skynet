@@ -137,7 +137,6 @@ class ImageVideoGenerationPayload(BaseModel):
                     message="default_frame_reference_color_invalid",
                     error={"parameter.aspect_ratio": ["generation_parameter_required"]},
                 )
-            # valid = color + exactly one of first/last frame; the color fills the other one
             if len(self.frame_images) != 1:
                 key = "frame_reference_color_requires_one_frame" if not self.frame_images else "no_free_frame_slot"
                 raise DataValidationError(message=key, error={"default_frame_reference_color": [key]})
@@ -147,6 +146,9 @@ class ImageVideoGenerationPayload(BaseModel):
                 message="frame_images_invalid",
                 error={"frame_images": ["frame_images_requires_video_type"]},
             )
+
+        if self.frame_images:
+            self.references = []
 
         types = [ref.frame_type for ref in self.frame_images]
         if len(types) != len(set(types)):
