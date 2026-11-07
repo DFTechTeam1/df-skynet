@@ -22,7 +22,7 @@ from services.mysql.model import (
 )
 
 EMPLOYEE_STATUS_RESIGNED = 6
-ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager"]
+ALLOWED_PIC_POSITIONS = ["project manager", "assistant project manager", "direktur", "direktur utama"]
 
 
 @pytest.fixture(scope="session", autouse=True)

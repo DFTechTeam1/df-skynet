@@ -393,3 +393,134 @@ async def test_requires_auth(client, project_task):
         "POST", _url(project_task.uid), json={"prompt": "x", "parameter": {}}, raise_for_status=False
     )
     assert resp.status_code == 401
+
+
+@pytest_asyncio.fixture
+async def two_frame_video_model():
+    """Video model supporting both first_frame and last_frame (the only kind that accepts a frame color)."""
+    return DfEngineModelOptionsFactory.create(
+        type=ModelUsageTypes.video,
+        is_enabled=True,
+        is_available=True,
+        deleted_at=None,
+        supported_resolutions=["720p"],
+        supported_aspect_ratios=["16:9"],
+        supported_sizes=["1280x720"],
+        supported_durations=[5],
+        supported_frame_images=["first_frame", "last_frame"],
+    )
+
+
+FRAME_URL = "https://example.com/first.png"
+
+
+def _color_payload(menu, feature, model, frames, color="#4cfb2b"):
+    return _video_payload(
+        menu,
+        feature,
+        model,
+        frame_images=[{"frame_type": t, "type": "diva", "diva_url": FRAME_URL} for t in frames],
+        default_frame_reference_color=color,
+    )
+
+
+@pytest.fixture
+def color_env(monkeypatch, tmp_path):
+    """Frame availability check is network-bound -> stub it; color files go to a temp dir."""
+
+    async def _same(urls):
+        return list(urls)
+
+    monkeypatch.setattr("apps.controller.generations.validate_image_availability", _same)
+    monkeypatch.setattr("services.frame_reference_color.FRAME_COLOR_DIR", str(tmp_path))
+    return tmp_path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "frames, message_key",
+    [
+        ([], "frame_reference_color_requires_one_frame"),
+        (["first_frame", "last_frame"], "no_free_frame_slot"),
+    ],
+)
+async def test_frame_color_rejected_when_user_frames_are_not_exactly_one(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    two_frame_video_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    color_env,
+    frames,
+    message_key,
+):
+    """422; the color needs exactly one user-supplied frame (it fills the other). Nothing is written or dispatched."""
+    menu, feature = generation_menu_feature
+    payload = _color_payload(menu, feature, two_frame_video_model, frames)
+    resp = await authed_client.call("POST", _url(project_task.uid), json=payload, raise_for_status=False)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["default_frame_reference_color"] == [resolve_message(message_key, "en")]
+    assert len(fake_generation_backends) == 0
+    assert list(color_env.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_frame_color_rejected_on_single_frame_model(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    video_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    color_env,
+):
+    """422; a model with only first_frame can't take the color."""
+    menu, feature = generation_menu_feature
+    payload = _color_payload(menu, feature, video_model, ["first_frame"])
+    resp = await authed_client.call("POST", _url(project_task.uid), json=payload, raise_for_status=False)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["default_frame_reference_color"] == [
+        resolve_message("frame_reference_color_requires_two_frames", "en")
+    ]
+    assert len(fake_generation_backends) == 0
+
+
+@pytest.mark.asyncio
+async def test_frame_color_fills_the_missing_frame_and_is_saved(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    two_frame_video_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    color_env,
+    db_session,
+):
+    """200; with first_frame sent, the color becomes last_frame in the dispatched payload, the image file
+    exists, and the color is stored on the generation row."""
+    menu, feature = generation_menu_feature
+    payload = _color_payload(menu, feature, two_frame_video_model, ["first_frame"])
+    resp = await authed_client.call("POST", _url(project_task.uid), json=payload)
+    assert resp.status_code == 200
+    assert len(fake_generation_backends) == 1
+
+    sent = fake_generation_backends[0][1]["payload"]
+    assert [f["frame_type"] for f in sent["frame_images"]] == ["first_frame", "last_frame"]
+    assert sent["frame_images"][1]["image_url"]["url"].endswith("/%234cfb2b_16%3A9.jpg")
+    assert (color_env / "#4cfb2b_16:9.jpg").exists()
+
+    from services.mysql.model.df_engine_generations import DfEngineGenerations
+
+    stored = (
+        await db_session.execute(
+            select(DfEngineGenerations.color_code).order_by(DfEngineGenerations.id.desc()).limit(1)
+        )
+    ).scalar_one()
+    assert stored == "#4cfb2b"

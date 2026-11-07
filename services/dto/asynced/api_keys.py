@@ -100,7 +100,6 @@ async def get_employee_api_key(ctx: ConnectionContext, project_id: int, employee
 
 
 async def validate_api_key_limitation(ctx: ConnectionContext, project_id: int, api_key_id: int) -> None:
-    await get_project(ctx, project_id=project_id)
     setting = await get_project_setting(ctx, project_id=project_id)
 
     total_usage = await query(
@@ -110,6 +109,7 @@ async def validate_api_key_limitation(ctx: ConnectionContext, project_id: int, a
         filters=(
             DfEngineGenerations.sourceable_id == api_key_id,  # type: ignore
             DfEngineGenerations.sourceable_type == "DfEngineApiKeys",  # type: ignore
+            DfEngineGenerations.project_id == project_id,  # type: ignore
         ),
         fetch_one=True,
     )

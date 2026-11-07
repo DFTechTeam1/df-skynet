@@ -64,6 +64,7 @@ from validations.model import (
     validate_image_availability,
 )
 from parser.openrouter import parse_openrouter_payload
+from services import frame_reference_color
 from services.redis import CacheKeys
 from services.tasks.image_generation import image_generation
 from services.tasks.video_generation import video_generation
@@ -785,6 +786,7 @@ class GenerationsController(CoreDependencies):
                 parameter=schema.parameter,
                 created_by=user_id,
                 enhance_id=enhance_id,
+                color_code=schema.default_frame_reference_color,  # type: ignore
             )
             self.db.add(generation)
             try:
@@ -858,17 +860,29 @@ class GenerationsController(CoreDependencies):
                         for frame, image in zip(unvalidated_frame_images, validated_frame_image_paths)
                     ]
 
-                    validate_video_model_parameter(
-                        {**schema.parameter, "frame_images": validated_frame_images}, generation_model
+                    color_frame_type = validate_video_model_parameter(
+                        {**schema.parameter, "frame_images": validated_frame_images},
+                        generation_model,
+                        color=schema.default_frame_reference_color,  # type: ignore
                     )
                     payload = parse_openrouter_payload(
-                        generation_model["model_id"],
-                        merged_prompt,
-                        schema.parameter,
-                        validated_image_references,
-                        schema.type,
-                        validated_frame_images,
+                        model_id=generation_model["model_id"],
+                        prompt=merged_prompt,
+                        parameter=schema.parameter,
+                        references=validated_image_references,
+                        type=schema.type,
+                        frame_images=validated_frame_images,
                     )
+                    if color_frame_type:
+                        color_url = await asyncio.to_thread(
+                            frame_reference_color.create,
+                            schema.default_frame_reference_color,  # type: ignore
+                            schema.parameter["aspect_ratio"],
+                        )
+                        payload["frame_images"] = [
+                            *payload.get("frame_images", []),
+                            {"frame_type": color_frame_type, "type": "image_url", "image_url": {"url": color_url}},
+                        ]
 
                     await self.db.commit()
                     await dispatch_generation(

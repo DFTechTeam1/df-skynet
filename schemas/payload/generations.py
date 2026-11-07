@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from pydantic_extra_types.color import Color
 from typing import Any, Literal, Optional
 from uuid import UUID
 from error import DataValidationError
@@ -87,6 +88,21 @@ class ImageVideoGenerationPayload(BaseModel):
         description="First/last frame references. Video generations only.",
     )
 
+    default_frame_reference_color: Optional[str] = Field(
+        default=None,
+        description="Video generations only. Color (e.g. #fb542b) used as a solid-color frame reference for the free frame slot.",
+    )
+
+    @field_validator("default_frame_reference_color", mode="before")
+    @classmethod
+    def normalize_color(cls, v):
+        if v is None:
+            return None
+        try:
+            return Color(v).as_hex(format="long").lower()
+        except (ValueError, TypeError):
+            raise ValueError("default_frame_reference_color_invalid_format")
+
     @model_validator(mode="after")
     def dedupe_references(self):
         deduped: dict[tuple[str, str], GenerationReferences] = {}
@@ -110,13 +126,31 @@ class ImageVideoGenerationPayload(BaseModel):
 
     @model_validator(mode="after")
     def check_frame_images(self):
+        if self.default_frame_reference_color is not None:
+            if self.type != "video":
+                raise DataValidationError(
+                    message="default_frame_reference_color_invalid",
+                    error={"default_frame_reference_color": ["default_frame_reference_color_requires_video_type"]},
+                )
+            if not isinstance(self.parameter.get("aspect_ratio"), str):
+                raise DataValidationError(
+                    message="default_frame_reference_color_invalid",
+                    error={"parameter.aspect_ratio": ["generation_parameter_required"]},
+                )
+            if len(self.frame_images) != 1:
+                key = "frame_reference_color_requires_one_frame" if not self.frame_images else "no_free_frame_slot"
+                raise DataValidationError(message=key, error={"default_frame_reference_color": [key]})
+
         if self.frame_images and self.type != "video":
             raise DataValidationError(
                 message="frame_images_invalid",
                 error={"frame_images": ["frame_images_requires_video_type"]},
             )
 
-        types = [ref.type for ref in self.frame_images]
+        if self.frame_images:
+            self.references = []
+
+        types = [ref.frame_type for ref in self.frame_images]
         if len(types) != len(set(types)):
             raise DataValidationError(
                 message="frame_images_duplicate_type",
