@@ -756,7 +756,6 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
-            # Independent network checks run concurrently: latency = slowest, not the sum.
             validated_image_references, _ = await asyncio.gather(
                 validate_image_availability(user_image_references),
                 validate_prompt(
