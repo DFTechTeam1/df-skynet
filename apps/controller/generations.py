@@ -878,10 +878,13 @@ class GenerationsController(CoreDependencies):
                             schema.default_frame_reference_color,  # type: ignore
                             schema.parameter["aspect_ratio"],
                         )
-                        payload["frame_images"] = [
-                            *payload.get("frame_images", []),
-                            {"frame_type": color_frame_type, "type": "image_url", "image_url": {"url": color_url}},
-                        ]
+                        payload["frame_images"] = sorted(
+                            [
+                                *payload.get("frame_images", []),
+                                {"frame_type": color_frame_type, "type": "image_url", "image_url": {"url": color_url}},
+                            ],
+                            key=lambda f: f["frame_type"] != "first_frame",
+                        )
 
                     await self.db.commit()
                     await dispatch_generation(
