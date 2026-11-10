@@ -120,6 +120,30 @@ async def overlay_favourites(
     return records
 
 
+async def overlay_prompts(ctx: ConnectionContext, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fill `full_prompt` and `parameter` on search hits; they are kept out of the search index because
+    they can exceed its record size limit (see `HEAVY_FIELDS` in services/search/docs.py)."""
+    uids = {record["file_uid"] for record in records if record.get("file_uid")}
+    if not uids:
+        return records
+    rows = await query(
+        ctx.db,
+        DfEngineGenerationResults,
+        columns=(
+            DfEngineGenerationResults.uid,
+            DfEngineGenerations.full_prompt,
+            DfEngineGenerations.parameter,
+        ),
+        joins=((DfEngineGenerations, DfEngineGenerations.id == DfEngineGenerationResults.generation_id),),
+        filters=(DfEngineGenerationResults.uid.in_(uids),),  # type: ignore
+    )
+    by_uid = {row[0]: row[1:] for row in rows}
+    for record in records:
+        if found := by_uid.get(record.get("file_uid")):
+            record["full_prompt"], record["parameter"] = found
+    return records
+
+
 async def get_generation_main_refactored(
     ctx: ConnectionContext,
     viewer_id: int,
