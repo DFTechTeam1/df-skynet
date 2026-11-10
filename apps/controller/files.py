@@ -82,7 +82,7 @@ from services.dto.asynced.generation_files import (
 from utils import local_time
 from utils.formatter import format_datetime, format_size
 from services.search.dispatch import dispatch_search_sync
-from services.dto.asynced.generation_files import overlay_favourites
+from services.dto.asynced.generation_files import overlay_favourites, overlay_prompts
 from services.search.query import search_project_files
 
 cache_key = CacheKeys()
@@ -758,6 +758,7 @@ class FilesController(CoreDependencies):
                     response.data = None
                 else:
                     await overlay_favourites(ctx, generated, user_id)
+                    await overlay_prompts(ctx, generated)
                     response.data = format_file_tree_refactored(
                         uploaded,
                         generated,

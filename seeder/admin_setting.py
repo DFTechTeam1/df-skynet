@@ -34,7 +34,7 @@ def project_class_config(project_classes: list[ProjectClasses]) -> list[dict]:
     ]
 
 
-DEFAULT_THRESHOLD = 0.5
+DEFAULT_THRESHOLD = 0.0
 
 DEFAULT_VALIDATIONS = {
     "prompt_enhancement": """\
