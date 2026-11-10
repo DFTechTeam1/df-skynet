@@ -1,3 +1,4 @@
+import json
 from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
@@ -63,8 +64,8 @@ def test_build_generation_doc_is_flat_with_null_action(monkeypatch):
             "status": "success",
             "cost": 0.5,
             "prompt": "p",
-            "full_prompt": "fp",
-            "parameter": {"n": 1},
+            "full_prompt": "fp" * 20000,
+            "parameter": {"frame_images": ["x" * 20000]},
             "model_option": {"name": "m"},
             "task": {"uid": "t1", "name": "Task"},
             "song": None,
@@ -76,6 +77,9 @@ def test_build_generation_doc_is_flat_with_null_action(monkeypatch):
     assert doc["objectID"] == "r1" and doc["project_uid"] == "p1" and doc["task_uid"] == "t1"
     assert doc["action"] is None and "variants" not in doc and "references" not in doc
     assert doc["creator"]["user_id"] == 7 and doc["task"] == "Task"
+    assert not docs.HEAVY_FIELDS & doc.keys()
+    assert doc["prompt"] == "p"
+    assert len(json.dumps(doc).encode()) < 10_000  # Algolia's per-record limit
 
 
 def test_build_upload_doc_falls_back_to_song_name(monkeypatch):
