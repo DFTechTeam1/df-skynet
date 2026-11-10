@@ -43,7 +43,7 @@ from services.dto.asynced.generation_files import (
     get_enhance_prompt,
     get_generation_main_refactored,
 )
-from services.dto.asynced.generation_files import _build_references, overlay_favourites
+from services.dto.asynced.generation_files import _build_references, overlay_favourites, overlay_prompts
 from services.dto.asynced.uploaded_files import get_uploaded_files
 from services.dto.asynced.api_keys import get_employee_api_key, validate_api_key_limitation
 from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting, get_model, get_menu
@@ -756,7 +756,6 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
-            # Independent network checks run concurrently: latency = slowest, not the sum.
             validated_image_references, _ = await asyncio.gather(
                 validate_image_availability(user_image_references),
                 validate_prompt(
@@ -879,10 +878,13 @@ class GenerationsController(CoreDependencies):
                             schema.default_frame_reference_color,  # type: ignore
                             schema.parameter["aspect_ratio"],
                         )
-                        payload["frame_images"] = [
-                            *payload.get("frame_images", []),
-                            {"frame_type": color_frame_type, "type": "image_url", "image_url": {"url": color_url}},
-                        ]
+                        payload["frame_images"] = sorted(
+                            [
+                                *payload.get("frame_images", []),
+                                {"frame_type": color_frame_type, "type": "image_url", "image_url": {"url": color_url}},
+                            ],
+                            key=lambda f: f["frame_type"] != "first_frame",
+                        )
 
                     await self.db.commit()
                     await dispatch_generation(
@@ -1159,6 +1161,7 @@ class GenerationsController(CoreDependencies):
             if search:
                 main_generations = await search_task_generations(str(task_uid), search, user_id, can_override, my_task)
                 await overlay_favourites(ctx, main_generations, user_id)
+                await overlay_prompts(ctx, main_generations)
             else:
                 main_generations = await get_generation_main_refactored(
                     ctx=ctx,

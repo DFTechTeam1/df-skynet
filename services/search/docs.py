@@ -10,15 +10,11 @@ from utils.serializer import serialize
 
 MAIN_GENERATIONS = "main_generations"
 UPLOADED_FILES = "uploaded_files"
-
-# What the search endpoints rely on (see services/search/query.py); applied to both indexes by the search worker.
 SEARCHABLE_FIELDS = ["name", "path", "task"]
 FILTER_FIELDS = ["project_uid", "task_uid", "song_uid", "kind"]
-
 GENERATION_KINDS = (GenerationKinds.image, GenerationKinds.image_edit, GenerationKinds.video)
-
-# ponytail: relationships are eager-loaded here because `serialize` skips anything not loaded; add to this tuple
-# when a new indexed field needs another relation.
+HEAVY_FIELDS = {"full_prompt", "parameter"}
+PROMPT_INDEX_CHARS = 2000
 _USERS = (
     selectinload(DfEngineGenerationResults.created_by_user)
     .load_only(Users.image)
@@ -77,8 +73,8 @@ def upload_qualifies(file: DfEngineUploadFiles) -> bool:
 
 def build_generation_doc(result: DfEngineGenerationResults) -> dict[str, Any]:
     """The `main_generations` document: the same fields `get_generation_main_refactored` returns for this file, flat
-    (no `variants` / `references`) and with `action=None`, since the action depends on who is viewing. `project_uid`
-    is the only extra field, used for scoping."""
+    (no `variants` / `references` / `HEAVY_FIELDS`, prompt capped at `PROMPT_INDEX_CHARS`) and with `action=None`, since the action depends on who is viewing.
+    `project_uid` is the only extra field, used for scoping."""
     row = serialize(result)
     generation = row["generation"]
     task = generation.get("task") or {}
@@ -104,13 +100,11 @@ def build_generation_doc(result: DfEngineGenerationResults) -> dict[str, Any]:
         cost_usd=format_usd(generation["cost"]),
         cost_idr=format_idr(generation["cost"], USD_TO_IDR_RATE),
         model=(generation.get("model_option") or {}).get("name"),
-        prompt=generation["prompt"],
-        full_prompt=generation["full_prompt"],
-        parameter=generation["parameter"],
+        prompt=(generation["prompt"] or "")[:PROMPT_INDEX_CHARS] or None,
         creator=format_user_employees(row.get("created_by_user")),
         updater=format_user_employees(row.get("updated_by_user")),
         action=None,
-    ).model_dump(mode="json", exclude={"variants", "references"})
+    ).model_dump(mode="json", exclude={"variants", "references", *HEAVY_FIELDS})
     return {**doc, "objectID": row["uid"], "project_uid": (generation.get("project") or {}).get("uid")}
 
 
