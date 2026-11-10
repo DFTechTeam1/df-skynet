@@ -423,7 +423,9 @@ class SettingController(CoreDependencies):
             await self.db.flush()
 
             data = {"project": project.name, "classification": project.classification, **values}
-            await self.redis.delete(cache_key.setting_project(uid))
+            await self.redis.delete(
+                cache_key.setting_project(project_uid=uid), cache_key.setting_project(project_id=project.id)
+            )
             logging.info(f"user={self.user['user_id']} saved project setting uid={uid}")
 
             response.data = data
