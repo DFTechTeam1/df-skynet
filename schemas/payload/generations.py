@@ -168,7 +168,36 @@ class ImageVideoGenerationPayload(BaseModel):
         return self
 
 
+ENHANCER_MAX_REFERENCES = 10
+
+
+class EnhancerReferenceKey(BaseModel):
+    uid: UUID = Field(description="File UID (also the tag used inside the prompt text).")
+    source: Literal["upload", "generated"]
+
+
 class PromptEnhancerPayload(BaseModel):
-    prompt: str = Field(min_length=1, description="User prompts.")
+    prompt: str = Field(min_length=1, description="User prompts. May contain reference uids as tags.")
+    references: list[EnhancerReferenceKey] = Field(
+        default_factory=list, max_length=ENHANCER_MAX_REFERENCES, description="Tagged gallery images."
+    )
     menu_uid: UUID = Field(default=UUID("1977607c-400f-4356-9692-46fbcfa889f0"), description="Menu UID.")
     feature_uid: UUID = Field(default=UUID("f4cda7d6-3b9e-4643-9571-3b317f33e033"), description="Feature UID.")
+    params: dict[str, Any] = Field(default_factory=dict, description="Dynamic parameter based on target model.")
+
+    @model_validator(mode="after")
+    def dedupe_references(self):
+        self.references = list({(r.source, r.uid): r for r in self.references}.values())
+        return self
+
+    @model_validator(mode="after")
+    def check_references_tagged(self):
+        prompt = self.prompt.lower()
+        errors = {
+            f"references.{idx}": ["reference_not_in_prompt"]
+            for idx, ref in enumerate(self.references)
+            if str(ref.uid) not in prompt
+        }
+        if errors:
+            raise DataValidationError(message="reference_not_in_prompt", error=errors)
+        return self

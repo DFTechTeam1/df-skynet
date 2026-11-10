@@ -13,6 +13,7 @@ class GenerationsMessage:
             "generation_parameter_must_be_boolean": "This value must be true or false.",
             "generation_parameter_required": "This parameter is required for the selected model.",
             "generation_parameter_not_supported": "This parameter's value isn't supported by the selected model.",
+            "reference_not_in_prompt": "Every reference you attach must be tagged with its uid inside the prompt.",
             "references_invalid": "One or more references you provided are invalid.",
             "reference_diva_url_required": "This DiVA reference is missing its file URL.",
             "reference_file_uid_required": "This reference is missing its file.",
