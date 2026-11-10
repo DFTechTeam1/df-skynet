@@ -1,0 +1,90 @@
+flowchart LR
+    %% Terminals
+    start([Start])
+    finish([End])
+
+    subgraph client["Client"]
+        ui["Web app"]
+    end
+
+    start --> ui
+    ui --> storyboardMenu["Storyboard menu"]
+    ui --> genMenu["Generation menu"]
+
+    %% ---------- Create storyboards: request & project checks ----------
+    storyboardMenu --> createStoryboard["POST /storyboards/tasks/{task_uid}"]
+    createStoryboard --> getProject["Get project"]
+    getProject -.->|"Found"| isProjectOngoing{"Is project ongoing?"}
+    getProject -.->|"Not found"| errProjectNotFound(["Error: Project not found"])
+    isProjectOngoing -.->|"No"| errProjectNotOngoing(["Error: Project is not ongoing"])
+    isProjectOngoing -.->|"Yes"| getProjectTasks["Get project tasks or song list"]
+    getProjectTasks -.->|"None"| errNoProjectTasks(["Error: No project tasks found"])
+    getProjectTasks -.->|"Found"| isTaskCompleted{"Is project task completed?"}
+    isTaskCompleted -.->|"Yes"| errTaskCompleted(["Error: Project task is already completed"])
+    isTaskCompleted -.->|"No"| getUser["Get user"]
+
+    %% ---------- User checks ----------
+    getUser --> hasUserResigned{"Has user resigned?"}
+    hasUserResigned -.->|"Yes"| errUserResigned(["Error: User has resigned"])
+    hasUserResigned -.->|"No"| checkUserRole{"What is the user role?"}
+    checkUserRole -.->|"Staff"| isUserAssigned{"Is user assigned to the task?"}
+    checkUserRole -.->|"Overrider"| getAdminSettings["Get admin settings"]
+    isUserAssigned -.->|"No"| errUserNotAssigned(["Error: User is not assigned to the task"])
+    isUserAssigned -.->|"Yes"| getAdminSettings
+
+    %% ---------- Settings & spend limit ----------
+    getAdminSettings --> hasProjectSetting{"Does project have a spend limit setting?"}
+    hasProjectSetting -.->|"Yes"| isSpendLimitReached{"Is project spend limit reached?"}
+    hasProjectSetting -.->|"No"| getDefaultSpendLimit["Get default spend limit by project class"]
+    getAdminSettings --> getPromptGuardrail["Get prompt guardrail"]
+    getDefaultSpendLimit --> isSpendLimitReached
+    isSpendLimitReached -.->|"Yes"| errSpendLimitReached(["Error: Project spend limit reached"])
+    isSpendLimitReached -.->|"No"| getDefaultTextModel["Get default assistant or enhancer model"]
+
+    %% ---------- Model, API key & payload ----------
+    getDefaultTextModel -.->|"None"| errNoDefaultModel(["Error: No default model found"])
+    getDefaultTextModel -.->|"Found"| hasUserApiKey{"Does user have an API key?"}
+    hasUserApiKey -.->|"No"| errNoApiKey(["Error: No API key found"])
+    hasUserApiKey -.->|"Yes"| validatePayload["Validate storyboard payload"]
+    validatePayload --> getPromptGuardrail
+
+    %% ---------- Prompt guardrail ----------
+    getPromptGuardrail -.->|"No guardrail"| isWithinCharLimit{"Is story within character limit?"}
+    getPromptGuardrail -.->|"Has guardrail"| isPromptRelevant{"Is prompt relevant to storyboards?"}
+    isPromptRelevant -.->|"Yes"| isWithinCharLimit
+    isPromptRelevant -.->|"No"| errIrrelevantPrompt(["Error: Prompt is irrelevant to creating storyboards"])
+    isWithinCharLimit -.->|"No"| errCharLimitExceeded(["Error: Storyboard character limit exceeded"])
+    isWithinCharLimit -.->|"Yes"| getAvailableElements["Get available elements"]
+
+    %% ---------- Element resolution (OpenRouter) ----------
+    getAvailableElements --> callOpenRouter["Send story and available elements to OpenRouter"]
+    callOpenRouter --> createStoryboardProcess["Create storyboard process"]
+
+    %% ---------- Persist storyboard & elements ----------
+    createStoryboardProcess --> createStoryboardRecords["Create storyboard records"]
+    createStoryboardRecords --> attachStoryboardToGenerations["Attach storyboard to generations"]
+    attachStoryboardToGenerations --> readStoryElements["Read story elements from LLM response"]
+    readStoryElements --> hasStoryElements{"Does the story contain any elements?"}
+    hasStoryElements -.->|"No"| finish
+    hasStoryElements -.->|"Yes"| hasExistingElement{"For each element: does it match an available element?"}
+    hasExistingElement -.->|"Yes"| setElementReference["Set reference to existing element"]
+    hasExistingElement -.->|"No"| createPlaceholderElement["Create placeholder element ('Need to generate first')"]
+    setElementReference --> attachElementsToStoryboard["Attach elements to storyboard"]
+    createPlaceholderElement --> attachElementsToStoryboard
+    attachElementsToStoryboard --> finish
+
+    %% ---------- Get list of storyboards ----------
+    storyboardMenu --> listStoryboards["GET /storyboards/{task_uid}"]
+    listStoryboards --> getStoryboards["Get storyboards scoped by task"]
+    getStoryboards -.->|"Found"| returnStoryboards(["Return storyboard list"])
+    getStoryboards -.->|"None"| returnEmptyList(["Return empty list"])
+    returnStoryboards --> finish
+    returnEmptyList --> finish
+
+    %% ---------- Get detail of storyboard ----------
+    storyboardMenu --> getStoryboardDetail["GET /storyboards/{story_uid}"]
+    getStoryboardDetail --> getStoryboard["Get storyboard by ID"]
+    getStoryboard -.->|"Found"| returnStoryboard(["Return storyboard detail"])
+    getStoryboard -.->|"None"| errStoryboardNotFound(["Error: Storyboard not found"])
+    returnStoryboard --> finish
+    errStoryboardNotFound --> finish
