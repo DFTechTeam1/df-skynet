@@ -38,8 +38,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema. `prompt_validation` rows have no menu/feature, so they are deleted first."""
-    op.execute(f"DELETE FROM {TABLE_NAME} WHERE kind = 'prompt_validation'")
+    """Downgrade schema. Rows with no menu/feature (prompt_validation and any other kind written
+    after the upgrade) can't exist under the old NOT NULL schema, so they are deleted first."""
+    op.execute(f"DELETE FROM {TABLE_NAME} WHERE kind = 'prompt_validation' OR menu_id IS NULL OR feature_id IS NULL")
     op.alter_column(
         TABLE_NAME,
         "kind",
