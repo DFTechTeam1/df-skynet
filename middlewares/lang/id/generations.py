@@ -13,6 +13,7 @@ class GenerationsMessage:
             "generation_parameter_must_be_boolean": "Nilai ini harus true atau false.",
             "generation_parameter_required": "Parameter ini wajib diisi untuk model yang dipilih.",
             "generation_parameter_not_supported": "Nilai parameter ini tidak didukung oleh model yang dipilih.",
+            "reference_not_in_prompt": "Setiap referensi yang dilampirkan harus ditandai dengan uid-nya di dalam prompt.",
             "references_invalid": "Ada referensi yang kamu kirim tidak valid.",
             "reference_diva_url_required": "Referensi DiVA ini belum memiliki URL file.",
             "reference_file_uid_required": "Referensi ini belum memiliki file.",

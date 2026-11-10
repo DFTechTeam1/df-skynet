@@ -313,7 +313,57 @@ class GenerationsController(CoreDependencies):
                 "prompt_enhancement",
                 record=validation_record(enhancer_model["id"], api_key["id"], project["id"], task),
             )
-            enhanced = await enhance_prompt(merged_prompt, enhancer_model["model_id"], api_key["key"], user_id)
+
+            """Resolve tagged references by the source the FE sent; order follows the request."""
+            upload_uids = [str(r.uid) for r in schema.references if r.source == "upload"]
+            generated_uids = [str(r.uid) for r in schema.references if r.source == "generated"]
+            uploaded_files = await get_uploaded_files(ctx, upload_uids) if upload_uids else []
+            generated_files = (
+                await get_generation_files(ctx, user_id=None if can_override else user_id, file_uids=generated_uids)
+                if generated_uids
+                else []
+            )
+            found = {
+                **{str(f["file_uid"]): ("upload", f) for f in uploaded_files},
+                **{
+                    str(f["file_uid"]): ("generated", f)
+                    for f in generated_files
+                    if str(f["file_uid"]) in generated_uids
+                },
+            }
+            reference_records = []
+            for idx, ref in enumerate(schema.references):
+                hit = found.get(str(ref.uid))
+                if hit is None or hit[0] != ref.source:
+                    raise DataNotFoundError(message="file_not_found", error={f"references.{idx}": ["file_not_found"]})
+                reference_records.append(
+                    {
+                        "uid": ref.uid,
+                        "source": ref.source,
+                        "name": hit[1]["name"],
+                        "path": hit[1]["path"],
+                        "id": hit[1]["id"],
+                    }
+                )
+
+            image_urls = await validate_image_availability([r["path"] for r in reference_records])
+            enhancer_input = merged_prompt
+            if reference_records:
+                enhancer_input += "\nReferences (in image order): " + ", ".join(
+                    str(r["uid"]) for r in reference_records
+                )
+
+            enhanced = await enhance_prompt(
+                enhancer_input, enhancer_model["model_id"], api_key["key"], user_id, image_urls
+            )
+            missing = [str(r["uid"]) for r in reference_records if str(r["uid"]) not in enhanced["text"]]
+            if missing:
+                enhanced["text"] += " " + " ".join(missing)
+
+            if schema.params:
+                enhanced["text"] += (
+                    " " + "This prompt should be enhanced with the following parameters: " + str(schema.params)
+                )
 
             generation = DfEngineGenerations(
                 kind=GenerationKinds.enhancer,
@@ -341,7 +391,20 @@ class GenerationsController(CoreDependencies):
             except IntegrityError:
                 raise DataNotFoundError(message="project_task_not_found")
 
-            response.data = PromptEnhancerResult(prompt=enhanced["text"], enhance_uid=generation.uid)  # type: ignore
+            for record in reference_records:
+                link = (
+                    DfEngineUploadFileReferences(generation_id=generation.id, file_id=record["id"])
+                    if record["source"] == "upload"
+                    else DfEngineGenerationReferences(generation_id=generation.id, result_id=record["id"])
+                )
+                self.db.add(link)
+            await self.db.flush()
+
+            response.data = PromptEnhancerResult(
+                prompt=enhanced["text"],
+                enhance_uid=generation.uid,  # type: ignore
+                references=[{"uid": r["uid"], "source": r["source"], "name": r["name"]} for r in reference_records],  # type: ignore
+            )
             await set_json(
                 ctx.redis,
                 cache_key.enhancer_detail(str(generation.uid)),
