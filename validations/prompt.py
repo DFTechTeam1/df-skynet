@@ -124,6 +124,13 @@ USAGE          — which scenes it appears in and its role
 LOCKS          — traits that stay identical in every view and every scene
 """
 
+REFERENCE_RULE = """
+REFERENCE IMAGES
+The message contains tags (uids) and the same number of images, attached in the order the tags are listed
+after "References (in image order)". Use the images to describe the tagged subjects accurately.
+Keep every tag verbatim in the output, placed directly after the noun it refers to. Never drop, rename or invent tags.
+"""
+
 _SKELETON_RE = re.compile(
     r"^#{1,6}\s*(?:Kerangka blok prompt|Skeleton)[^\n]*\n.*?```[^\n]*\n(.*?)\n```",
     re.IGNORECASE | re.DOTALL | re.MULTILINE,
@@ -240,7 +247,9 @@ async def validate_prompt(
         )
 
 
-async def enhance_prompt(prompt: str, model_id: str, api_key: str, user_id: int) -> dict:
+async def enhance_prompt(
+    prompt: str, model_id: str, api_key: str, user_id: int, image_urls: list[str] | None = None
+) -> dict:
     """Returns OpenRouter's raw `/responses` body so the caller can persist
     status_code/usage alongside the generated text."""
     instructions = ENHANCER_SYSTEM_PROMPT
@@ -252,13 +261,26 @@ async def enhance_prompt(prompt: str, model_id: str, api_key: str, user_id: int)
             + "\n"
         )
 
+    model_input: Any = prompt
+    if image_urls:
+        instructions += REFERENCE_RULE
+        model_input = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    *({"type": "input_image", "image_url": url} for url in image_urls),
+                ],
+            }
+        ]
+
     caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"})
     try:
         response = await caller.openrouter(
             "POST",
             "/responses",
             user_id=user_id,
-            json={"model": model_id, "input": prompt, "instructions": instructions},
+            json={"model": model_id, "input": model_input, "instructions": instructions},
         )
     except Exception:
         logging.error(traceback.format_exc())

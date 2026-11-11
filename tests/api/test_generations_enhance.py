@@ -21,7 +21,7 @@ def _payload(menu, feature, **overrides):
 
 @pytest.fixture
 def fake_enhancer(monkeypatch):
-    async def _enhance(prompt, model_id, key, user_id):
+    async def _enhance(prompt, model_id, key, user_id, image_urls=None):
         return {"text": "enhanced!", "status_code": 200, "usage": {"total_tokens": 3, "cost": 0.1}}
 
     monkeypatch.setattr("apps.controller.generations.enhance_prompt", _enhance)
@@ -114,3 +114,40 @@ async def test_enhance_unexpected_failure_is_500(
         "POST", f"{URL}/{project_task.uid}", json=_payload(menu, feature), raise_for_status=False
     )
     assert resp.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_enhance_unknown_reference_uid_is_not_found(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    fake_enhancer,
+):
+    """404 file_not_found when a tagged upload uid does not exist."""
+    menu, feature = generation_menu_feature
+    uid = "11111111-1111-4111-8111-111111111111"
+    refs = [{"uid": uid, "source": "upload"}]
+    resp = await authed_client.call(
+        "POST",
+        f"{URL}/{project_task.uid}",
+        json=_payload(menu, feature, prompt=f"a bird {uid}", references=refs),
+        raise_for_status=False,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_enhance_rejects_reference_not_tagged_in_prompt(
+    authed_client, project_task, generation_menu_feature, fake_enhancer
+):
+    """422 when a reference uid is not present in the prompt text."""
+    menu, feature = generation_menu_feature
+    refs = [{"uid": "11111111-1111-4111-8111-111111111111", "source": "upload"}]
+    resp = await authed_client.call(
+        "POST", f"{URL}/{project_task.uid}", json=_payload(menu, feature, references=refs), raise_for_status=False
+    )
+    assert resp.status_code == 422
