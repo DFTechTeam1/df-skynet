@@ -1,0 +1,25 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+    errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+
+    %% Single toggle endpoint. Allowed with or without generations.
+    %% Archived: hidden from default list, cannot generate motions or keyframes, cannot be rebreakdown.
+    storyboardMenu --> setArchiveStoryboard["PATCH /storyboards/{story_uid}/set-archive"]
+    setArchiveStoryboard --> checkSetArchiveStoryboardExists["Check if storyboard exists"]
+    checkSetArchiveStoryboardExists -.->|"Not found"| errStoryboardNotFound
+    checkSetArchiveStoryboardExists -.->|"Found"| isSetArchiveEditor{"Is user the creator or an overrider?"}
+    isSetArchiveEditor -.->|"Neither"| errNotCreatorOrOverrider
+    isSetArchiveEditor -.->|"Yes"| isCurrentlyArchived{"Is the storyboard currently archived?"}
+    isCurrentlyArchived -.->|"No"| setArchived["Mark storyboard as archived"]
+    isCurrentlyArchived -.->|"Yes"| clearArchived["Mark storyboard as not archived (unarchive)"]
+    setArchived --> returnSetArchive(["Return updated storyboard"])
+    clearArchived --> returnSetArchive
+    returnSetArchive --> finish
+    errStoryboardNotFound --> finish
+    errNotCreatorOrOverrider --> finish

@@ -1,0 +1,21 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+    errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+
+    %% Requires a new order column on the storyboards table (to be added)
+    storyboardMenu --> reorderStoryboard["PATCH /storyboards/{story_uid}/reorder"]
+    reorderStoryboard --> checkReorderStoryboardExists["Check if storyboard exists"]
+    checkReorderStoryboardExists -.->|"Not found"| errStoryboardNotFound
+    checkReorderStoryboardExists -.->|"Found"| isReorderEditor{"Is user the creator or an overrider?"}
+    isReorderEditor -.->|"Neither"| errNotCreatorOrOverrider
+    isReorderEditor -.->|"Yes"| swapStoryboardOrder["Swap the storyboard order with the target storyboard"]
+    swapStoryboardOrder --> returnReordered(["Return updated order"])
+    returnReordered --> finish
+    errStoryboardNotFound --> finish
+    errNotCreatorOrOverrider --> finish

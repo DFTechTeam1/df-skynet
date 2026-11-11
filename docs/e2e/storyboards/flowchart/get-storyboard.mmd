@@ -1,0 +1,16 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+
+    %% Returns storyboard data only (no scenes or shots). Used as the bridge so the user can start a rebreakdown.
+    storyboardMenu --> getStoryboardDetail["GET /storyboards/{story_uid}"]
+    getStoryboardDetail --> getStoryboard["Get storyboard by ID"]
+    getStoryboard -.->|"Found"| returnStoryboard(["Return storyboard data only"])
+    getStoryboard -.->|"None"| errStoryboardNotFound
+    returnStoryboard --> finish
+    errStoryboardNotFound --> finish

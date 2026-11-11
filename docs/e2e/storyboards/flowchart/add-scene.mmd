@@ -1,0 +1,40 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+    errRebreakdownArchived(["Error: Storyboard is archived. Please unarchive it first"])
+    errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+
+    %% Creates a scene with exactly 1 empty placeholder shot. No generation data is created.
+    storyboardMenu --> addScene["POST /storyboards/{story_uid}/scenes"]
+    addScene --> checkAddSceneStoryboardExists["Check if storyboard exists"]
+    checkAddSceneStoryboardExists -.->|"Not found"| errStoryboardNotFound
+    checkAddSceneStoryboardExists -.->|"Found"| isAddSceneStoryboardArchived{"Is the storyboard archived?"}
+    isAddSceneStoryboardArchived -.->|"Yes"| errRebreakdownArchived
+    isAddSceneStoryboardArchived -.->|"No"| isAddSceneEditor{"Is user the creator or an overrider?"}
+    isAddSceneEditor -.->|"Neither"| errNotCreatorOrOverrider
+    isAddSceneEditor -.->|"Yes"| hasSceneClassLimitations{"Is project class limitation configured in admin settings?"}
+    %% A project setting depends on the global project class limitation, so this is checked first, even when the project has its own setting
+    hasSceneClassLimitations -.->|"No"| errClassLimitationsNotConfigured(["Error: Project class limitation is not configured in admin settings"])
+    hasSceneClassLimitations -.->|"Yes"| hasSceneProjectSetting{"Does the project have its own setting?"}
+    hasSceneProjectSetting -.->|"Yes"| useProjectMaxScenes["Use max scenes per storyboard from the project setting"]
+    hasSceneProjectSetting -.->|"No"| hasSceneClassLimitEntry{"Does the project have a class with a limitation entry?"}
+    hasSceneClassLimitEntry -.->|"No"| errClassLimitNotFound(["Error: Limitation for this project class not found"])
+    hasSceneClassLimitEntry -.->|"Yes"| useAdminMaxScenes["Use max scenes per storyboard from the admin setting (project class limit) as fallback"]
+    useProjectMaxScenes --> lockStoryboardAndCountScenes
+    useAdminMaxScenes --> lockStoryboardAndCountScenes["Lock the storyboard row, then count the scenes already saved in the DB for this storyboard"]
+    lockStoryboardAndCountScenes --> isMaxScenesReached{"Is the scene count already at the max scenes per storyboard?"}
+    isMaxScenesReached -.->|"Yes"| errMaxScenesReached(["Error: This storyboard already has the maximum number of scenes ({max_scenes})"])
+    isMaxScenesReached -.->|"No"| createSceneWithShot["In one transaction: create the new scene at the end of the storyboard and its first empty placeholder shot"]
+    createSceneWithShot --> returnCreatedScene(["Return the new scene with its 1 shot"])
+    returnCreatedScene --> finish
+    errMaxScenesReached --> finish
+    errStoryboardNotFound --> finish
+    errRebreakdownArchived --> finish
+    errNotCreatorOrOverrider --> finish
+    errClassLimitationsNotConfigured --> finish
+    errClassLimitNotFound --> finish

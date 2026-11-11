@@ -1,0 +1,43 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+    errRebreakdownArchived(["Error: Storyboard is archived. Please unarchive it first"])
+    errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+
+    %% Editable fields (all optional, partial update):
+    %%   location_text (nullable, default null: free description when there is no location reference)
+    %%   location_id (nullable: uploaded reference file attached as the location)
+    %%   scene_setting: int | ext | int_ext
+    %%   time_of_day: pre_dawn | sunrise | morning | midday | afternoon | golden_hour | dusk | blue_hour | night
+    %%   lighting_mood: natural | soft_diffused | hard_high_contrast | warm_practical | moody_low_key | high_key_bright | silhouette_backlit | neon | overcast_flat
+    storyboardMenu --> editScene["PATCH /storyboards/{story_uid}/scenes/{scene_uid}"]
+    editScene --> checkEditSceneStoryboardExists["Check if storyboard exists"]
+    checkEditSceneStoryboardExists -.->|"Not found"| errStoryboardNotFound
+    checkEditSceneStoryboardExists -.->|"Found"| isEditSceneStoryboardArchived{"Is the storyboard archived?"}
+    isEditSceneStoryboardArchived -.->|"Yes"| errRebreakdownArchived
+    isEditSceneStoryboardArchived -.->|"No"| isEditSceneEditor{"Is user the creator or an overrider?"}
+    isEditSceneEditor -.->|"Neither"| errNotCreatorOrOverrider
+    isEditSceneEditor -.->|"Yes"| checkSceneExists{"Does the scene exist under this storyboard?"}
+    checkSceneExists -.->|"No"| errSceneNotFound(["Error: Scene not found"])
+    checkSceneExists -.->|"Yes"| validateScenePayload["Validate payload: scene_setting, time_of_day and lighting_mood must be one of the allowed values"]
+    validateScenePayload -.->|"Invalid enum value"| errInvalidSceneEnum(["Error: Invalid scene setting, time of day or lighting mood"])
+    validateScenePayload -.->|"Valid"| isLocationFilled{"Is location being set (location_id or location_text filled)?"}
+    isLocationFilled -.->|"Both empty / null (clears the location)"| saveScene
+    isLocationFilled -.->|"Filled"| hasLocationId{"Is location_id filled?"}
+    hasLocationId -.->|"No (location_text only)"| saveScene
+    hasLocationId -.->|"Yes"| locationFileExists{"Does the location file exist (not deleted, usable by this project)?"}
+    locationFileExists -.->|"No"| errLocationFileNotFound(["Error: Location file not found"])
+    locationFileExists -.->|"Yes"| saveScene["Update scene fields"]
+    saveScene --> returnEditedScene(["Return updated scene"])
+    returnEditedScene --> finish
+    errSceneNotFound --> finish
+    errInvalidSceneEnum --> finish
+    errLocationFileNotFound --> finish
+    errStoryboardNotFound --> finish
+    errRebreakdownArchived --> finish
+    errNotCreatorOrOverrider --> finish

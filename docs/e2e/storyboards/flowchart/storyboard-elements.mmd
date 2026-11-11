@@ -7,16 +7,6 @@ flowchart LR
         ui["Web app"]
     end
 
-    %% ================= REUSABLE VALIDATIONS =================
-    %% Defined ONCE. Any endpoint needing them just points an edge at the entry node:
-    %%   Project:   getProject         -> exits to getUser (when task is not completed)
-    %%   User:      getUser            -> exits to getAdminSettings
-    %%   Admin:     getAdminSettings   -> exits to getDefaultTextModel
-    %%   Employee API Key: getDefaultTextModel -> exits to validatePayload
-    %%   Guardrail: getPromptGuardrail -> exits to getAvailableElements (when char limit OK)
-    %%   RebreakdownGuards: CheckStoryboardExists -> exits to getUser (creator/overrider, no motions or keyframes)
-    %%   Breakdown: getAvailableElements -> LLM -> fork (create | rebreakdown) -> ElementResolution
-
     subgraph ProjectValidations["Project Validations"]
         getProject["Get project"]
         errProjectNotFound(["Error: Project not found"])
@@ -53,15 +43,29 @@ flowchart LR
 
     subgraph AdminValidations["Admin Validations"]
         getAdminSettings["Get admin settings"]
+        hasClassLimitations{"Is project class limitation configured in admin settings?"}
+        errClassLimitationsNotConfigured(["Error: Project class limitation is not configured in admin settings"])
         hasProjectSetting{"Does project have a spend limit setting?"}
         getDefaultSpendLimit["Get default spend limit by project class"]
+        hasProjectClass{"Is the project assigned to a project class?"}
+        errProjectClassNotAssigned(["Error: Project has no project class"])
+        hasClassLimitEntry{"Does the project class have a limitation entry?"}
+        errClassLimitNotFound(["Error: Limitation for this project class not found"])
         isSpendLimitReached{"Is project spend limit reached?"}
         errSpendLimitReached(["Error: Project spend limit reached"])
 
-        getAdminSettings --> hasProjectSetting
+        %% The limitation data (token limit, chars, max scenes, max shots, threshold) depends on project_class_limitations.
+        %% A project setting cannot exist without it, so it is checked first, before looking at the project setting.
+        getAdminSettings --> hasClassLimitations
+        hasClassLimitations -.->|"No"| errClassLimitationsNotConfigured
+        hasClassLimitations -.->|"Yes"| hasProjectSetting
         hasProjectSetting -.->|"Yes"| isSpendLimitReached
         hasProjectSetting -.->|"No"| getDefaultSpendLimit
-        getDefaultSpendLimit --> isSpendLimitReached
+        getDefaultSpendLimit --> hasProjectClass
+        hasProjectClass -.->|"No"| errProjectClassNotAssigned
+        hasProjectClass -.->|"Yes"| hasClassLimitEntry
+        hasClassLimitEntry -.->|"No"| errClassLimitNotFound
+        hasClassLimitEntry -.->|"Yes"| isSpendLimitReached
         isSpendLimitReached -.->|"Yes"| errSpendLimitReached
     end
 
@@ -90,6 +94,23 @@ flowchart LR
         isWithinCharLimit -.->|"No"| errCharLimitExceeded
     end
 
+    %% ---- Shared by create AND rebreakdown: duration (seconds) ceiling ----
+    %% max_duration = max_scene_per_storyboard x max_shot_per_scene x longest supported video model duration
+    subgraph DurationValidations["Duration Validations"]
+        getVideoModels["Get video models: type = video, is_available = true, is_enabled = true, not deleted"]
+        errNoVideoModel(["Error: No active video model found"])
+        getMaxModelDuration["Max model duration = highest value across all models' supported_durations"]
+        calcMaxDuration["Max duration (s) = max_scenes x max_shots x max model duration (e.g. 2 x 10 x 25 = 500s)"]
+        isDurationValid{"Is requested duration (s) within max duration?"}
+        errDurationExceeded(["Error: Duration is too long. Please enter {max_duration} seconds or less."])
+
+        getVideoModels -.->|"None"| errNoVideoModel
+        getVideoModels -.->|"Found"| getMaxModelDuration
+        getMaxModelDuration --> calcMaxDuration
+        calcMaxDuration --> isDurationValid
+        isDurationValid -.->|"No"| errDurationExceeded
+    end
+
     %% ---- Rebreakdown-only guards (storyboard must already exist) ----
     subgraph RebreakdownGuards["Rebreakdown Guards"]
         CheckStoryboardExists["Check if storyboard exists"]
@@ -97,8 +118,12 @@ flowchart LR
         errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
         CheckAlreadyGeneratedMotionOrKeyframes{"Has the storyboard already generated motion or keyframes?"}
         errAlreadyGeneratedMotionOrKeyframes(["Error: Storyboard has already generated motion or keyframes"])
+        IsStoryboardArchived{"Is the storyboard archived?"}
+        errRebreakdownArchived(["Error: Storyboard is archived. Please unarchive it first"])
 
-        CheckStoryboardExists -.->|"Found"| IsUserCreatorOrOverrider
+        CheckStoryboardExists -.->|"Found"| IsStoryboardArchived
+        IsStoryboardArchived -.->|"Yes"| errRebreakdownArchived
+        IsStoryboardArchived -.->|"No"| IsUserCreatorOrOverrider
         IsUserCreatorOrOverrider -.->|"Creator"| CheckAlreadyGeneratedMotionOrKeyframes
         IsUserCreatorOrOverrider -.->|"Overrider"| CheckAlreadyGeneratedMotionOrKeyframes
         IsUserCreatorOrOverrider -.->|"Neither"| errNotCreatorOrOverrider
@@ -108,7 +133,7 @@ flowchart LR
     %% ---- Shared by create AND rebreakdown ----
     subgraph BreakdownProcess["Breakdown Process"]
         getAvailableElements["Get available elements scoped by project_id and created_by"]
-        callOpenRouter["Send story and project's available elements to OpenRouter (LLM returns relevant matches)"]
+        callOpenRouter["Send story, duration, max_scenes, max_shots (as context) and project's available elements to OpenRouter (LLM returns scenes, shots and relevant element matches)"]
         isRebreakdown{"Is this a rebreakdown?"}
 
         getAvailableElements --> callOpenRouter
@@ -151,9 +176,16 @@ flowchart LR
     checkUserRole -.->|"Overrider"| getAdminSettings
     isUserAssigned -.->|"Yes"| getAdminSettings
     isSpendLimitReached -.->|"No"| getDefaultTextModel
-    hasUserApiKey -.->|"Yes"| validatePayload["Validate storyboard payload"]
+    validatePayload["Validate storyboard payload"]
     validatePayload --> getPromptGuardrail
-    isWithinCharLimit -.->|"Yes"| getAvailableElements
+    %% Shot generation (generate-keyframe / generate-motion / edit-keyframe .mmd) REUSES the groups above: it enters getProject and
+    %% branches back out here instead of going to the storyboard payload validation.
+    shotGenerationEntry(["Entered from generate-keyframe / generate-motion / edit-keyframe .mmd"]) -.-> getProject
+    hasUserApiKey -.->|"Yes"| whichRequestAfterKey{"Which request?"}
+    whichRequestAfterKey -.->|"Storyboard breakdown"| validatePayload
+    whichRequestAfterKey -.->|"Shot generation"| toShotGeneration(["Continue in generate-keyframe / generate-motion / edit-keyframe .mmd"])
+    isWithinCharLimit -.->|"Yes"| getVideoModels
+    isDurationValid -.->|"Yes"| getAvailableElements
 
     %% Links into / out of the shared process
     isRebreakdown -.->|"No (create)"| createStoryboardProcess
@@ -180,18 +212,19 @@ flowchart LR
     CheckStoryboardExists -.->|"Not found"| errStoryboardNotFound
     CheckAlreadyGeneratedMotionOrKeyframes -.->|"No"| getUser
 
-    %% ---------- Get list of storyboards ----------
-    storyboardMenu --> listStoryboards["GET /storyboards/{task_uid}"]
-    listStoryboards --> getStoryboards["Get storyboards scoped by task"]
-    getStoryboards -.->|"Found"| returnStoryboards(["Return storyboard list"])
-    getStoryboards -.->|"None"| returnEmptyList(["Return empty list"])
-    returnStoryboards --> finish
-    returnEmptyList --> finish
-
-    %% ---------- Get detail of storyboard ----------
-    storyboardMenu --> getStoryboardDetail["GET /storyboards/{story_uid}"]
-    getStoryboardDetail --> getStoryboard["Get storyboard by ID"]
-    getStoryboard -.->|"Found"| returnStoryboard(["Return storyboard detail"])
-    getStoryboard -.->|"None"| errStoryboardNotFound(["Error: Storyboard not found"])
-    returnStoryboard --> finish
+    errStoryboardNotFound(["Error: Storyboard not found"])
     errStoryboardNotFound --> finish
+
+    %% ================= OTHER ENDPOINTS (one file each, same directory) =================
+    %%   GET   /storyboards/{task_uid}?archived=false                  list-storyboards.mmd
+    %%   GET   /storyboards/{story_uid}                                get-storyboard.mmd
+    %%   GET   /storyboards/{story_uid}/details                        get-storyboard-details.mmd
+    %%   PATCH /storyboards/{story_uid}/reorder                        reorder-storyboard.mmd
+    %%   PATCH /storyboards/{story_uid}/set-archive                    set-archive-storyboard.mmd
+    %%   POST  /storyboards/{story_uid}/scenes                         add-scene.mmd
+    %%   PATCH /storyboards/{story_uid}/scenes/{scene_uid}             edit-scene.mmd
+    %%   POST  /storyboards/{story_uid}/scenes/{scene_uid}/shots       add-shot.mmd
+    %%   GET   /shots/{shot_uid}                                       get-shot.mmd
+    %%   POST  /shots/{shot_uid}/keyframe                              generate-keyframe.mmd
+    %%   POST  /shots/{shot_uid}/motion                                generate-motion.mmd
+    %%   POST  /shots/{shot_uid}/edit-keyframes/{keyframe_uid}         edit-keyframe.mmd

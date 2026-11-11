@@ -1,0 +1,13 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    storyboardMenu --> listStoryboards["GET /storyboards/{task_uid}?archived=false"]
+    listStoryboards --> getStoryboards["Get storyboards scoped by task, filtered by archived query param (bool, default false: non-archived only; true: archived only)"]
+    getStoryboards -.->|"Found"| returnStoryboards(["Return storyboard list"])
+    getStoryboards -.->|"None"| returnEmptyList(["Return empty list"])
+    returnStoryboards --> finish
+    returnEmptyList --> finish
