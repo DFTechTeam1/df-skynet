@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from apps.controller.core import CoreDependencies
 from schemas.response import Response
 from schemas.payload.prompt_template import PromptTemplatePayload
-from services.mysql.model import DfEnginePromptTemplates
+from services.mysql.model import DfEnginePromptTemplates, DfEnginePromptTemplateReferences
 from services.redis import get_json, set_json, delete_pattern, CacheKeys
 from services.mysql import query
 from log import logging
@@ -167,19 +167,28 @@ class PromptTemplateController(CoreDependencies):
                 name=schema.name,
                 description=schema.description,
                 is_active=schema.is_active,
-                prompt=schema.prompt,
+                prompt=prompt_template_service.format_prompt(schema.prompt, schema.template_references),
                 created_by=int(self.user["user_id"]),
             )
+            reference_ids = await prompt_template_service.resolve_reference_ids(self.db, schema.template_references)
             self.db.add(prompt_template)
             try:
                 await self.db.flush()
             except IntegrityError:
                 raise DataConflictError(message="prompt_template_already_exists")
 
+            for reference_id in reference_ids:
+                self.db.add(
+                    DfEnginePromptTemplateReferences(main_template_id=prompt_template.id, reference_id=reference_id)
+                )
+            await self.db.flush()
+            # Capture before expire(): reading expired attributes would lazy-load outside a greenlet.
+            new_uid = prompt_template.uid
             logging.info(
-                f"user={self.user['user_id']} created prompt template uid={prompt_template.uid} "
+                f"user={self.user['user_id']} created prompt template uid={new_uid} "
                 f"name={prompt_template.name!r} is_active={prompt_template.is_active}"
             )
+            self.db.expire(prompt_template)
 
             new_record = prompt_template_service.format(
                 serialize(
@@ -187,14 +196,14 @@ class PromptTemplateController(CoreDependencies):
                         db=self.db,
                         table=DfEnginePromptTemplates,
                         options=prompt_template_service.options(),
-                        filters=(DfEnginePromptTemplates.uid == str(prompt_template.uid),),  # type: ignore
+                        filters=(DfEnginePromptTemplates.uid == str(new_uid),),  # type: ignore
                         fetch_one=True,
                     )
                 )
             )
             await set_json(
                 self.redis,
-                cache_key.prompt_template_detail(prompt_template.uid),  # type: ignore
+                cache_key.prompt_template_detail(new_uid),  # type: ignore
                 new_record,
             )
 
@@ -203,7 +212,7 @@ class PromptTemplateController(CoreDependencies):
             if cached_prompt_template_global is not None:
                 records = [new_record, *cached_prompt_template_global]
                 logging.info(
-                    f"user={self.user['user_id']} appended prompt template uid={prompt_template.uid} "
+                    f"user={self.user['user_id']} appended prompt template uid={new_uid} "
                     f"to list cache count={len(records)}"
                 )
             else:
@@ -253,10 +262,23 @@ class PromptTemplateController(CoreDependencies):
             if template is None:
                 raise DataNotFoundError(message="prompt_template_not_found")
 
+            reference_ids = await prompt_template_service.resolve_reference_ids(
+                self.db, schema.template_references, own_uid=uid
+            )
+            existing = {ref.reference_id: ref for ref in template.template_references}
+            for reference_id, ref in existing.items():
+                if reference_id not in reference_ids:
+                    template.template_references.remove(ref)
+            for reference_id in reference_ids:
+                if reference_id not in existing:
+                    template.template_references.append(
+                        DfEnginePromptTemplateReferences(main_template_id=template.id, reference_id=reference_id)
+                    )
+
             template.name = schema.name
             template.description = schema.description
             template.is_active = schema.is_active
-            template.prompt = schema.prompt
+            template.prompt = prompt_template_service.format_prompt(schema.prompt, schema.template_references)
             template.updated_by = int(self.user["user_id"])
             template.updated_at = local_time()
 
@@ -284,24 +306,11 @@ class PromptTemplateController(CoreDependencies):
                 )
             )
 
-            await set_json(
-                self.redis,
-                cache_key.prompt_template_detail(uid),
-                updated_template,
-            )
-
-            prompt_template_global_cache_key = cache_key.prompt_templates()
-            cached_prompt_template_global = await get_json(self.redis, prompt_template_global_cache_key)
-
-            if cached_prompt_template_global is not None:
-                records = [updated_template if r["uid"] == str(uid) else r for r in cached_prompt_template_global]
-                logging.info(
-                    f"user={self.user['user_id']} updated prompt template uid={uid} in list cache count={len(records)}"
-                )
-            else:
-                records = await prompt_template_service.rebuild_response(self.db, self.user["user_id"])
-
-            await set_json(self.redis, prompt_template_global_cache_key, records)
+            # Other templates may reference this one (name shown in their record), so rebuild everything.
+            await delete_pattern(self.redis, cache_key.prompt_template_pattern())
+            records = await prompt_template_service.rebuild_response(self.db, self.user["user_id"])
+            await set_json(self.redis, cache_key.prompt_template_detail(uid), updated_template)
+            await set_json(self.redis, cache_key.prompt_templates(), records)
             response.data = records
 
         except BaseError:
@@ -358,21 +367,11 @@ class PromptTemplateController(CoreDependencies):
                 f"user={self.user['user_id']} deleted prompt template uid={template.uid} name={template.name!r}"
             )
 
-            await self.redis.delete(cache_key.prompt_template_detail(uid))
-
-            prompt_template_global_cache_key = cache_key.prompt_templates()
-            cached_prompt_template_global = await get_json(self.redis, prompt_template_global_cache_key)
-
-            if cached_prompt_template_global is not None:
-                records = [r for r in cached_prompt_template_global if r["uid"] != str(uid)]
-                logging.info(
-                    f"user={self.user['user_id']} removed prompt template uid={uid} "
-                    f"from list cache count={len(records)}"
-                )
-            else:
-                records = await prompt_template_service.rebuild_response(self.db, self.user["user_id"])
-
-            await set_json(self.redis, prompt_template_global_cache_key, records)
+            # Cascade removed relations on templates that referenced this one, so rebuild everything.
+            await delete_pattern(self.redis, cache_key.prompt_template_pattern())
+            await delete_pattern(self.redis, cache_key.get_menu_pattern())
+            records = await prompt_template_service.rebuild_response(self.db, self.user["user_id"])
+            await set_json(self.redis, cache_key.prompt_templates(), records)
             response.data = records
         except BaseError:
             raise

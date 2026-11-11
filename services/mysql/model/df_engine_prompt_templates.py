@@ -36,3 +36,10 @@ class DfEnginePromptTemplates(SQLModel, table=True):
     df_engine_feature_prompt_mappings: list["DfEngineFeaturePromptMappings"] = Relationship(  # type: ignore
         back_populates="df_engine_prompt_templates"
     )
+    template_references: list["DfEnginePromptTemplateReferences"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={
+            "foreign_keys": "[DfEnginePromptTemplateReferences.main_template_id]",
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        }
+    )

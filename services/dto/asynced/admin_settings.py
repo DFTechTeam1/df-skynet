@@ -9,7 +9,9 @@ from services.mysql.model import (
     DfEngineMenus,
     DfEngineMenuFeatureMappings,
     DfEngineFeatures,
+    DfEnginePromptTemplates,
     DfEngineFeaturePromptMappings,
+    DfEnginePromptTemplateReferences,
     DfEngineSettings,
     DfEngineProjectSettings,
     DfEngineModelOptions,
@@ -34,6 +36,20 @@ PROJECT_SETTING_LIMIT_FIELDS = (
     "max_shot_per_scene",
     "token_limit_threshold",
 )
+
+
+def _with_references(feature) -> list:
+    """Active templates mapped to a feature, each followed by its active referenced templates."""
+    templates = []
+    for mapping in feature.df_engine_feature_prompt_mappings:
+        template = mapping.df_engine_prompt_templates
+        if not template or not template.is_active:
+            continue
+        templates.append(template)
+        templates.extend(
+            ref.reference for ref in template.template_references if ref.reference and ref.reference.is_active
+        )
+    return templates
 
 
 async def get_menu(
@@ -74,6 +90,12 @@ async def get_menu(
             .selectinload(DfEngineMenuFeatureMappings.df_engine_features)  # type: ignore
             .selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings)  # type: ignore
             .selectinload(DfEngineFeaturePromptMappings.df_engine_prompt_templates),  # type: ignore
+            selectinload(menu_feature_mappings)  # type: ignore
+            .selectinload(DfEngineMenuFeatureMappings.df_engine_features)  # type: ignore
+            .selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings)  # type: ignore
+            .selectinload(DfEngineFeaturePromptMappings.df_engine_prompt_templates)  # type: ignore
+            .selectinload(DfEnginePromptTemplates.template_references)  # type: ignore
+            .selectinload(DfEnginePromptTemplateReferences.reference),  # type: ignore
         ),
         fetch_one=(menu_uid is not None),
     )
@@ -111,10 +133,12 @@ async def get_menu(
         for feature in features:
             feature_data = serialize(feature)
             prompt_templates = []
-            for mapping in feature.df_engine_feature_prompt_mappings:
-                template = mapping.df_engine_prompt_templates
-                if not template or not template.is_active:
+            # One level of references; a template mapped directly and also referenced is injected once.
+            seen: set[str] = set()
+            for template in _with_references(feature):
+                if template.uid in seen:
                     continue
+                seen.add(template.uid)
                 template_data = serialize(template)
                 prompt_templates.append(
                     PromptTemplateRecord.from_result(
