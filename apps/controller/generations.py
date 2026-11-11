@@ -360,6 +360,8 @@ class GenerationsController(CoreDependencies):
                 enhancer_input += "\nReferences (in image order): " + ", ".join(
                     str(r["uid"]) for r in reference_records
                 )
+            if schema.params:
+                enhancer_input += "\nAdditional parameters to take into account: " + str(schema.params)
 
             enhanced = await enhance_prompt(
                 enhancer_input, enhancer_model["model_id"], api_key["key"], user_id, image_urls
@@ -370,11 +372,6 @@ class GenerationsController(CoreDependencies):
                 enhanced["text"] = re.sub(rf"(?<!<refer to ){re.escape(uid)}", f"<refer to {uid}>", enhanced["text"])
                 if f"<refer to {uid}>" not in enhanced["text"]:
                     enhanced["text"] += f" <refer to {uid}>"
-
-            if schema.params:
-                enhanced["text"] += (
-                    " " + "This prompt should be enhanced with the following parameters: " + str(schema.params)
-                )
 
             generation = DfEngineGenerations(
                 kind=GenerationKinds.enhancer,
