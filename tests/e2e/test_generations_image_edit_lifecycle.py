@@ -196,7 +196,7 @@ async def generation_project_settings(db_session, project_task):
 
 
 @pytest_asyncio.fixture
-def fake_generation_backends(monkeypatch):
+def fake_generation_backends(monkeypatch, fake_enhance):
     async def _fake_rank_prompt(*args, **kwargs):
         return None
 

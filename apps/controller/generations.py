@@ -543,7 +543,7 @@ class GenerationsController(CoreDependencies):
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
-            merged_prompt = "\n".join([resolved_prompt, *injected_prompts])
+            merged_prompt = resolved_prompt if schema.enhance_uid else "\n".join([resolved_prompt, *injected_prompts])
             if schema.x_min is not None:
                 merged_prompt = "\n".join(
                     [
@@ -592,7 +592,7 @@ class GenerationsController(CoreDependencies):
 
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
-            all_references, _ = await asyncio.gather(
+            all_references, _, final = await asyncio.gather(
                 validate_image_availability(user_image_references),
                 validate_prompt(
                     ctx,
@@ -603,7 +603,11 @@ class GenerationsController(CoreDependencies):
                     "image_generation",
                     record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
                 ),
+                asyncio.sleep(0, {"text": merged_prompt})
+                if schema.enhance_uid
+                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
+            merged_prompt = final["text"]
 
             """Insert generation record"""
             generation = DfEngineGenerations(
@@ -779,7 +783,7 @@ class GenerationsController(CoreDependencies):
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
-            merged_prompt = "\n".join([resolved_prompt, *injected_prompts])
+            merged_prompt = resolved_prompt if schema.enhance_uid else "\n".join([resolved_prompt, *injected_prompts])
 
             assistant_setting = admin_setting.get("assistant_model")
             enhancer_setting = admin_setting.get("enhancer_model")
@@ -819,7 +823,7 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
-            validated_image_references, _ = await asyncio.gather(
+            validated_image_references, _, final = await asyncio.gather(
                 validate_image_availability(user_image_references),
                 validate_prompt(
                     ctx,
@@ -830,7 +834,11 @@ class GenerationsController(CoreDependencies):
                     "image_generation" if schema.type == "image" else "video_generation",
                     record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
                 ),
+                asyncio.sleep(0, {"text": merged_prompt})
+                if schema.enhance_uid
+                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
+            merged_prompt = final["text"]
 
             """Insert generation record"""
             generation = DfEngineGenerations(

@@ -74,6 +74,26 @@ def _reset_rate_limiter():
     yield
 
 
+@pytest.fixture
+def fake_enhance(monkeypatch):
+    """Generate/edit flows call `enhance_prompt` when no enhance_uid is given; return "ENHANCED" instead of
+    hitting OpenRouter. `calls` records each input prompt; set `error` to make the enhancer fail."""
+
+    class Fake:
+        calls: list[str] = []
+        error = None
+
+    async def fake(prompt, model_id, api_key, user_id, image_urls=None):
+        Fake.calls.append(prompt)
+        if Fake.error:
+            raise Fake.error
+        return {"text": "ENHANCED", "status_code": 200, "usage": {}}
+
+    Fake.calls, Fake.error = [], None
+    monkeypatch.setattr("apps.controller.generations.enhance_prompt", fake)
+    return Fake
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _clear_all_redis_caches():
     """Every controller now caches its GET responses in Redis. Tests build
