@@ -233,7 +233,7 @@ async def generation_project_settings(db_session, project_task):
 
 
 @pytest_asyncio.fixture
-def fake_generation_backends(monkeypatch):
+def fake_generation_backends(monkeypatch, fake_enhance):
     """Fakes the external side effects the create endpoint triggers: OpenRouter
     prompt ranking and the Celery image/video-generation dispatch. Returns the list
     of `.delay(...)` calls either fake task recorded."""
@@ -524,3 +524,82 @@ async def test_frame_color_fills_the_missing_frame_and_is_saved(
         )
     ).scalar_one()
     assert stored == "#4cfb2b"
+
+
+def _sent_prompt(delay_calls) -> str:
+    return delay_calls[-1][1]["payload"]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_without_enhance_uid_prompt_is_enhanced_before_dispatch(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    image_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    fake_enhance,
+):
+    """200 OK; no enhance_uid → enhancer called once with the raw prompt, and its text is what gets dispatched."""
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call("POST", _url(project_task.uid), json=_payload(menu, feature, image_model))
+    assert resp.status_code == 200
+    assert len(fake_enhance.calls) == 1
+    assert fake_enhance.calls[0].startswith("a scenic mountain view at sunrise")
+    assert _sent_prompt(fake_generation_backends) == "ENHANCED"
+
+
+@pytest.mark.asyncio
+async def test_with_enhance_uid_skips_enhancer_and_injected_prompts(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    image_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    fake_enhance,
+    monkeypatch,
+):
+    """200 OK; enhance_uid → enhancer not called, the stored enhanced response is dispatched unchanged."""
+
+    async def fake_get_enhance_prompt(ctx, enhance_uid):
+        return {"id": None, "prompt": "p", "full_prompt": "p", "enhance_uid": str(enhance_uid), "response": "STORED"}
+
+    monkeypatch.setattr("apps.controller.generations.get_enhance_prompt", fake_get_enhance_prompt)
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST",
+        _url(project_task.uid),
+        json=_payload(menu, feature, image_model, enhance_uid="00000000-0000-0000-0000-000000000001"),
+    )
+    assert resp.status_code == 200
+    assert fake_enhance.calls == []
+    assert _sent_prompt(fake_generation_backends) == "STORED"
+
+
+@pytest.mark.asyncio
+async def test_enhancer_failure_is_422_and_dispatches_nothing(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    image_model,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    fake_enhance,
+):
+    """422; a failing enhancer stops the request before any task is dispatched."""
+    from error import DataValidationError
+
+    fake_enhance.error = DataValidationError(message="prompt_enhance_failed")
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call(
+        "POST", _url(project_task.uid), json=_payload(menu, feature, image_model), raise_for_status=False
+    )
+    assert resp.status_code == 422
+    assert len(fake_generation_backends) == 0
