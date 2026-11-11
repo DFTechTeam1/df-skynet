@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
+from uuid import UUID
 
 
 class PromptTemplatePayload(BaseModel):
@@ -42,3 +43,18 @@ class PromptTemplatePayload(BaseModel):
             "and guide the user through their first project setup step by step."
         ],
     )
+    template_references: list[UUID] = Field(
+        default_factory=list,
+        description="UIDs of other prompt templates this template references. Duplicates are dropped.",
+    )
+
+    @field_validator("template_references")
+    @classmethod
+    def dedupe_references(cls, value: list[UUID]) -> list[UUID]:
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def references_must_be_in_prompt(self):
+        if any(str(u) not in self.prompt for u in self.template_references):
+            raise ValueError("prompt_template_reference_not_in_prompt")
+        return self
