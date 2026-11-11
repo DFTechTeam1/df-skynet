@@ -27,6 +27,7 @@ class FilesMessage:
             "file_archive_not_permitted": "Versi utama tidak dapat diarsipkan. Jadikan versi lain sebagai versi utama terlebih dahulu.",
             "file_edit_not_permitted": "Anda hanya dapat mengedit gambar yang Anda buat atau unggah sendiri.",
             "file_edit_image_only": "Hanya file gambar yang dapat diedit.",
+            "reference_image_only": "Referensi hanya boleh berupa file gambar.",
             "file_edit_task_required": "Unggahan ini tidak terhubung ke task atau lagu, sehingga tidak dapat diedit.",
             "invalid_file_name": "Nama file hanya boleh berisi huruf, angka, spasi, dan simbol berikut: _ - . # ( ) @ &. Sebagai contoh: Standby v.1 (final) & edit.",
             "invalid_folder_name": "Nama folder hanya boleh berisi huruf, angka, spasi, dan simbol berikut: _ - . # ( ) @ &. Sebagai contoh: Ms. Shinta (2026) & Co.",
