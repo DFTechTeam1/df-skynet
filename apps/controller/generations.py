@@ -1,4 +1,5 @@
 import asyncio
+import re
 import traceback
 from datetime import timedelta
 from decimal import Decimal
@@ -336,6 +337,13 @@ class GenerationsController(CoreDependencies):
                 hit = found.get(str(ref.uid))
                 if hit is None or hit[0] != ref.source:
                     raise DataNotFoundError(message="file_not_found", error={f"references.{idx}": ["file_not_found"]})
+                if hit[0] == "generated" and hit[1].get("kind") not in (
+                    GenerationKinds.image,
+                    GenerationKinds.image_edit,
+                ):
+                    raise DataValidationError(
+                        message="reference_image_only", error={f"references.{idx}": ["reference_image_only"]}
+                    )
                 reference_records.append(
                     {
                         "uid": ref.uid,
@@ -356,9 +364,12 @@ class GenerationsController(CoreDependencies):
             enhanced = await enhance_prompt(
                 enhancer_input, enhancer_model["model_id"], api_key["key"], user_id, image_urls
             )
-            missing = [str(r["uid"]) for r in reference_records if str(r["uid"]) not in enhanced["text"]]
-            if missing:
-                enhanced["text"] += " " + " ".join(missing)
+            """Normalize every user-passed uid to the template format `<refer to uid>`."""
+            for r in reference_records:
+                uid = str(r["uid"])
+                enhanced["text"] = re.sub(rf"(?<!<refer to ){re.escape(uid)}", f"<refer to {uid}>", enhanced["text"])
+                if f"<refer to {uid}>" not in enhanced["text"]:
+                    enhanced["text"] += f" <refer to {uid}>"
 
             if schema.params:
                 enhanced["text"] += (
