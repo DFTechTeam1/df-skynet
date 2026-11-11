@@ -358,6 +358,14 @@ Table df_engine_prompt_templates {
 }
 
 
+Table df_engine_prompt_template_references {
+    id bigint [pk, increment]
+    main_template_id bigint [default: null]
+    reference_id bigint [default: null]
+}
+
+
+
 // ============================================================
 // MODELS
 // ============================================================
@@ -799,3 +807,5 @@ Ref: df_engine_generations.id < df_engine_storyboard_scenes.story_id
 Ref: df_engine_storyboard_scenes.id < df_engine_scene_shots.scene_id
 Ref: df_engine_scene_shots.id < df_engine_keyframe_details.shot_id
 Ref: df_engine_scene_shots.id < df_engine_motion_details.shot_id
+Ref: df_engine_prompt_templates.id < df_engine_prompt_template_references.main_template_id [delete: cascade]
+Ref: df_engine_prompt_templates.id < df_engine_prompt_template_references.reference_id [delete: cascade]

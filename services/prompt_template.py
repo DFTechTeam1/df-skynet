@@ -1,8 +1,18 @@
-from typing import Any
-from sqlalchemy.orm import selectinload
-from services.mysql.model import DfEnginePromptTemplates, DfEngineFeaturePromptMappings, Users, Employees
+import re
+from typing import Any, Optional
+from uuid import UUID
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload, load_only
+from services.mysql.model import (
+    DfEnginePromptTemplates,
+    DfEnginePromptTemplateReferences,
+    DfEngineFeaturePromptMappings,
+    Users,
+    Employees,
+)
 from services.mysql import query
 from log import logging
+from error import DataNotFoundError, DataValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.serializer import serialize
 from utils.formatter import format_datetime, format_user_employees
@@ -33,30 +43,23 @@ class PromptTemplateService:
             tuple: SQLAlchemy relationship loading options.
         """
         return (
-            # Load the user who created the prompt template.
-            # Only the user's image and employee nickname are required
-            # for the formatted creator response.
             selectinload(DfEnginePromptTemplates.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
-            # Load the user who last updated the prompt template.
-            # Only the user's image and employee nickname are required
-            # for the formatted updater response.
             selectinload(DfEnginePromptTemplates.updated_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
             .load_only(Employees.nickname),  # type: ignore
-            # Load feature prompt mappings only to determine whether
-            # the prompt template is currently being used.
-            #
-            # The mapping data is not returned to the client and is
-            # removed in `format()`.
             selectinload(  # type: ignore
                 DfEnginePromptTemplates.df_engine_feature_prompt_mappings  # type: ignore
             ).load_only(
                 DfEngineFeaturePromptMappings.id  # type: ignore
             ),
+            # Referenced templates, returned as `template_references` (uid + name).
+            selectinload(DfEnginePromptTemplates.template_references)  # type: ignore
+            .selectinload(DfEnginePromptTemplateReferences.reference)  # type: ignore
+            .load_only(DfEnginePromptTemplates.uid, DfEnginePromptTemplates.name),  # type: ignore
         )
 
     def format(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -79,30 +82,22 @@ class PromptTemplateService:
             dict[str, Any]: Formatted prompt template response.
         """
 
-        # TODO:
-        # Replace this temporary hard-coded permission list with the
-        # authenticated user's actual permissions.
         user_permissions = [
             "delete_df_engine_prompt_template",
             "fetch_df_engine_prompt_templates",
             "update_df_engine_prompt_template",
         ]
-
-        # Convert database datetime values into the standard
-        # application/API datetime format.
         record["created_at"] = format_datetime(record["created_at"])
         record["updated_at"] = format_datetime(record["updated_at"])
-
-        # Convert the raw creator and updater relationships into the
-        # simplified user/employee representation expected by the API.
         record["creator"] = format_user_employees(record["created_by_user"])
         record["updater"] = format_user_employees(record["updated_by_user"])
 
-        # Determine which actions are available for this template.
-        #
-        # `can_delete` has an additional restriction:
-        # a template cannot be deleted when it is already mapped
-        # to a DF Engine feature.
+        # Referenced templates; skip any row whose template is gone.
+        record["template_references"] = [
+            {"uid": ref["reference"]["uid"], "name": ref["reference"]["name"]}
+            for ref in record.get("template_references", [])
+            if ref.get("reference")
+        ]
         record["action"] = {
             "can_fetch_detail": "fetch_df_engine_prompt_templates" in user_permissions,
             "can_delete": (
@@ -111,9 +106,6 @@ class PromptTemplateService:
             ),
             "can_update": "update_df_engine_prompt_template" in user_permissions,
         }
-
-        # Remove internal database fields that should not be exposed
-        # in the API response.
         record.pop("id", None)
         record.pop("created_by_user", None)
         record.pop("updated_by_user", None)
@@ -150,11 +142,6 @@ class PromptTemplateService:
             ordered from newest to oldest.
         """
 
-        # Fetch all prompt templates using the eager-loading options
-        # defined in `options()`.
-        #
-        # Templates are ordered by creation time in descending order
-        # so the newest templates appear first.
         results = await query(
             db=db,
             table=DfEnginePromptTemplates,
@@ -164,11 +151,41 @@ class PromptTemplateService:
             ),
         )
 
-        # Serialize the database models and format each record into
-        # the structure expected by the API/cache.
         records = [self.format(record) for record in serialize(results)]
-
-        # Log cache rebuild information for debugging and monitoring.
         logging.info(f"user={user_id} rebuilt prompt template list cache count={len(records)}")
 
         return records
+
+    async def resolve_reference_ids(
+        self, db: AsyncSession, uids: list[UUID], own_uid: Optional[UUID] = None
+    ) -> list[int]:
+        """Map referenced template UIDs to ids, rejecting self-references and unknown UIDs."""
+        if not uids:
+            return []
+        if own_uid is not None and own_uid in uids:
+            raise DataValidationError(
+                message="prompt_template_self_reference",
+                error={"template_references": ["prompt_template_self_reference"]},
+            )
+        rows = (
+            await db.execute(
+                select(DfEnginePromptTemplates.id, DfEnginePromptTemplates.uid).where(
+                    DfEnginePromptTemplates.uid.in_([str(u) for u in uids])  # type: ignore
+                )
+            )
+        ).all()
+        id_by_uid = {row.uid: row.id for row in rows}
+        missing = [str(u) for u in uids if str(u) not in id_by_uid]
+        if missing:
+            raise DataNotFoundError(
+                message="prompt_template_not_found",
+                error={"template_references": ["prompt_template_not_found"]},
+            )
+        return [id_by_uid[str(u)] for u in uids]
+
+    def format_prompt(self, prompt: str, uids: list[UUID]) -> str:
+        """Rewrite each referenced UID in the prompt as `<refer to UID>`; payload guarantees each is present."""
+        for u in uids:
+            # Lookbehind keeps already-formatted tags (e.g. a re-sent stored prompt) from double-wrapping.
+            prompt = re.sub(rf"(?<!<refer to ){re.escape(str(u))}", f"<refer to {u}>", prompt)
+        return prompt

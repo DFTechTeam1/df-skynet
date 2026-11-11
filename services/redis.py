@@ -192,6 +192,9 @@ class CacheKeys:
     def prompt_templates(self, name: Optional[str] = None) -> str:
         return f"prompt_template:list:{(name or '').strip().lower() or 'all'}"
 
+    def prompt_template_pattern(self) -> str:
+        return "prompt_template:*"
+
     def prompt_template_detail(self, uid: UUID) -> str:
         return f"prompt_template:detail:{uid}"
 

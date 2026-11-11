@@ -20,6 +20,7 @@ from services.mysql.model.df_engine_external_api_calls import DfEngineExternalAp
 from services.mysql.model.df_engine_preferences import DfEnginePreferences
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
 from services.mysql.model.df_engine_prompt_templates import DfEnginePromptTemplates
+from services.mysql.model.df_engine_prompt_template_references import DfEnginePromptTemplateReferences
 from services.mysql.model.df_engine_queues import DfEngineQueues
 from services.mysql.model.df_engine_scene_shots import DfEngineSceneShots
 from services.mysql.model.df_engine_setting_logs import DfEngineSettingLogs
@@ -64,6 +65,7 @@ __all__ = [
     "DfEnginePreferences",
     "DfEngineProjectSettings",
     "DfEnginePromptTemplates",
+    "DfEnginePromptTemplateReferences",
     "DfEngineQueues",
     "DfEngineSceneShots",
     "DfEngineSettingLogs",
