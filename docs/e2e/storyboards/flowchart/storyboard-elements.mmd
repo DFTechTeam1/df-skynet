@@ -7,71 +7,178 @@ flowchart LR
         ui["Web app"]
     end
 
+    %% ================= REUSABLE VALIDATIONS =================
+    %% Defined ONCE. Any endpoint needing them just points an edge at the entry node:
+    %%   Project:   getProject         -> exits to getUser (when task is not completed)
+    %%   User:      getUser            -> exits to getAdminSettings
+    %%   Admin:     getAdminSettings   -> exits to getDefaultTextModel
+    %%   Employee API Key: getDefaultTextModel -> exits to validatePayload
+    %%   Guardrail: getPromptGuardrail -> exits to getAvailableElements (when char limit OK)
+    %%   RebreakdownGuards: CheckStoryboardExists -> exits to getUser (creator/overrider, no motions or keyframes)
+    %%   Breakdown: getAvailableElements -> LLM -> fork (create | rebreakdown) -> ElementResolution
+
+    subgraph ProjectValidations["Project Validations"]
+        getProject["Get project"]
+        errProjectNotFound(["Error: Project not found"])
+        isProjectOngoing{"Is project ongoing?"}
+        errProjectNotOngoing(["Error: Project is not ongoing"])
+        getProjectTasks["Get project tasks or song list"]
+        errNoProjectTasks(["Error: No project tasks found"])
+        isTaskCompleted{"Is project task completed?"}
+        errTaskCompleted(["Error: Project task is already completed"])
+
+        getProject -.->|"Found"| isProjectOngoing
+        getProject -.->|"Not found"| errProjectNotFound
+        isProjectOngoing -.->|"No"| errProjectNotOngoing
+        isProjectOngoing -.->|"Yes"| getProjectTasks
+        getProjectTasks -.->|"None"| errNoProjectTasks
+        getProjectTasks -.->|"Found"| isTaskCompleted
+        isTaskCompleted -.->|"Yes"| errTaskCompleted
+    end
+
+    subgraph UserValidations["User Validations"]
+        getUser["Get user"]
+        hasUserResigned{"Has user resigned?"}
+        errUserResigned(["Error: User has resigned"])
+        checkUserRole{"What is the user role?"}
+        isUserAssigned{"Is user assigned to the task?"}
+        errUserNotAssigned(["Error: User is not assigned to the task"])
+
+        getUser --> hasUserResigned
+        hasUserResigned -.->|"Yes"| errUserResigned
+        hasUserResigned -.->|"No"| checkUserRole
+        checkUserRole -.->|"Staff"| isUserAssigned
+        isUserAssigned -.->|"No"| errUserNotAssigned
+    end
+
+    subgraph AdminValidations["Admin Validations"]
+        getAdminSettings["Get admin settings"]
+        hasProjectSetting{"Does project have a spend limit setting?"}
+        getDefaultSpendLimit["Get default spend limit by project class"]
+        isSpendLimitReached{"Is project spend limit reached?"}
+        errSpendLimitReached(["Error: Project spend limit reached"])
+
+        getAdminSettings --> hasProjectSetting
+        hasProjectSetting -.->|"Yes"| isSpendLimitReached
+        hasProjectSetting -.->|"No"| getDefaultSpendLimit
+        getDefaultSpendLimit --> isSpendLimitReached
+        isSpendLimitReached -.->|"Yes"| errSpendLimitReached
+    end
+
+    subgraph EmployeeAPIKeyValidations["Employee API Key Validations"]
+        getDefaultTextModel["Get default assistant or enhancer model"]
+        errNoDefaultModel(["Error: No default model found"])
+        hasUserApiKey{"Does user have an API key?"}
+        errNoApiKey(["Error: No API key found"])
+
+        getDefaultTextModel -.->|"None"| errNoDefaultModel
+        getDefaultTextModel -.->|"Found"| hasUserApiKey
+        hasUserApiKey -.->|"No"| errNoApiKey
+    end
+
+    subgraph GuardrailValidations["Guardrail Validations"]
+        getPromptGuardrail["Get prompt guardrail"]
+        isPromptRelevant{"Is prompt relevant to storyboards?"}
+        errIrrelevantPrompt(["Error: Prompt is irrelevant to creating storyboards"])
+        isWithinCharLimit{"Is story within character limit?"}
+        errCharLimitExceeded(["Error: Storyboard character limit exceeded"])
+
+        getPromptGuardrail -.->|"No guardrail"| isWithinCharLimit
+        getPromptGuardrail -.->|"Has guardrail"| isPromptRelevant
+        isPromptRelevant -.->|"Yes"| isWithinCharLimit
+        isPromptRelevant -.->|"No"| errIrrelevantPrompt
+        isWithinCharLimit -.->|"No"| errCharLimitExceeded
+    end
+
+    %% ---- Rebreakdown-only guards (storyboard must already exist) ----
+    subgraph RebreakdownGuards["Rebreakdown Guards"]
+        CheckStoryboardExists["Check if storyboard exists"]
+        IsUserCreatorOrOverrider{"Is user the creator or an overrider?"}
+        errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+        CheckAlreadyGeneratedMotionOrKeyframes{"Has the storyboard already generated motion or keyframes?"}
+        errAlreadyGeneratedMotionOrKeyframes(["Error: Storyboard has already generated motion or keyframes"])
+
+        CheckStoryboardExists -.->|"Found"| IsUserCreatorOrOverrider
+        IsUserCreatorOrOverrider -.->|"Creator"| CheckAlreadyGeneratedMotionOrKeyframes
+        IsUserCreatorOrOverrider -.->|"Overrider"| CheckAlreadyGeneratedMotionOrKeyframes
+        IsUserCreatorOrOverrider -.->|"Neither"| errNotCreatorOrOverrider
+        CheckAlreadyGeneratedMotionOrKeyframes -.->|"Yes"| errAlreadyGeneratedMotionOrKeyframes
+    end
+
+    %% ---- Shared by create AND rebreakdown ----
+    subgraph BreakdownProcess["Breakdown Process"]
+        getAvailableElements["Get available elements scoped by project_id and created_by"]
+        callOpenRouter["Send story and project's available elements to OpenRouter (LLM returns relevant matches)"]
+        isRebreakdown{"Is this a rebreakdown?"}
+
+        getAvailableElements --> callOpenRouter
+        callOpenRouter --> isRebreakdown
+    end
+
+    subgraph CreatePersistence["Create: persist new storyboard"]
+        createStoryboardProcess["Create storyboard process"]
+        createStoryboardRecords["Create storyboard records"]
+        attachStoryboardToGenerations["Attach storyboard to generations"]
+
+        createStoryboardProcess --> createStoryboardRecords
+        createStoryboardRecords --> attachStoryboardToGenerations
+    end
+
+    subgraph RebreakdownPersistence["Rebreakdown: update existing storyboard"]
+        lockAndRecheck{"Lock storyboard: still no motions or keyframes?"}
+        replaceStoryboardElements["Remove old elements and update storyboard records"]
+
+        lockAndRecheck -.->|"Yes (none generated)"| replaceStoryboardElements
+    end
+
+    subgraph ElementResolution["Element Resolution"]
+        readStoryElements["Read story elements from LLM response"]
+        hasStoryElements{"Does the story contain any elements?"}
+        hasExistingElement{"For each element: does it match a project element that is relevant?"}
+        setElementReference["Auto-attach: set reference to existing project element"]
+        createPlaceholderElement["Create placeholder element ('Need to generate first')"]
+        attachElementsToStoryboard["Attach elements to storyboard"]
+
+        readStoryElements --> hasStoryElements
+        hasStoryElements -.->|"Yes"| hasExistingElement
+        hasExistingElement -.->|"Yes"| setElementReference
+        hasExistingElement -.->|"No"| createPlaceholderElement
+        setElementReference --> attachElementsToStoryboard
+        createPlaceholderElement --> attachElementsToStoryboard
+    end
+
+    %% Links between the validation groups
+    checkUserRole -.->|"Overrider"| getAdminSettings
+    isUserAssigned -.->|"Yes"| getAdminSettings
+    isSpendLimitReached -.->|"No"| getDefaultTextModel
+    hasUserApiKey -.->|"Yes"| validatePayload["Validate storyboard payload"]
+    validatePayload --> getPromptGuardrail
+    isWithinCharLimit -.->|"Yes"| getAvailableElements
+
+    %% Links into / out of the shared process
+    isRebreakdown -.->|"No (create)"| createStoryboardProcess
+    isRebreakdown -.->|"Yes"| lockAndRecheck
+    lockAndRecheck -.->|"No (generated meanwhile)"| errAlreadyGeneratedMotionOrKeyframes
+    attachStoryboardToGenerations --> readStoryElements
+    replaceStoryboardElements --> readStoryElements
+    hasStoryElements -.->|"No"| finish
+    attachElementsToStoryboard --> finish
+
+    %% ================= ENTRY =================
     start --> ui
     ui --> storyboardMenu["Storyboard menu"]
     ui --> genMenu["Generation menu"]
 
-    %% ---------- Create storyboards: request & project checks ----------
+    %% ---------- Create storyboard ----------
     storyboardMenu --> createStoryboard["POST /storyboards/tasks/{task_uid}"]
-    createStoryboard --> getProject["Get project"]
-    getProject -.->|"Found"| isProjectOngoing{"Is project ongoing?"}
-    getProject -.->|"Not found"| errProjectNotFound(["Error: Project not found"])
-    isProjectOngoing -.->|"No"| errProjectNotOngoing(["Error: Project is not ongoing"])
-    isProjectOngoing -.->|"Yes"| getProjectTasks["Get project tasks or song list"]
-    getProjectTasks -.->|"None"| errNoProjectTasks(["Error: No project tasks found"])
-    getProjectTasks -.->|"Found"| isTaskCompleted{"Is project task completed?"}
-    isTaskCompleted -.->|"Yes"| errTaskCompleted(["Error: Project task is already completed"])
-    isTaskCompleted -.->|"No"| getUser["Get user"]
+    createStoryboard --> getProject
+    isTaskCompleted -.->|"No"| getUser
 
-    %% ---------- User checks ----------
-    getUser --> hasUserResigned{"Has user resigned?"}
-    hasUserResigned -.->|"Yes"| errUserResigned(["Error: User has resigned"])
-    hasUserResigned -.->|"No"| checkUserRole{"What is the user role?"}
-    checkUserRole -.->|"Staff"| isUserAssigned{"Is user assigned to the task?"}
-    checkUserRole -.->|"Overrider"| getAdminSettings["Get admin settings"]
-    isUserAssigned -.->|"No"| errUserNotAssigned(["Error: User is not assigned to the task"])
-    isUserAssigned -.->|"Yes"| getAdminSettings
-
-    %% ---------- Settings & spend limit ----------
-    getAdminSettings --> hasProjectSetting{"Does project have a spend limit setting?"}
-    hasProjectSetting -.->|"Yes"| isSpendLimitReached{"Is project spend limit reached?"}
-    hasProjectSetting -.->|"No"| getDefaultSpendLimit["Get default spend limit by project class"]
-    getAdminSettings --> getPromptGuardrail["Get prompt guardrail"]
-    getDefaultSpendLimit --> isSpendLimitReached
-    isSpendLimitReached -.->|"Yes"| errSpendLimitReached(["Error: Project spend limit reached"])
-    isSpendLimitReached -.->|"No"| getDefaultTextModel["Get default assistant or enhancer model"]
-
-    %% ---------- Model, API key & payload ----------
-    getDefaultTextModel -.->|"None"| errNoDefaultModel(["Error: No default model found"])
-    getDefaultTextModel -.->|"Found"| hasUserApiKey{"Does user have an API key?"}
-    hasUserApiKey -.->|"No"| errNoApiKey(["Error: No API key found"])
-    hasUserApiKey -.->|"Yes"| validatePayload["Validate storyboard payload"]
-    validatePayload --> getPromptGuardrail
-
-    %% ---------- Prompt guardrail ----------
-    getPromptGuardrail -.->|"No guardrail"| isWithinCharLimit{"Is story within character limit?"}
-    getPromptGuardrail -.->|"Has guardrail"| isPromptRelevant{"Is prompt relevant to storyboards?"}
-    isPromptRelevant -.->|"Yes"| isWithinCharLimit
-    isPromptRelevant -.->|"No"| errIrrelevantPrompt(["Error: Prompt is irrelevant to creating storyboards"])
-    isWithinCharLimit -.->|"No"| errCharLimitExceeded(["Error: Storyboard character limit exceeded"])
-    isWithinCharLimit -.->|"Yes"| getAvailableElements["Get available elements"]
-
-    %% ---------- Element resolution (OpenRouter) ----------
-    getAvailableElements --> callOpenRouter["Send story and available elements to OpenRouter"]
-    callOpenRouter --> createStoryboardProcess["Create storyboard process"]
-
-    %% ---------- Persist storyboard & elements ----------
-    createStoryboardProcess --> createStoryboardRecords["Create storyboard records"]
-    createStoryboardRecords --> attachStoryboardToGenerations["Attach storyboard to generations"]
-    attachStoryboardToGenerations --> readStoryElements["Read story elements from LLM response"]
-    readStoryElements --> hasStoryElements{"Does the story contain any elements?"}
-    hasStoryElements -.->|"No"| finish
-    hasStoryElements -.->|"Yes"| hasExistingElement{"For each element: does it match an available element?"}
-    hasExistingElement -.->|"Yes"| setElementReference["Set reference to existing element"]
-    hasExistingElement -.->|"No"| createPlaceholderElement["Create placeholder element ('Need to generate first')"]
-    setElementReference --> attachElementsToStoryboard["Attach elements to storyboard"]
-    createPlaceholderElement --> attachElementsToStoryboard
-    attachElementsToStoryboard --> finish
+    %% ---------- Re-breakdown storyboard (on an already created storyboard) ----------
+    storyboardMenu --> rebreakdownStoryboard["POST /storyboards/{story_uid}/rebreakdown"]
+    rebreakdownStoryboard --> CheckStoryboardExists
+    CheckStoryboardExists -.->|"Not found"| errStoryboardNotFound
+    CheckAlreadyGeneratedMotionOrKeyframes -.->|"No"| getUser
 
     %% ---------- Get list of storyboards ----------
     storyboardMenu --> listStoryboards["GET /storyboards/{task_uid}"]
