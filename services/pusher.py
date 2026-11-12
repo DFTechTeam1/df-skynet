@@ -47,7 +47,7 @@ def broadcast_generation_status(
 ) -> None:
     try:
         get_pusher().trigger(
-            f"private-user-generation-project-{project_uid}-task-{task_uid}",
+            f"user-generation-project-{project_uid}-task-{task_uid}",
             "generation-status",
             {"s": status, "e": error, "gid": gid, "u": user_id},
         )

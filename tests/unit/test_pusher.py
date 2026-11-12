@@ -1,6 +1,6 @@
 import services.pusher as pusher
 
-CHANNEL = "private-user-generation-project-proj-uid-task-task-uid"
+CHANNEL = "user-generation-project-proj-uid-task-task-uid"
 
 
 def _stub(monkeypatch):
