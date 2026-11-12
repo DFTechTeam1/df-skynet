@@ -86,7 +86,7 @@ class GenerationReference(IconKind, GeneratedUrl, HumanizeFilesize, HumanizeTime
     """A file a generation was based on: another generated result, or an uploaded file."""
 
     type: Literal["generated", "uploaded"] = "generated"
-    id: Optional[int] = None  # df_engine_generation_results.id, or df_engine_upload_files.id when type == "uploaded"
+    id: Optional[int] = None
     file_uid: Optional[str] = None
     name: Optional[str] = None
     version: Optional[int] = None
