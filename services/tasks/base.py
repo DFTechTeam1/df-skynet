@@ -13,7 +13,7 @@ from log import logging
 from services.celery_app import celery_app
 from services.frame_reference_color import cleanup_generation
 from services.mysql import get_sync_db
-from services.mysql.model import DfEngineGenerations, DfEngineQueues, ProjectSongLists, ProjectTasks, Projects, Users
+from services.mysql.model import DfEngineGenerations, DfEngineQueues, ProjectSongLists, ProjectTasks, Projects
 from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.mysql.model.df_engine_queues import QueueEventTypes
 from services.pusher import broadcast_generation_status
@@ -111,8 +111,8 @@ def log_queue(
         logging.exception(f"failed to write df_engine_queues event={event_type}")
 
 
-def _generation_broadcast_context(generation_id: int, user_id: int) -> Optional[tuple[str, str, str, str]]:
-    """Returns (gid, project_uid, task_or_song_uid, user_uid) for the pusher channel, or None if any is missing
+def _generation_broadcast_context(generation_id: int, user_id: int) -> Optional[tuple[str, str, str, int]]:
+    """Returns (gid, project_uid, task_or_song_uid, user_id) for the pusher channel, or None if any is missing
     (including an orphan whose task/song was deleted, which has nothing to broadcast to)."""
     try:
         with get_sync_db() as db:
@@ -126,10 +126,7 @@ def _generation_broadcast_context(generation_id: int, user_id: int) -> Optional[
             )
             if row is None or row[1] is None or (row[2] or row[3]) is None:
                 return None
-            user_row = db.query(Users.uid).filter(Users.id == user_id).first()
-            if user_row is None:
-                return None
-        return str(row[0]), str(row[1]), str(row[2] or row[3]), str(user_row[0])
+        return str(row[0]), str(row[1]), str(row[2] or row[3]), user_id
     except Exception:
         logging.exception(f"failed to resolve generation broadcast context generation_id={generation_id}")
         return None
@@ -247,9 +244,9 @@ class GenerationTask(celery_app.Task):
         user_id = args[1] if len(args) > 1 else kwargs["user_id"]
         context = _generation_broadcast_context(generation_id, user_id)
         if context:
-            gid, project_uid, task_uid, user_uid = context
+            gid, project_uid, task_uid, user_id = context
             broadcast_generation_status(
-                project_uid, task_uid, user_uid, gid, STAGE_STATUSES.get(self.name, "processing")
+                project_uid, task_uid, user_id, gid, STAGE_STATUSES.get(self.name, "processing")
             )
 
     def on_retry(self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: ExceptionInfo) -> None:
@@ -271,8 +268,8 @@ class GenerationTask(celery_app.Task):
         user_id = args[1] if len(args) > 1 else kwargs["user_id"]
         context = _generation_broadcast_context(generation_id, user_id)
         if context:
-            gid, project_uid, task_uid, user_uid = context
-            broadcast_generation_status(project_uid, task_uid, user_uid, gid, "retry", error=str(exc))
+            gid, project_uid, task_uid, user_id = context
+            broadcast_generation_status(project_uid, task_uid, user_id, gid, "retry", error=str(exc))
 
     def on_success(self, retval: Any, task_id: str, args: tuple, kwargs: dict) -> None:
         _release_reupload_lock(args[0] if args else kwargs["generation_id"])
@@ -319,5 +316,5 @@ class GenerationTask(celery_app.Task):
         user_id = args[1] if len(args) > 1 else kwargs["user_id"]
         context = _generation_broadcast_context(generation_id, user_id)
         if context:
-            gid, project_uid, task_uid, user_uid = context
-            broadcast_generation_status(project_uid, task_uid, user_uid, gid, "failed", error=str(exc))
+            gid, project_uid, task_uid, user_id = context
+            broadcast_generation_status(project_uid, task_uid, user_id, gid, "failed", error=str(exc))

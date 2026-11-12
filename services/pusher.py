@@ -35,14 +35,23 @@ def _remain() -> int | float:
         return 0
 
 
+def broadcast_token() -> None:
+    try:
+        get_pusher().trigger("remaining-token", "token-update", {"remain": _remain()})
+    except Exception:
+        logging.exception("pusher token broadcast failed")
+
+
 def broadcast_generation_status(
-    project_uid: str, task_uid: str, user_uid: str, gid: str, status: str, error: Optional[str] = None
+    project_uid: str, task_uid: str, user_id: int, gid: str, status: str, error: Optional[str] = None
 ) -> None:
     try:
         get_pusher().trigger(
-            f"private-user-generation-project-{project_uid}-task-{task_uid}-user-{user_uid}",
+            f"private-user-generation-project-{project_uid}-task-{task_uid}",
             "generation-status",
-            {"s": status, "e": error, "gid": gid, "remain": _remain()},
+            {"s": status, "e": error, "gid": gid, "u": user_id},
         )
     except Exception:
-        logging.exception(f"pusher broadcast failed user_uid={user_uid} gid={gid} status={status}")
+        logging.exception(f"pusher broadcast failed user_id={user_id} gid={gid} status={status}")
+    if status in ("success", "failed"):
+        broadcast_token()

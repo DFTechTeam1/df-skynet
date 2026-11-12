@@ -36,7 +36,7 @@ class PusherController(CoreDependencies):
         user_row = await query(
             db=self.db,
             table=Users,
-            options=(load_only(Users.uid),),
+            options=(load_only(Users.uid),),  # type: ignore
             filters=(Users.id == int(self.user["user_id"]),),
             fetch_one=True,
         )
