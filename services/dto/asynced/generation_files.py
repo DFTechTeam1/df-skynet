@@ -2,7 +2,7 @@ from uuid import UUID
 from typing import Any, Optional
 from services.redis import get_json, set_json
 from sqlalchemy import or_, and_, func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 from services.mysql.model import (
     DfEngineGenerationFavourites,
     DfEngineGenerations,
@@ -38,6 +38,11 @@ from services.dto.format_response import (
 )
 
 
+def _enhancer() -> Any:
+    """Loader option: a generation's `enhancer`, reduced to its `prompt`."""
+    return selectinload(DfEngineGenerations.enhancer).load_only(DfEngineGenerations.prompt)  # type: ignore
+
+
 def _viewer_favourites(viewer_id: int) -> Any:
     """Loader option: a result's `favourites`, narrowed to the viewer's own row (0 or 1)."""
     return DfEngineGenerationResults.favourites.and_(DfEngineGenerationFavourites.user_id == viewer_id)  # type: ignore
@@ -71,6 +76,7 @@ def _build_variant(
         model=(generation.get("model_option") or {}).get("name"),
         prompt=generation.get("prompt"),
         full_prompt=generation.get("full_prompt"),
+        before_enhance=(generation.get("enhancer") or {}).get("prompt"),
         parameter=generation.get("parameter"),
         creator=format_user_employees(variant.get("created_by_user")),
         updater=format_user_employees(variant.get("updated_by_user")),
@@ -121,11 +127,12 @@ async def overlay_favourites(
 
 
 async def overlay_prompts(ctx: ConnectionContext, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Fill `full_prompt` and `parameter` on search hits; they are kept out of the search index because
+    """Fill `full_prompt`, `parameter` and `before_enhance` on search hits; they are kept out of the search index because
     they can exceed its record size limit (see `HEAVY_FIELDS` in services/search/docs.py)."""
     uids = {record["file_uid"] for record in records if record.get("file_uid")}
     if not uids:
         return records
+    enhancer = aliased(DfEngineGenerations)
     rows = await query(
         ctx.db,
         DfEngineGenerationResults,
@@ -133,14 +140,18 @@ async def overlay_prompts(ctx: ConnectionContext, records: list[dict[str, Any]])
             DfEngineGenerationResults.uid,
             DfEngineGenerations.full_prompt,
             DfEngineGenerations.parameter,
+            enhancer.prompt,
         ),
-        joins=((DfEngineGenerations, DfEngineGenerations.id == DfEngineGenerationResults.generation_id),),
+        joins=(
+            (DfEngineGenerations, DfEngineGenerations.id == DfEngineGenerationResults.generation_id),
+            (enhancer, enhancer.id == DfEngineGenerations.enhance_id, True),
+        ),
         filters=(DfEngineGenerationResults.uid.in_(uids),),  # type: ignore
     )
     by_uid = {row[0]: row[1:] for row in rows}
     for record in records:
         if found := by_uid.get(record.get("file_uid")):
-            record["full_prompt"], record["parameter"] = found
+            record["full_prompt"], record["parameter"], record["before_enhance"] = found
     return records
 
 
@@ -215,12 +226,19 @@ async def get_generation_main_refactored(
             DfEngineGenerations.parameter,  # type: ignore
             DfEngineGenerations.task_id,  # type: ignore
             DfEngineGenerations.song_id,  # type: ignore
+            DfEngineGenerations.enhance_id,  # type: ignore
         ),
         selectinload(DfEngineGenerations.generation_references)  # type: ignore
         .selectinload(DfEngineGenerationReferences.result)  # type: ignore
         .selectinload(DfEngineGenerationResults.generation)  # type: ignore
         .selectinload(DfEngineGenerations.model_option)  # type: ignore
         .load_only(DfEngineModelOptions.name),  # type: ignore
+        selectinload(DfEngineGenerations.generation_references)  # type: ignore
+        .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+        .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+        .selectinload(DfEngineGenerations.enhancer)  # type: ignore
+        .load_only(DfEngineGenerations.prompt),  # type: ignore
+        _enhancer(),
         selectinload(DfEngineGenerations.generation_references)  # type: ignore
         .selectinload(DfEngineGenerationReferences.result)  # type: ignore
         .selectinload(DfEngineGenerationResults.generation)  # type: ignore
@@ -305,7 +323,11 @@ async def get_generation_main_refactored(
                     DfEngineGenerations.cost,  # type: ignore
                     DfEngineGenerations.task_id,  # type: ignore
                     DfEngineGenerations.song_id,  # type: ignore
+                    DfEngineGenerations.enhance_id,  # type: ignore
                 ),
+                selectinload(DfEngineGenerationResults.generation)  # type: ignore
+                .selectinload(DfEngineGenerations.enhancer)  # type: ignore
+                .load_only(DfEngineGenerations.prompt),  # type: ignore
                 selectinload(DfEngineGenerationResults.generation)  # type: ignore
                 .selectinload(DfEngineGenerations.model_option)  # type: ignore
                 .load_only(DfEngineModelOptions.name),  # type: ignore
@@ -351,6 +373,7 @@ async def get_generation_main_refactored(
                     model=(source_generation.get("model_option") or {}).get("name"),
                     prompt=source_generation.get("prompt"),
                     full_prompt=source_generation.get("full_prompt"),
+                    before_enhance=(source_generation.get("enhancer") or {}).get("prompt"),
                     parameter=source_generation.get("parameter"),
                     creator=format_user_employees(source.get("created_by_user")),
                     updater=format_user_employees(source.get("updated_by_user")),
@@ -404,6 +427,7 @@ async def get_generation_main_refactored(
                     model=(record["model_option"] or {}).get("name"),
                     prompt=record["prompt"],
                     full_prompt=record["full_prompt"],
+                    before_enhance=(record.get("enhancer") or {}).get("prompt"),
                     parameter=record["parameter"],
                     references=references,
                     variants=variants,
@@ -435,6 +459,7 @@ def _with_generation(result: dict[str, Any], record: dict[str, Any]) -> dict[str
             "status": record.get("status"),
             "prompt": record.get("prompt"),
             "full_prompt": record.get("full_prompt"),
+            "enhancer": record.get("enhancer"),
             "parameter": record.get("parameter"),
             "cost": record.get("cost"),
             "model_option": record.get("model_option"),
@@ -550,6 +575,7 @@ async def get_generation_main_files(
                 DfEngineGenerations.results.and_(DfEngineGenerationResults.is_main.is_(True))  # type: ignore
             ).selectinload(_viewer_favourites(user_id)),
             selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+            _enhancer(),
             selectinload(DfEngineGenerations.created_by_user)  # type: ignore
             .load_only(Users.image)  # type: ignore
             .selectinload(Users.employees)  # type: ignore
@@ -605,6 +631,7 @@ def _failed_upload_variant(record: dict[str, Any]) -> dict[str, Any]:
         model=(record["model_option"] or {}).get("name"),
         prompt=record["prompt"],
         full_prompt=record["full_prompt"],
+        before_enhance=(record.get("enhancer") or {}).get("prompt"),
         parameter=record["parameter"],
         creator=format_user_employees(record.get("created_by_user")),
     ).model_dump(mode="json")
@@ -653,6 +680,7 @@ async def get_failed_upload_generations(
         joins=((DfEngineGenerationUploads, DfEngineGenerationUploads.generation_id == DfEngineGenerations.id),),
         options=(
             selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+            _enhancer(),
             selectinload(DfEngineGenerations.task).load_only(ProjectTasks.uid, ProjectTasks.name),  # type: ignore
             selectinload(DfEngineGenerations.song).load_only(ProjectSongLists.uid, ProjectSongLists.name),  # type: ignore
             selectinload(DfEngineGenerations.created_by_user)  # type: ignore
@@ -730,6 +758,7 @@ async def get_archieved_files(
             selectinload(DfEngineGenerations.task),
             selectinload(DfEngineGenerations.song),
             selectinload(DfEngineGenerations.model_option),
+            _enhancer(),
         ),
         filters=(
             *filters,
@@ -764,6 +793,7 @@ async def get_archieved_files(
                 model=(record.get("model_option") or {}).get("name"),
                 prompt=record["prompt"],
                 full_prompt=record["full_prompt"],
+                before_enhance=(record.get("enhancer") or {}).get("prompt"),
                 parameter=record["parameter"],
                 action=GeneratedFileAction.action(True, False, result),  # only the viewer's own files are listed
                 creator=format_user_employees(result.get("created_by_user")),
@@ -861,6 +891,7 @@ async def get_generation_files(
                 "model",
                 "prompt",
                 "full_prompt",
+                "before_enhance",
                 "parameter",
             )
             for record in serialize(generations)
@@ -1194,14 +1225,24 @@ async def get_generation_main_file_detail(
                 DfEngineGenerations.full_prompt,  # type: ignore
                 DfEngineGenerations.parameter,  # type: ignore
                 DfEngineGenerations.cost,  # type: ignore
+                DfEngineGenerations.enhance_id,  # type: ignore
             )
             .selectinload(DfEngineGenerations.model_option)  # type: ignore
             .load_only(DfEngineModelOptions.name),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.enhancer)  # type: ignore
+            .load_only(DfEngineGenerations.prompt),  # type: ignore
             selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .selectinload(DfEngineGenerations.generation_references)  # type: ignore
             .selectinload(DfEngineGenerationReferences.result)  # type: ignore
             .selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .selectinload(DfEngineGenerations.model_option),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.generation_references)  # type: ignore
+            .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+            .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.enhancer)  # type: ignore
+            .load_only(DfEngineGenerations.prompt),  # type: ignore
             selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .selectinload(DfEngineGenerations.generation_references)  # type: ignore
             .selectinload(DfEngineGenerationReferences.result)  # type: ignore
@@ -1236,6 +1277,7 @@ async def get_generation_main_file_detail(
                 DfEngineGenerations.full_prompt,  # type: ignore
                 DfEngineGenerations.parameter,  # type: ignore
                 DfEngineGenerations.cost,  # type: ignore
+                DfEngineGenerations.enhance_id,  # type: ignore
             ),
         ),
         fetch_one=True,
@@ -1298,14 +1340,24 @@ async def get_generation_main_variants(
                 DfEngineGenerations.full_prompt,  # type: ignore
                 DfEngineGenerations.parameter,  # type: ignore
                 DfEngineGenerations.cost,  # type: ignore
+                DfEngineGenerations.enhance_id,  # type: ignore
             )
             .selectinload(DfEngineGenerations.model_option)  # type: ignore
             .load_only(DfEngineModelOptions.name),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.enhancer)  # type: ignore
+            .load_only(DfEngineGenerations.prompt),  # type: ignore
             selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .selectinload(DfEngineGenerations.generation_references)  # type: ignore
             .selectinload(DfEngineGenerationReferences.result)  # type: ignore
             .selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .selectinload(DfEngineGenerations.model_option),  # type: ignore
+            selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.generation_references)  # type: ignore
+            .selectinload(DfEngineGenerationReferences.result)  # type: ignore
+            .selectinload(DfEngineGenerationResults.generation)  # type: ignore
+            .selectinload(DfEngineGenerations.enhancer)  # type: ignore
+            .load_only(DfEngineGenerations.prompt),  # type: ignore
             selectinload(DfEngineGenerationResults.generation)  # type: ignore
             .selectinload(DfEngineGenerations.generation_references)  # type: ignore
             .selectinload(DfEngineGenerationReferences.result)  # type: ignore

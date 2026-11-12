@@ -13,7 +13,7 @@ UPLOADED_FILES = "uploaded_files"
 SEARCHABLE_FIELDS = ["name", "path", "task"]
 FILTER_FIELDS = ["project_uid", "task_uid", "song_uid", "kind"]
 GENERATION_KINDS = (GenerationKinds.image, GenerationKinds.image_edit, GenerationKinds.video)
-HEAVY_FIELDS = {"full_prompt", "parameter"}
+HEAVY_FIELDS = {"full_prompt", "before_enhance", "parameter"}
 PROMPT_INDEX_CHARS = 2000
 _USERS = (
     selectinload(DfEngineGenerationResults.created_by_user)
