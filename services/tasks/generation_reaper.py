@@ -51,11 +51,9 @@ def generation_reaper() -> dict[str, Any]:
         )
         context = _generation_broadcast_context(generation_id, user_id) if user_id else None
         if context:
-            gid, project_uid, task_uid, user_uid = context
+            gid, project_uid, task_uid, user_id = context
             try:
-                broadcast_generation_status(
-                    project_uid, task_uid, user_uid, gid, "failed", error="generation timed out"
-                )
+                broadcast_generation_status(project_uid, task_uid, user_id, gid, "failed", error="generation timed out")
             except Exception:
                 logging.exception(f"reaper pusher failed generation_id={generation_id}")
 

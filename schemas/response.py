@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field
 from middlewares.lang import current_lang, resolve_message
@@ -65,6 +65,13 @@ class PromptValidationResponse(BaseModel):
     )
 
 
+class EnhancerReference(BaseModel):
+    uid: UUID
+    source: Literal["upload", "generated"]
+    name: str
+
+
 class PromptEnhancerResult(BaseModel):
     prompt: str
     enhance_uid: UUID
+    references: list[EnhancerReference] = Field(default_factory=list)

@@ -27,6 +27,7 @@ class FilesMessage:
             "file_archive_not_permitted": "Main versions can't be archived. Set another version as main first.",
             "file_edit_not_permitted": "You can only edit images you generated or uploaded yourself.",
             "file_edit_image_only": "Only image files can be edited.",
+            "reference_image_only": "References must be image files.",
             "file_edit_task_required": "This upload isn't linked to a task or song, so it can't be edited.",
             "invalid_file_name": "File name can only contain letters, numbers, spaces and these symbols: _ - . # ( ) @ &. For example: Standby v.1 (final) & edit.",
             "invalid_folder_name": "Folder name can only contain letters, numbers, spaces and these symbols: _ - . # ( ) @ &. For example: Ms. Shinta (2026) & Co.",

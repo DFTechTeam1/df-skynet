@@ -1,4 +1,5 @@
 import asyncio
+import re
 import traceback
 from datetime import timedelta
 from decimal import Decimal
@@ -313,7 +314,64 @@ class GenerationsController(CoreDependencies):
                 "prompt_enhancement",
                 record=validation_record(enhancer_model["id"], api_key["id"], project["id"], task),
             )
-            enhanced = await enhance_prompt(merged_prompt, enhancer_model["model_id"], api_key["key"], user_id)
+
+            """Resolve tagged references by the source the FE sent; order follows the request."""
+            upload_uids = [str(r.uid) for r in schema.references if r.source == "upload"]
+            generated_uids = [str(r.uid) for r in schema.references if r.source == "generated"]
+            uploaded_files = await get_uploaded_files(ctx, upload_uids) if upload_uids else []
+            generated_files = (
+                await get_generation_files(ctx, user_id=None if can_override else user_id, file_uids=generated_uids)
+                if generated_uids
+                else []
+            )
+            found = {
+                **{str(f["file_uid"]): ("upload", f) for f in uploaded_files},
+                **{
+                    str(f["file_uid"]): ("generated", f)
+                    for f in generated_files
+                    if str(f["file_uid"]) in generated_uids
+                },
+            }
+            reference_records = []
+            for idx, ref in enumerate(schema.references):
+                hit = found.get(str(ref.uid))
+                if hit is None or hit[0] != ref.source:
+                    raise DataNotFoundError(message="file_not_found", error={f"references.{idx}": ["file_not_found"]})
+                if hit[0] == "generated" and hit[1].get("kind") not in (
+                    GenerationKinds.image,
+                    GenerationKinds.image_edit,
+                ):
+                    raise DataValidationError(
+                        message="reference_image_only", error={f"references.{idx}": ["reference_image_only"]}
+                    )
+                reference_records.append(
+                    {
+                        "uid": ref.uid,
+                        "source": ref.source,
+                        "name": hit[1]["name"],
+                        "path": hit[1]["path"],
+                        "id": hit[1]["id"],
+                    }
+                )
+
+            image_urls = await validate_image_availability([r["path"] for r in reference_records])
+            enhancer_input = merged_prompt
+            if reference_records:
+                enhancer_input += "\nReferences (in image order): " + ", ".join(
+                    str(r["uid"]) for r in reference_records
+                )
+            if schema.params:
+                enhancer_input += "\nAdditional parameters to take into account: " + str(schema.params)
+
+            enhanced = await enhance_prompt(
+                enhancer_input, enhancer_model["model_id"], api_key["key"], user_id, image_urls
+            )
+            """Normalize every user-passed uid to the template format `<refer to uid>`."""
+            for r in reference_records:
+                uid = str(r["uid"])
+                enhanced["text"] = re.sub(rf"(?<!<refer to ){re.escape(uid)}", f"<refer to {uid}>", enhanced["text"])
+                if f"<refer to {uid}>" not in enhanced["text"]:
+                    enhanced["text"] += f" <refer to {uid}>"
 
             generation = DfEngineGenerations(
                 kind=GenerationKinds.enhancer,
@@ -341,7 +399,20 @@ class GenerationsController(CoreDependencies):
             except IntegrityError:
                 raise DataNotFoundError(message="project_task_not_found")
 
-            response.data = PromptEnhancerResult(prompt=enhanced["text"], enhance_uid=generation.uid)  # type: ignore
+            for record in reference_records:
+                link = (
+                    DfEngineUploadFileReferences(generation_id=generation.id, file_id=record["id"])
+                    if record["source"] == "upload"
+                    else DfEngineGenerationReferences(generation_id=generation.id, result_id=record["id"])
+                )
+                self.db.add(link)
+            await self.db.flush()
+
+            response.data = PromptEnhancerResult(
+                prompt=enhanced["text"],
+                enhance_uid=generation.uid,  # type: ignore
+                references=[{"uid": r["uid"], "source": r["source"], "name": r["name"]} for r in reference_records],  # type: ignore
+            )
             await set_json(
                 ctx.redis,
                 cache_key.enhancer_detail(str(generation.uid)),
@@ -480,7 +551,7 @@ class GenerationsController(CoreDependencies):
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
-            merged_prompt = "\n".join([resolved_prompt, *injected_prompts])
+            merged_prompt = resolved_prompt if schema.enhance_uid else "\n".join([resolved_prompt, *injected_prompts])
             if schema.x_min is not None:
                 merged_prompt = "\n".join(
                     [
@@ -529,7 +600,7 @@ class GenerationsController(CoreDependencies):
 
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
-            all_references, _ = await asyncio.gather(
+            all_references, _, final = await asyncio.gather(
                 validate_image_availability(user_image_references),
                 validate_prompt(
                     ctx,
@@ -540,7 +611,11 @@ class GenerationsController(CoreDependencies):
                     "image_generation",
                     record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
                 ),
+                asyncio.sleep(0, {"text": merged_prompt})
+                if schema.enhance_uid
+                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
+            merged_prompt = final["text"]
 
             """Insert generation record"""
             generation = DfEngineGenerations(
@@ -716,7 +791,7 @@ class GenerationsController(CoreDependencies):
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
-            merged_prompt = "\n".join([resolved_prompt, *injected_prompts])
+            merged_prompt = resolved_prompt if schema.enhance_uid else "\n".join([resolved_prompt, *injected_prompts])
 
             assistant_setting = admin_setting.get("assistant_model")
             enhancer_setting = admin_setting.get("enhancer_model")
@@ -756,7 +831,7 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
-            validated_image_references, _ = await asyncio.gather(
+            validated_image_references, _, final = await asyncio.gather(
                 validate_image_availability(user_image_references),
                 validate_prompt(
                     ctx,
@@ -767,7 +842,11 @@ class GenerationsController(CoreDependencies):
                     "image_generation" if schema.type == "image" else "video_generation",
                     record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
                 ),
+                asyncio.sleep(0, {"text": merged_prompt})
+                if schema.enhance_uid
+                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
+            merged_prompt = final["text"]
 
             """Insert generation record"""
             generation = DfEngineGenerations(

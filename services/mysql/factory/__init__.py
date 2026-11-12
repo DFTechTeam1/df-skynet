@@ -21,6 +21,7 @@ from services.mysql.factory.df_engine_motion_details import DfEngineMotionDetail
 from services.mysql.factory.df_engine_external_api_calls import DfEngineExternalApiCallsFactory
 from services.mysql.factory.df_engine_preferences import DfEnginePreferencesFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
+from services.mysql.factory.df_engine_prompt_template_references import DfEnginePromptTemplateReferencesFactory
 from services.mysql.factory.df_engine_queues import DfEngineQueuesFactory
 from services.mysql.factory.df_engine_scene_shots import DfEngineSceneShotsFactory
 from services.mysql.factory.df_engine_setting_logs import DfEngineSettingLogsFactory
@@ -53,6 +54,7 @@ __all__ = [
     "DfEngineExternalApiCallsFactory",
     "DfEnginePreferencesFactory",
     "DfEnginePromptTemplatesFactory",
+    "DfEnginePromptTemplateReferencesFactory",
     "DfEngineQueuesFactory",
     "DfEngineSceneShotsFactory",
     "DfEngineSettingLogsFactory",

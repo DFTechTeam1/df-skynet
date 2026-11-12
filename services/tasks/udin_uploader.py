@@ -22,7 +22,6 @@ from services.mysql.model import (
     DfEngineGenerationUploads,
     DfEngineGenerations,
     ProjectTasks,
-    Users,
 )
 from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
@@ -121,8 +120,6 @@ def udin_uploader(
         if task_id is not None:
             task_row = db.query(ProjectTasks.uid).filter_by(id=task_id).first()
             task_uid = str(task_row[0]) if task_row else None
-        user_row = db.query(Users.uid).filter_by(id=user_id).first()
-        user_uid = str(user_row[0]) if user_row else None
         images = [] if generation.kind == GenerationKinds.video else list(json.loads(generation.response).values())
         job = json.loads(generation.response) if generation.kind == GenerationKinds.video else None
         uploaded_versions = {result.version for result in existing_results}
@@ -343,8 +340,8 @@ def udin_uploader(
             for result_uid in result_uids:
                 search_upsert.delay("generation", result_uid)  # type: ignore
 
-            if task_uid is not None and user_uid is not None:
-                broadcast_generation_status(project_uid, task_uid, user_uid, generation_uid, "success")
+            if task_uid is not None:
+                broadcast_generation_status(project_uid, task_uid, user_id, generation_uid, "success")
             cleanup_generation(generation_id)  # video color frame no longer needed; cronjob is the backup
             return {"generation_id": generation_id, "status": "success", "result_ids": result_ids}
         except Exception:

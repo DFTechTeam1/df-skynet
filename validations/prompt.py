@@ -122,6 +122,67 @@ BACKGROUND     — plain solid neutral background, thin dividers between panels
 LABELS         — small text under each panel naming its view (FRONT / LEFT / RIGHT / BACK or the angle used)
 USAGE          — which scenes it appears in and its role
 LOCKS          — traits that stay identical in every view and every scene
+
+QUALITY REFERENCE (applies to EVERY output: IMAGE, VIDEO, STORYBOARD, ELEMENT, or any skeleton)
+The example below is a locked-camera video plate, but it sets the bar for all cases. Match its qualities in
+whatever schema is active (a skeleton's labels and layout always win; never copy the example's labels or content
+into an unrelated request):
+- Every block is concrete and specific: real positions (lower-left third, upper half), layers (foreground /
+  midground / background), numbers (47°, 3200K, 5600K, haze 25%), named colors and light sources.
+- Describe behavior and physics, not just looks: what moves, how fast, with what weight, and what stays still.
+- Motion and light changes are soft, gradual and bounded ("once or twice", "never all at once"); for stills,
+  apply the same care to light quality, depth and atmosphere.
+- Close with locks: the framing, setting, identity and key traits that must stay consistent throughout.
+- Positive-only wording, no tools or camera-rig names, English, no preamble.
+- Stay inside the user's stated world; enrich detail, never add a genre, era or style they did not ask for.
+
+EXAMPLE OUTPUT
+
+SCENE CONTEXT
+A quiet nighttime city view, lush vegetation in the foreground beside a small table lamp. Nobody in frame. A calm ambient plate: the camera never moves; only the plants, the city lights and the air breathe.
+
+LOCATION MAP
+Foreground: broad leaves and slender branches near the lens, softly backlit. Midground: a small table with a warm lamp, its shade catching the glow. Background: a dense skyline of mid-rise buildings, windows lit and unlit in scattered patches. Warm light from the lamp below, cool city glow above.
+
+FIRST FRAME / BLOCKING
+Locked framing: vegetation along the lower and side edges, the table lamp in the lower-left third, the skyline across the upper half, horizon level and centered.
+
+FORMAT MODE
+One continuous locked take, the camera does not cut on its own; motion is ambient and continuous.
+
+OPTICS
+47° neutral, deep focus, no camera cut, no drift.
+
+CAMERA
+The camera stays completely still on the same framing for the whole take; only the vegetation, the city lights and the air move.
+
+ACTION
+Leaves and thin branches sway gently, breathing with the breeze. Some building windows flicker faintly and settle — a few switch on, a few switch off in small scattered groups, never all at once. The table lamp dips slightly dimmer once or twice, then returns to its steady warm glow.
+
+PHYSICS
+Leaves carry real weight and inertia, layered branches parallaxing gently; the light shifts stay soft and gradual, never snapping.
+
+LIGHTING
+Warm lamp key from the lower left at 3200K grazing nearby leaves, cool city ambient fill from above at 5600K, night haze density 25%.
+
+COLOR GRADE
+Deep blue-teal night base, warm amber lamp glow on the foreground leaves and table, scattered warm and cool window points through the skyline.
+
+STYLE
+Photoreal, 8K, fine grain, smooth real-time motion, calm ambient mood.
+
+OUTPUT SETTINGS
+Real-time speed, single continuous locked take.
+
+POSITIVE LOCKS
+The camera stays locked on the same framing for the entire take. The skyline stays a realistic nighttime city, windows lit and unlit in scattered patches. The lamp dimming stays subtle and brief.
+"""
+
+REFERENCE_RULE = """
+REFERENCE IMAGES
+The message contains tags (uids) and the same number of images, attached in the order the tags are listed
+after "References (in image order)". Use the images to describe the tagged subjects accurately.
+Keep every tag verbatim in the output, placed directly after the noun it refers to. Never drop, rename or invent tags.
 """
 
 _SKELETON_RE = re.compile(
@@ -240,7 +301,9 @@ async def validate_prompt(
         )
 
 
-async def enhance_prompt(prompt: str, model_id: str, api_key: str, user_id: int) -> dict:
+async def enhance_prompt(
+    prompt: str, model_id: str, api_key: str, user_id: int, image_urls: list[str] | None = None
+) -> dict:
     """Returns OpenRouter's raw `/responses` body so the caller can persist
     status_code/usage alongside the generated text."""
     instructions = ENHANCER_SYSTEM_PROMPT
@@ -252,13 +315,26 @@ async def enhance_prompt(prompt: str, model_id: str, api_key: str, user_id: int)
             + "\n"
         )
 
+    model_input: Any = prompt
+    if image_urls:
+        instructions += REFERENCE_RULE
+        model_input = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    *({"type": "input_image", "image_url": url} for url in image_urls),
+                ],
+            }
+        ]
+
     caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"})
     try:
         response = await caller.openrouter(
             "POST",
             "/responses",
             user_id=user_id,
-            json={"model": model_id, "input": prompt, "instructions": instructions},
+            json={"model": model_id, "input": model_input, "instructions": instructions},
         )
     except Exception:
         logging.error(traceback.format_exc())
