@@ -3,6 +3,7 @@ class FilesMessage:
         self.message: dict[str, str] = {
             "upload_failed": "File upload failed.",
             "project_task_not_found": "We couldn't find that task.",
+            "project_song_not_found": "We couldn't find that song.",
             "project_task_not_ongoing": "This task must be ongoing to continue this action.",
             "project_task_already_completed": "This task has already been completed and can no longer be modified.",
             "employee_not_assigned_task": "This employee isn't assigned to this task.",

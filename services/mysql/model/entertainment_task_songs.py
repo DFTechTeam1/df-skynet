@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import DateTime, ForeignKey, Text
 from sqlalchemy.dialects.mysql import BIGINT, TINYINT
 
@@ -25,3 +25,6 @@ class EntertainmentTaskSongs(SQLModel, table=True):
     time_tracker: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+
+    project_song_list: Optional["ProjectSongLists"] = Relationship(back_populates="task_songs")  # type: ignore
+    employees: Optional["Employees"] = Relationship()  # type: ignore

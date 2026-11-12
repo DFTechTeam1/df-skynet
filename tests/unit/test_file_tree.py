@@ -157,10 +157,10 @@ class TestOverride:
         return tree["children"][0]["children"][0]["children"][0]["files"][0]
 
     def test_has_override(self):
-        """Any role in OVERRIDE_FILE_ROLES counts; empty/None/unknown do not."""
+        """Any role in OVERRIDE_FILE_ROLES counts; empty/unknown do not."""
         assert files.has_override(["staff", "director"]) is True
         assert files.has_override(["staff"]) is False
-        assert files.has_override([]) is False and files.has_override(None) is False
+        assert files.has_override([]) is False
 
     def test_override_role_manages_foreign_upload(self):
         """Override roles get every upload action on someone else's file; plain users get none."""

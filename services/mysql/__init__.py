@@ -135,6 +135,9 @@ def _build_stmt(
 def _fetch(result: Result[Any], columns: Optional[tuple[Any, ...]], fetch_one: bool) -> Any:
     scalar = not columns or len(columns) == 1
 
+    if not columns or all(isinstance(c, type) for c in columns):
+        result = result.unique()
+
     if fetch_one:
         return result.scalars().first() if scalar else result.first()
     return result.scalars().all() if scalar else result.all()

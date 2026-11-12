@@ -6,6 +6,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from log import logging
+from config.variables import OVERRIDE_FILE_ROLES
 from utils import get_project_root
 from apps.secret import JWT_PUBLIC_KEY, JWT_ISSUER, JWT_AUDIENCE
 from utils import local_time
@@ -59,6 +60,11 @@ CENTRALIZED_PUBLIC_KEY: Optional[str] = _load_centralized_public_key()
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def has_override(roles: list[str]) -> bool:
+    """True when any of `roles` may act on files they did not create (see `OVERRIDE_FILE_ROLES`)."""
+    return any(role in OVERRIDE_FILE_ROLES for role in roles)
+
+
 async def get_user(
     request: Request,
     credential: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
@@ -66,8 +72,8 @@ async def get_user(
     """
     Validate a centralized RS256 access token and return its identity claims.
 
-    Returns a dict shaped `{user_id, roles, permissions}` derived from the token
-    (`sub`, `roles`, `permissions`). No DB lookup — the signed token is trusted.
+    Returns a dict shaped `{user_id, roles, permissions, is_overrider}` derived from the token
+    (`sub`, `roles`, `permissions`; `is_overrider` is False unless a role is in `OVERRIDE_FILE_ROLES`). No DB lookup — the signed token is trusted.
 
     Raises:
         AuthenticationError: missing/invalid/expired token, or key not configured.
@@ -111,10 +117,12 @@ async def get_user(
             logging.warning(f"auth: valid token with no 'sub' claim on {route} from {client_ip}")
             raise AuthenticationError()
 
+        roles = claims.get("roles", [])
         user = {
             "user_id": user_id,
-            "roles": claims.get("roles", []),
+            "roles": roles,
             "permissions": claims.get("permissions", []),
+            "is_overrider": has_override(roles),
         }
         request.state.user = user
         logging.info(f"auth: user={user_id} authenticated on {route} from {client_ip}")

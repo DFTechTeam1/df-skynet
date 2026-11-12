@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.dialects.mysql import BIGINT, CHAR
 
@@ -19,3 +19,6 @@ class ProjectSongLists(SQLModel, table=True):
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     target_name: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     reason: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
+
+    project: Optional["Projects"] = Relationship(back_populates="project_song_lists")  # type: ignore
+    task_songs: list["EntertainmentTaskSongs"] = Relationship(back_populates="project_song_list")  # type: ignore
