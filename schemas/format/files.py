@@ -94,6 +94,7 @@ class GenerationReference(IconKind, GeneratedUrl, HumanizeFilesize, HumanizeTime
     model: Optional[str] = None
     prompt: Optional[str] = None
     full_prompt: Optional[str] = None
+    before_enhance: Optional[str] = None
     parameter: Optional[dict[str, Any]] = None
     creator: Optional[dict[str, Any]] = None
     updater: Optional[dict[str, Any]] = None
@@ -119,6 +120,7 @@ class GenerationVariant(IconKind, GeneratedUrl, HumanizeFilesize, HumanizeTimezo
     model: Optional[str] = None
     prompt: Optional[str] = None
     full_prompt: Optional[str] = None
+    before_enhance: Optional[str] = None  # prompt of df_engine_generations.enhancer, null when not enhanced
     parameter: Optional[dict[str, Any]] = None
     creator: Optional[dict[str, Any]] = None
     updater: Optional[dict[str, Any]] = None

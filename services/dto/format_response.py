@@ -93,6 +93,7 @@ class GenerationResultRecord(BaseModel):
     model: Optional[str] = None
     prompt: Optional[str] = None
     full_prompt: Optional[str] = None
+    before_enhance: Optional[str] = None
     parameter: Optional[dict[str, Any]] = None
     action: Optional[GenerationAction] = None
 
@@ -129,6 +130,7 @@ class GenerationResultRecord(BaseModel):
             model=(model_option or {}).get("name"),
             prompt=generation.get("prompt"),
             full_prompt=generation.get("full_prompt"),
+            before_enhance=(generation.get("enhancer") or {}).get("prompt"),
             parameter=generation.get("parameter"),
             action=GenerationAction.from_result(result, is_owner),
         )
@@ -155,6 +157,7 @@ class GenerationResultRecord(BaseModel):
             model=(model_option or {}).get("name"),
             prompt=generation.get("prompt"),
             full_prompt=generation.get("full_prompt"),
+            before_enhance=(generation.get("enhancer") or {}).get("prompt"),
             parameter=generation.get("parameter"),
             action=GenerationAction(
                 can_set_archieve=False,
@@ -181,6 +184,7 @@ class GenerationReferenceRecord(BaseModel):
     kind: Optional[str]
     prompt: Optional[str]
     full_prompt: Optional[str]
+    before_enhance: Optional[str] = None
     model: Optional[str]
     icon: Optional[str]
     color: Optional[str]
@@ -201,6 +205,7 @@ class GenerationReferenceRecord(BaseModel):
             kind=kind,
             prompt=generation.get("prompt"),
             full_prompt=generation.get("full_prompt"),
+            before_enhance=(generation.get("enhancer") or {}).get("prompt"),
             model=(generation.get("model_option") or {}).get("name"),
             icon=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("icon"),  # type: ignore
             color=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("color"),  # type: ignore
