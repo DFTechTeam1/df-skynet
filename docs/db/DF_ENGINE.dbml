@@ -128,20 +128,12 @@ Enum generation_kinds {
   image_edit
 }
 
-// Queue lifecycle event types. NOTE: 'revoked' intentionally omitted --
-// there is no cancel-generation feature, so no code path would ever
-// produce that event. Add it back only if that feature gets built.
 Enum queue_event_types {
     started
     retried
     succeeded
     failed
 }
-
-
-// ============================================================
-// CORE / EXTERNAL TABLES (unchanged)
-// ============================================================
 
 Table employees {
     id bigint [pk, increment]
@@ -164,11 +156,6 @@ Table project_tasks {
 Table project_song_lists {
     id bigint [pk, increment]
 }
-
-
-// ============================================================
-// SETTINGS / ACCESS CONTROL
-// ============================================================
 
 Table df_engine_storyboards {
     id bigint [pk, increment]
@@ -230,25 +217,6 @@ Table df_engine_storyboard_generations {
 
 
 
-Ref: df_engine_elements.id < df_engine_scenes.location_id
-Ref: df_engine_storyboards.id < df_engine_scenes.story_id
-Ref: df_engine_elements.id < df_engine_element_generations.element_id
-Ref: df_engine_storyboards.id < df_engine_storyboard_generations.story_id
-Ref: df_engine_generations.id < df_engine_storyboard_generations.generation_id
-Ref: df_engine_generations.id < df_engine_element_generations.generation_id
-Ref: projects.id < df_engine_storyboards.project_id
-Ref: projects.id < df_engine_elements.project_id
-Ref: project_tasks.id < df_engine_storyboards.task_id [delete: set null]
-Ref: project_tasks.id < df_engine_elements.task_id [delete: set null]
-Ref: project_song_lists.id < df_engine_storyboards.song_id [delete: set null]
-Ref: project_song_lists.id < df_engine_elements.song_id [delete: set null]
-Ref: users.id < df_engine_storyboards.created_by
-Ref: users.id < df_engine_storyboards.updated_by
-Ref: users.id < df_engine_scenes.created_by
-Ref: users.id < df_engine_scenes.updated_by
-Ref: users.id < df_engine_elements.created_by
-Ref: users.id < df_engine_elements.updated_by
-
 Table df_engine_project_settings {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
@@ -300,11 +268,6 @@ Table df_engine_setting_logs {
     user_agent varchar(255) [default: null]
     created_by bigint [default: null]
 }
-
-
-// ============================================================
-// API KEYS
-// ============================================================
 
 Table df_engine_api_keys {
     id bigint [pk, increment]
@@ -382,18 +345,12 @@ Table df_engine_api_key_rotation_issues {
     }
 }
 
-
-// ============================================================
-// MENUS / FEATURES / TEMPLATES
-// ============================================================
-
 Table df_engine_menus {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
     updated_at timestamp [default: null]
     uid varchar(36) [not null, unique]
     name varchar(255) [not null, unique]
-    // type varchar(255) [not null, note: "[storyboards, generations, assistants, elements]"]
     description text [default: null]
     is_active boolean [not null, default: true]
     created_by bigint [not null]
@@ -449,12 +406,6 @@ Table df_engine_prompt_template_references {
     reference_id bigint [default: null]
 }
 
-
-
-// ============================================================
-// MODELS
-// ============================================================
-
 Table df_engine_model_options {
     id bigint [pk, increment]
     uid varchar(36) [not null, unique]
@@ -493,11 +444,6 @@ Table df_engine_model_options {
     note: "DB-level CHECK ck_df_engine_model_options_is_main_requires_enabled: is_main = false OR is_enabled = true."
 }
 
-
-// ============================================================
-// UPLOADS
-// ============================================================
-
 Table df_engine_upload_files {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
@@ -508,6 +454,7 @@ Table df_engine_upload_files {
     path text [not null]
     md5 varchar(255) [default: null]
     size bigint [not null]
+    element_id bigint [default: null]
     project_id bigint [not null]
     task_id bigint [default: null]
     song_id bigint [default: null]
@@ -515,10 +462,6 @@ Table df_engine_upload_files {
     updated_by bigint [default: null]
 }
 
-
-// ============================================================
-// UNIFIED GENERATIONS
-// ============================================================
 
 Table df_engine_generations {
     id bigint [pk, increment]
@@ -559,10 +502,6 @@ Table df_engine_generations {
     note: "Allowed references depend on kind: images/videos/elements may reference uploaded, generated, or element images; kind=chat may reference any image/generated/element image owned by user."
 }
 
-// --- kind = image ---
-// enhance_id, x_min/x_max/y_min/y_max now live directly on df_engine_generations.
-
-// --- kind = video ---
 Table df_engine_video_generation_details {
     id bigint [pk, increment]
     generation_id bigint [not null]
@@ -632,12 +571,6 @@ Table df_engine_chat_assistant_image_references {
     path varchar(512) [not null, note: "Relative to the chat storage dir: <chat_uid>/<file>"]
 }
 
-
-
-// ============================================================
-// GENERATION -> UDIN UPLOAD TRACKING
-// ============================================================
-
 Table df_engine_generation_uploads {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
@@ -645,13 +578,6 @@ Table df_engine_generation_uploads {
     generation_id bigint [not null]
     upload_status upload_statuses [not null, default: "pending", note: "pending on creation; success once delivered to Udin; failed once sweep retries exhausted"]
     sweep_attempts integer [not null, default: 0]
-    // NEW: fixes the "orphaned file on Udin, no matching results row" gap.
-    // Set true when the Udin upload itself succeeded but the local commit
-    // (upload_status write or generation_results upsert) kept failing after
-    // its local retry budget. Deliberately separate from upload_status=
-    // 'failed', which means the upload never landed at all and IS safe to
-    // retry -- needs_reconciliation means it's NOT safe to blindly retry,
-    // since a naive retry would re-upload a duplicate file to Udin.
     needs_reconciliation boolean [not null, default: false, note: "True = file confirmed on Udin, local commit did not land. Do not auto-retry the upload; see df_engine_generation_reconciliation_issues for detail and resolve manually or via a dedicated reconciliation job."]
     reconciled_at timestamp [default: null, note: "Set once a human or reconciliation job confirms the results row now matches the uploaded file"]
 
@@ -662,11 +588,6 @@ Table df_engine_generation_uploads {
     }
 }
 
-// NEW: detail log for Udin upload reconciliation cases, mirroring the
-// existing df_engine_api_key_rotation_issues pattern (issue_type + detail
-// + resolved_at). needs_reconciliation above is the fast filterable flag;
-// this table is where the actual investigation trail lives, and supports
-// more than one issue per upload over time if reconciliation itself fails.
 Table df_engine_generation_reconciliation_issues {
     id bigint [pk, increment]
     created_at timestamp [not null, default: `now()`]
@@ -685,15 +606,6 @@ Table df_engine_generation_reconciliation_issues {
 }
 
 
-// ============================================================
-// QUEUE LIFECYCLE LOG
-// Append-only event log for Celery task lifecycle. Populated by the
-// custom GenerationTask base class handlers (started/retried/succeeded/
-// failed) — see application code, not signals, for succeeded/
-// retried/failed, since a caught business-logic failure doesn't
-// raise, so Celery's own signals would be misleading for those.
-// ============================================================
-
 Table df_engine_queues {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
@@ -709,11 +621,6 @@ Table df_engine_queues {
         (generation_id, created_at) [name: 'idx_queues_generation_created_at']
     }
 }
-
-
-// ============================================================
-// STORYBOARD STRUCTURE
-// ============================================================
 
 
 Table df_engine_scene_shots {
@@ -732,11 +639,6 @@ Table df_engine_scene_shots {
     }
 }
 
-
-// ============================================================
-// GENERATION OUTPUT / REFERENCES
-// ============================================================
-
 Table df_engine_upload_file_references {
     id bigint [pk, increment]
     created_at timestamp [default: `now()`]
@@ -746,8 +648,6 @@ Table df_engine_upload_file_references {
     indexes {
         generation_id [name: 'idx_upload_file_references_generation_id']
         file_id [name: 'idx_upload_file_references_file_id']
-        // NEW: one generation may only reference a given file once.
-        // App-level validation is added on top of this per your request.
         (generation_id, file_id) [unique, name: 'idx_upload_file_references_unique_pair']
     }
 
@@ -784,7 +684,6 @@ Table df_engine_generation_results {
     path text [not null]
     size bigint [not null]
     is_main bool [not null, default: true]
-    favourited_at timestamp [default: null, note: "Only creator can favourite its own generated files."]
     version int [not null, default: 1]
     created_by bigint [default: null]
     updated_by bigint [default: null]
@@ -797,12 +696,6 @@ Table df_engine_generation_results {
     note: "Constraint: per parent_id, only 1 row may have is_main = true. NOTE: MySQL cannot enforce this via a partial/filtered unique index (no native support) — must be enforced at the application layer or via a generated-column + unique-index workaround if DB-level guarantee is required."
 }
 
-
-// ============================================================
-// RELATIONSHIPS (ALL foreign keys declared here, none inline)
-// ============================================================
-
-// users
 Ref: users.id < df_engine_menus.created_by
 Ref: users.id < df_engine_menus.updated_by
 Ref: users.id < df_engine_features.created_by
@@ -822,8 +715,6 @@ Ref: users.id < df_engine_generation_results.updated_by
 Ref: users.id < df_engine_generations.created_by
 Ref: users.id < df_engine_generation_reconciliation_issues.resolved_by
 Ref: users.id < df_engine_model_options.deleted_by
-
-// projects / project_tasks
 Ref: projects.id < project_tasks.project_id
 Ref: projects.id < df_engine_project_settings.project_id
 Ref: projects.id < df_engine_upload_files.project_id
@@ -832,36 +723,22 @@ Ref: project_song_lists.id < df_engine_upload_files.song_id [delete: set null]
 Ref: projects.id < df_engine_generations.project_id
 Ref: project_tasks.id < df_engine_generations.task_id [delete: set null]
 Ref: project_song_lists.id < df_engine_generations.song_id [delete: set null]
-
-// menus / features
 Ref: df_engine_features.id < df_engine_feature_prompt_mappings.feature_id
 Ref: df_engine_features.id < df_engine_menu_feature_mappings.feature_id
 Ref: df_engine_features.id < df_engine_generations.feature_id
 Ref: df_engine_menus.id < df_engine_menu_feature_mappings.menu_id
 Ref: df_engine_menus.id < df_engine_generations.menu_id
 Ref: df_engine_prompt_templates.id < df_engine_feature_prompt_mappings.template_id
-
-// models
 Ref: df_engine_model_options.id < df_engine_generations.model_id
-
-// enhancer -> generations (self-reference; image kind uses generations.enhance_id directly)
 Ref: df_engine_generations.id < df_engine_generations.enhance_id
 Ref: df_engine_generations.id < df_engine_video_generation_details.enhancer_id
-
-// employees
 Ref: employees.id < df_engine_api_keys.employee_id
-
-// uploads
 Ref: df_engine_upload_files.id < df_engine_upload_file_references.file_id
 Ref: df_engine_generations.id < df_engine_upload_file_references.generation_id
-
-// generation results / references
 Ref: df_engine_generation_results.id < df_engine_generation_results.parent_id
 Ref: df_engine_generation_results.id < df_engine_generation_references.result_id
 Ref: df_engine_generations.id < df_engine_generation_references.generation_id
 Ref: df_engine_generations.id < df_engine_generation_results.generation_id
-
-// unified generations -> details (1:1 subtype tables)
 Ref: df_engine_chat_assistants.id < df_engine_generations.chat_id
 Ref: df_engine_chat_assistants.id < df_engine_chat_assistant_image_references.chat_id
 Ref: df_engine_generations.id < df_engine_chat_assistant_image_references.generation_id
@@ -869,18 +746,29 @@ Ref: df_engine_generations.id - df_engine_video_generation_details.generation_id
 Ref: df_engine_generations.id - df_engine_storyboard_details.generation_id
 Ref: df_engine_generations.id - df_engine_keyframe_details.generation_id
 Ref: df_engine_generations.id - df_engine_motion_details.generation_id
-
-// unified generations -> upload tracking (1:1, only for uploadable kinds)
 Ref: df_engine_generations.id - df_engine_generation_uploads.generation_id
-
-// upload tracking -> reconciliation issues
 Ref: df_engine_generation_uploads.id < df_engine_generation_reconciliation_issues.upload_id
 Ref: df_engine_generations.id < df_engine_generation_reconciliation_issues.generation_id
-
-// storyboard structure
-// Ref: df_engine_generations.id < df_engine_scenes.story_id
-// Ref: df_engine_scenes.id < df_engine_scene_shots.scene_id
 Ref: df_engine_scene_shots.id < df_engine_keyframe_details.shot_id
 Ref: df_engine_scene_shots.id < df_engine_motion_details.shot_id
 Ref: df_engine_prompt_templates.id < df_engine_prompt_template_references.main_template_id [delete: cascade]
 Ref: df_engine_prompt_templates.id < df_engine_prompt_template_references.reference_id [delete: cascade]
+Ref: df_engine_elements.id < df_engine_scenes.location_id
+Ref: df_engine_storyboards.id < df_engine_scenes.story_id
+Ref: df_engine_elements.id < df_engine_element_generations.element_id
+Ref: df_engine_storyboards.id < df_engine_storyboard_generations.story_id
+Ref: df_engine_generations.id < df_engine_storyboard_generations.generation_id
+Ref: df_engine_generations.id < df_engine_element_generations.generation_id
+Ref: projects.id < df_engine_storyboards.project_id
+Ref: projects.id < df_engine_elements.project_id
+Ref: project_tasks.id < df_engine_storyboards.task_id [delete: set null]
+Ref: project_tasks.id < df_engine_elements.task_id [delete: set null]
+Ref: project_song_lists.id < df_engine_storyboards.song_id [delete: set null]
+Ref: project_song_lists.id < df_engine_elements.song_id [delete: set null]
+Ref: users.id < df_engine_storyboards.created_by
+Ref: users.id < df_engine_storyboards.updated_by
+Ref: users.id < df_engine_scenes.created_by
+Ref: users.id < df_engine_scenes.updated_by
+Ref: users.id < df_engine_elements.created_by
+Ref: users.id < df_engine_elements.updated_by
+Ref: df_engine_elements.id < df_engine_upload_files.element_id
