@@ -1,8 +1,8 @@
 """create df_engine_elements
 
-Revision ID: f9a0b1c2d3e4
-Revises: e8f9a0b1c2d3
-Create Date: 2026-11-12 10:00:00.000000
+Revision ID: c2d3e4f5a6b7
+Revises: f9a0b1c2d3e4
+Create Date: 2026-11-13 10:01:00.000000
 
 """
 
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.mysql import BIGINT
 
 # revision identifiers, used by Alembic.
-revision: str = "f9a0b1c2d3e4"
-down_revision: Union[str, Sequence[str], None] = "e8f9a0b1c2d3"
+revision: str = "c2d3e4f5a6b7"
+down_revision: Union[str, Sequence[str], None] = "f9a0b1c2d3e4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
