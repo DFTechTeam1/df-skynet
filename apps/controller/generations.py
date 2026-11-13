@@ -613,7 +613,7 @@ class GenerationsController(CoreDependencies):
                 ),
                 asyncio.sleep(0, {"text": merged_prompt})
                 if schema.enhance_uid
-                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
+                else asyncio.sleep(0, {"text": merged_prompt}),
             )
             merged_prompt = final["text"]
 
@@ -844,7 +844,7 @@ class GenerationsController(CoreDependencies):
                 ),
                 asyncio.sleep(0, {"text": merged_prompt})
                 if schema.enhance_uid
-                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
+                else asyncio.sleep(0, {"text": merged_prompt}),
             )
             merged_prompt = final["text"]
 
