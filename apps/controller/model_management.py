@@ -437,7 +437,7 @@ class ModelManagementController(CoreDependencies):
                             )
                         )
                     await self.db.flush()
-            await self.db.commit()
+
             await delete_pattern(self.redis, cache_key.model_pagination_pattern())
         except BaseError:
             raise
