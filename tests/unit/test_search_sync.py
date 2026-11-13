@@ -63,8 +63,8 @@ def test_build_generation_doc_is_flat_with_null_action(monkeypatch):
             "kind": "image",
             "status": "success",
             "cost": 0.5,
-            "prompt": "p",
-            "full_prompt": "fp" * 20000,
+            "raw_prompt": "p",
+            "finalized_prompt": "fp" * 20000,
             "parameter": {"frame_images": ["x" * 20000]},
             "model_option": {"name": "m"},
             "task": {"uid": "t1", "name": "Task"},
@@ -78,7 +78,7 @@ def test_build_generation_doc_is_flat_with_null_action(monkeypatch):
     assert doc["action"] is None and "variants" not in doc and "references" not in doc
     assert doc["creator"]["user_id"] == 7 and doc["task"] == "Task"
     assert not docs.HEAVY_FIELDS & doc.keys()
-    assert doc["prompt"] == "p"
+    assert doc["raw_prompt"] == "p"
     assert len(json.dumps(doc).encode()) < 10_000  # Algolia's per-record limit
 
 

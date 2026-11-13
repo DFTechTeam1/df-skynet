@@ -301,3 +301,33 @@ async def test_file_lists_are_scoped_to_the_task_not_the_project(
         tree_uids.update(f["file_uid"] for f in node.get("files") or [])
         stack.extend(node.get("children") or [])
     assert str(other_fav.uid) not in tree_uids
+
+
+@pytest.mark.asyncio
+async def test_detail_prompts_without_enhancer(authed_client, project_task, user_id, generation_fks):
+    """200 OK; no enhance_id → raw_prompt null, finalized_prompt is the row's own finalized_prompt."""
+    generation = _make_generation(
+        project_task, user_id, generation_fks, raw_prompt="typed prompt", finalized_prompt="typed prompt"
+    )
+    result = _make_result(generation, user_id, is_main=True, version=1)
+
+    data = (await authed_client.call("GET", _url(result.uid))).json()["data"]
+    assert data["raw_prompt"] is None
+    assert data["finalized_prompt"] == "typed prompt"
+    assert "before_enhance" not in data and "prompt" not in data
+
+
+@pytest.mark.asyncio
+async def test_detail_prompts_with_enhancer(authed_client, project_task, user_id, generation_fks):
+    """200 OK; enhance_id set → raw_prompt from the enhancer row, finalized_prompt from the row itself."""
+    enhancer = _make_generation(
+        project_task, user_id, generation_fks, raw_prompt="typed", finalized_prompt="enhanced by llm"
+    )
+    generation = _make_generation(
+        project_task, user_id, generation_fks, raw_prompt="typed", finalized_prompt="final text", enhance_id=enhancer.id
+    )
+    result = _make_result(generation, user_id, is_main=True, version=1)
+
+    data = (await authed_client.call("GET", _url(result.uid))).json()["data"]
+    assert data["raw_prompt"] == "typed"
+    assert data["finalized_prompt"] == "final text"

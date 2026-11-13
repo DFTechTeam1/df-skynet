@@ -65,6 +65,13 @@ class ReferenceAction(BaseModel):
         return cls(can_use_as_reference=_is_image(path))
 
 
+def prompt_fields(generation: dict[str, Any]) -> dict[str, Optional[str]]:
+    """`raw_prompt` / `finalized_prompt` for FE. `finalized_prompt` is always the row's own; `raw_prompt` is only set when
+    the generation was enhanced (`enhance_id`), taken from the enhancer row."""
+    raw = (generation.get("enhancer") or {}).get("raw_prompt") if generation.get("enhance_id") else None
+    return {"raw_prompt": raw, "finalized_prompt": generation.get("finalized_prompt")}
+
+
 class GenerationResultRecord(BaseModel):
     id: Optional[int] = None
     flag_created_at: Optional[str] = None
@@ -91,9 +98,8 @@ class GenerationResultRecord(BaseModel):
     cost_usd: Optional[str] = None
     cost_idr: Optional[str] = None
     model: Optional[str] = None
-    prompt: Optional[str] = None
-    full_prompt: Optional[str] = None
-    before_enhance: Optional[str] = None
+    raw_prompt: Optional[str] = None
+    finalized_prompt: Optional[str] = None
     parameter: Optional[dict[str, Any]] = None
     action: Optional[GenerationAction] = None
 
@@ -128,9 +134,7 @@ class GenerationResultRecord(BaseModel):
             cost_usd=format_usd(generation.get("cost")),
             cost_idr=format_idr(generation.get("cost"), USD_TO_IDR_RATE),
             model=(model_option or {}).get("name"),
-            prompt=generation.get("prompt"),
-            full_prompt=generation.get("full_prompt"),
-            before_enhance=(generation.get("enhancer") or {}).get("prompt"),
+            **prompt_fields(generation),
             parameter=generation.get("parameter"),
             action=GenerationAction.from_result(result, is_owner),
         )
@@ -155,9 +159,7 @@ class GenerationResultRecord(BaseModel):
             cost_usd=format_usd(generation.get("cost")),
             cost_idr=format_idr(generation.get("cost"), USD_TO_IDR_RATE),
             model=(model_option or {}).get("name"),
-            prompt=generation.get("prompt"),
-            full_prompt=generation.get("full_prompt"),
-            before_enhance=(generation.get("enhancer") or {}).get("prompt"),
+            **prompt_fields(generation),
             parameter=generation.get("parameter"),
             action=GenerationAction(
                 can_set_archieve=False,
@@ -182,9 +184,8 @@ class GenerationReferenceRecord(BaseModel):
     size: str
     version: int
     kind: Optional[str]
-    prompt: Optional[str]
-    full_prompt: Optional[str]
-    before_enhance: Optional[str] = None
+    raw_prompt: Optional[str]
+    finalized_prompt: Optional[str]
     model: Optional[str]
     icon: Optional[str]
     color: Optional[str]
@@ -203,9 +204,7 @@ class GenerationReferenceRecord(BaseModel):
             size=format_size(result["size"]),
             version=result["version"],
             kind=kind,
-            prompt=generation.get("prompt"),
-            full_prompt=generation.get("full_prompt"),
-            before_enhance=(generation.get("enhancer") or {}).get("prompt"),
+            **prompt_fields(generation),
             model=(generation.get("model_option") or {}).get("name"),
             icon=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("icon"),  # type: ignore
             color=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("color"),  # type: ignore

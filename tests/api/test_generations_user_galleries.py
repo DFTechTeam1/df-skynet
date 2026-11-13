@@ -180,7 +180,7 @@ async def test_search_is_scoped_to_the_task_and_served_from_the_index(authed_cli
             "name": "gallery-name.png",
             "path": "p/g.png",
             "kind": "image",
-            "prompt": "x",
+            "raw_prompt": "x",
             "is_main": True,
             "creator": {"user_id": 1},
         }
@@ -191,7 +191,7 @@ async def test_search_is_scoped_to_the_task_and_served_from_the_index(authed_cli
     assert resp.status_code == 200
     data = resp.json()["data"]["paginated"]
     assert [e["file_uid"] for e in data] == ["g1"]
-    assert "prompt" not in data[0] and "variants" not in data[0]
+    assert "raw_prompt" not in data[0] and "variants" not in data[0]
     assert seen[0].query == "gallery" and str(project_task.uid) in repr(seen[0].filter)
 
 

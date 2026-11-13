@@ -82,7 +82,7 @@ async def test_returns_flat_sections_with_uploads_and_generations(authed_client,
     file = next(f for f in generation_section["files"] if f["file_uid"] == generation_result.uid)
     assert file["kind"] == GenerationKinds.image
     assert file["favourited_at"] is None
-    assert {"cost_usd", "cost_idr", "prompt", "is_main"}.isdisjoint(file)
+    assert {"cost_usd", "cost_idr", "raw_prompt", "finalized_prompt", "is_main"}.isdisjoint(file)
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
+from services.mysql.model.df_engine_generations import DfEngineGenerations
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
 from services.mysql.model.df_engine_settings import DfEngineSettings
@@ -541,14 +542,24 @@ async def test_without_enhance_uid_prompt_is_enhanced_before_dispatch(
     generation_project_settings,
     fake_generation_backends,
     fake_enhance,
+    db_session,
 ):
-    """200 OK; no enhance_uid → enhancer called once with the raw prompt, and its text is what gets dispatched."""
+    """200 OK; no enhance_uid → enhancer called once with the raw prompt, and its text is what gets dispatched.
+    Row: raw_prompt = schema.prompt, full_prompt = prompt + templates, finalized_prompt = enhancer text."""
     menu, feature = generation_menu_feature
     resp = await authed_client.call("POST", _url(project_task.uid), json=_payload(menu, feature, image_model))
     assert resp.status_code == 200
     assert len(fake_enhance.calls) == 1
     assert fake_enhance.calls[0].startswith("a scenic mountain view at sunrise")
     assert _sent_prompt(fake_generation_backends) == "ENHANCED"
+    row = (
+        (await db_session.execute(select(DfEngineGenerations).order_by(DfEngineGenerations.id.desc()).limit(1)))
+        .scalars()
+        .one()
+    )
+    assert row.raw_prompt == "a scenic mountain view at sunrise"
+    assert row.full_prompt.startswith(row.raw_prompt)
+    assert row.finalized_prompt == "ENHANCED"
 
 
 @pytest.mark.asyncio
@@ -567,7 +578,7 @@ async def test_with_enhance_uid_skips_enhancer_and_injected_prompts(
     """200 OK; enhance_uid → enhancer not called, the stored enhanced response is dispatched unchanged."""
 
     async def fake_get_enhance_prompt(ctx, enhance_uid):
-        return {"id": None, "prompt": "p", "full_prompt": "p", "enhance_uid": str(enhance_uid), "response": "STORED"}
+        return {"id": None, "prompt": "p", "enhance_uid": str(enhance_uid), "response": "STORED"}
 
     monkeypatch.setattr("apps.controller.generations.get_enhance_prompt", fake_get_enhance_prompt)
     menu, feature = generation_menu_feature

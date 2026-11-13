@@ -44,7 +44,7 @@ def _make_result(generation, user_id, **overrides):
 
 @pytest.mark.asyncio
 async def test_returns_rich_detail_with_action_and_references(authed_client, project_task, user_id, generation_fks):
-    """200 OK, keyed by generation_uid; response includes `full_prompt`, `is_main`,
+    """200 OK, keyed by generation_uid; response includes `is_main`,
     `version`, `action`, and `references` for that generation's own (n=1) result."""
     generation = _make_generation(project_task, user_id, generation_fks)
     result = _make_result(generation, user_id, is_main=True, version=1)
@@ -56,7 +56,6 @@ async def test_returns_rich_detail_with_action_and_references(authed_client, pro
     assert data["is_main"] is True
     assert data["version"] == 1
     assert data["parent_id"] is None
-    assert "full_prompt" in data
     assert "action" in data
     assert "references" in data
     assert isinstance(data["references"], list)
@@ -83,7 +82,7 @@ async def test_non_root_version_resolves_to_its_own_flat_entry(authed_client, pr
 async def test_shares_base_fields_with_main_results_but_adds_more(authed_client, project_task, user_id, generation_fks):
     """200 OK; both endpoints describe the same row and agree on the shared fields
     (kind, name, path, model, prompt, creator), but `/generation-main-results` excludes
-    `is_main`/`version`/`full_prompt` while `/generation-edit-results` keeps them."""
+    `is_main`/`version` while `/generation-edit-results` keeps them."""
     generation = _make_generation(project_task, user_id, generation_fks)
     _make_result(generation, user_id, is_main=True, version=1)
 
@@ -92,12 +91,11 @@ async def test_shares_base_fields_with_main_results_but_adds_more(authed_client,
     edit_data = edit_resp.json()["data"]
     main_data = main_resp.json()["data"]
 
-    for field in ("kind", "file_uid", "name", "path", "model", "prompt", "creator"):
+    for field in ("kind", "file_uid", "name", "path", "model", "raw_prompt", "creator"):
         assert edit_data[field] == main_data[field]
 
     assert "is_main" not in main_data
     assert "version" not in main_data
-    assert "full_prompt" not in main_data
     assert edit_data["is_main"] is True
     assert edit_data["version"] == 1
 

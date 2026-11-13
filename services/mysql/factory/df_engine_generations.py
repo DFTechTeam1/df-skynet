@@ -4,7 +4,7 @@ from uuid import uuid4
 from apps.secret import DB_SYNC_URL
 from factory.alchemy import SQLAlchemyModelFactory
 from services.mysql import make_sync_session
-from factory.declarations import LazyFunction
+from factory.declarations import LazyFunction, SelfAttribute
 from factory.faker import Faker
 from services.mysql.model.df_engine_generations import DfEngineGenerations, GenerationKinds, GenerationStatuses
 from utils import local_time
@@ -27,8 +27,9 @@ class DfEngineGenerationsFactory(SQLAlchemyModelFactory):
     sourceable_type = "DfEngineApiKeys"
     project_id = None
     task_id = None
-    prompt = Faker("sentence")
+    raw_prompt = Faker("sentence")
     full_prompt = None
+    finalized_prompt = SelfAttribute("raw_prompt")
     parameter = None
     status = GenerationStatuses.processing
     response = None
