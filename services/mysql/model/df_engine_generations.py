@@ -82,8 +82,9 @@ class DfEngineGenerations(SQLModel, table=True):
             BIGINT(unsigned=True), ForeignKey("project_song_lists.id", ondelete="SET NULL"), nullable=True
         ),
     )
-    prompt: str = Field(sa_column=Column(Text, nullable=False))
+    raw_prompt: str = Field(sa_column=Column(Text, nullable=False))
     full_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    finalized_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     parameter: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON(none_as_null=True), nullable=True))
     status: GenerationStatuses = Field(
         default=GenerationStatuses.queued, sa_column=Column(Enum(GenerationStatuses), nullable=False)

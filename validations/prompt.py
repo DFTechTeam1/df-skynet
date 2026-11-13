@@ -210,7 +210,7 @@ async def _record_validation(record: dict[str, Any] | None, prompt: str, respons
                 DfEngineGenerations(
                     kind=GenerationKinds.prompt_validation,
                     sourceable_type=DfEngineApiKeys.__name__,
-                    prompt=prompt,
+                    raw_prompt=prompt,
                     response=content,
                     status=GenerationStatuses.success if ok else GenerationStatuses.failed,
                     status_code=response.status_code,
@@ -257,7 +257,6 @@ async def validate_prompt(
         messages.append({"role": "system", "content": f"Dimension {name}:\n{rule['instruction']}"})
         messages.append({"role": "user", "content": prompt})
 
-    # ponytail: 30s ceiling (was 120s default); a timeout fails closed as prompt_ranking_failed.
     caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"}, timeout=30)
     try:
         response = await caller.openrouter(

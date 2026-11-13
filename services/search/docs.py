@@ -13,7 +13,7 @@ UPLOADED_FILES = "uploaded_files"
 SEARCHABLE_FIELDS = ["name", "path", "task"]
 FILTER_FIELDS = ["project_uid", "task_uid", "song_uid", "kind"]
 GENERATION_KINDS = (GenerationKinds.image, GenerationKinds.image_edit, GenerationKinds.video)
-HEAVY_FIELDS = {"full_prompt", "before_enhance", "parameter"}
+HEAVY_FIELDS = {"finalized_prompt", "parameter"}
 PROMPT_INDEX_CHARS = 2000
 _USERS = (
     selectinload(DfEngineGenerationResults.created_by_user)
@@ -100,7 +100,7 @@ def build_generation_doc(result: DfEngineGenerationResults) -> dict[str, Any]:
         cost_usd=format_usd(generation["cost"]),
         cost_idr=format_idr(generation["cost"], USD_TO_IDR_RATE),
         model=(generation.get("model_option") or {}).get("name"),
-        prompt=(generation["prompt"] or "")[:PROMPT_INDEX_CHARS] or None,
+        raw_prompt=(generation["raw_prompt"] or "")[:PROMPT_INDEX_CHARS] or None,
         creator=format_user_employees(row.get("created_by_user")),
         updater=format_user_employees(row.get("updated_by_user")),
         action=None,

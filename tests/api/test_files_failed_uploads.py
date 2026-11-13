@@ -92,7 +92,7 @@ async def test_list_returns_only_failed_uploads_as_flat_variants(list_url, authe
     assert len(mine) == 1
     assert mine[0]["path"] is None
     assert mine[0]["kind"] == "image"
-    assert mine[0]["prompt"] == failed.prompt
+    assert mine[0]["finalized_prompt"] == failed.raw_prompt and mine[0]["raw_prompt"] is None
     assert "variants" not in mine[0] and "references" not in mine[0]
 
 
@@ -108,8 +108,8 @@ async def test_list_excludes_pending_and_success(list_url, authed_client, user_i
 
 @pytest.mark.asyncio
 async def test_list_filters(authed_client, user_id, make, project_task, list_url):
-    image = make(user_id, prompt="prompt-only-needle")
-    video = make(user_id, kind=GenerationKinds.video, prompt="other")
+    image = make(user_id, raw_prompt="prompt-only-needle")
+    video = make(user_id, kind=GenerationKinds.video, raw_prompt="other")
 
     async def uids(**params):
         resp = await authed_client.call("GET", list_url, params=params)
