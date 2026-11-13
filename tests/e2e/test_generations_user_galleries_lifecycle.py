@@ -11,7 +11,7 @@ FILES_URL = "/api/files"
 
 
 def _uids(body):
-    return {e["file_uid"] for e in body["data"]}
+    return {e["file_uid"] for e in body["data"]["paginated"]}
 
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_set_main_moves_the_listed_entry_from_root_to_child(authed_client,
     )
 
     # 1. root is main and listed by its own file_uid; the child has no top-level entry of its own
-    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
+    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}", params={"type": "image"})
     uids = _uids(galleries.json())
     assert str(root_result.uid) in uids
     assert str(child_result.uid) not in uids
@@ -51,7 +51,7 @@ async def test_set_main_moves_the_listed_entry_from_root_to_child(authed_client,
     # so it stays absent regardless
     favorite_resp = await authed_client.call("POST", f"{FILES_URL}/favorite/{child_result.uid}", json={})
     assert favorite_resp.status_code == 200
-    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
+    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}", params={"type": "image"})
     uids = _uids(galleries.json())
     assert str(root_result.uid) in uids
     assert str(child_result.uid) not in uids
@@ -61,7 +61,7 @@ async def test_set_main_moves_the_listed_entry_from_root_to_child(authed_client,
     set_main_resp = await authed_client.call("PATCH", f"{FILES_URL}/set-main/{child_result.uid}")
     assert set_main_resp.status_code == 200
 
-    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
+    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}", params={"type": "image"})
     uids = _uids(galleries.json())
     assert str(child_result.uid) in uids
     assert str(root_result.uid) not in uids
@@ -102,7 +102,7 @@ async def test_set_main_promoting_a_child_leaves_sibling_absorbed_not_floating(
     set_main_resp = await authed_client.call("PATCH", f"{FILES_URL}/set-main/{promoted_result.uid}")
     assert set_main_resp.status_code == 200
 
-    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}")
+    galleries = await authed_client.call("GET", f"{GALLERIES_URL}/{project_task.uid}", params={"type": "image"})
     uids = _uids(galleries.json())
 
     assert str(promoted_result.uid) in uids, "promoted result must appear at the top level, not be absorbed"

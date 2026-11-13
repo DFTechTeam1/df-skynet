@@ -103,7 +103,9 @@ async def test_favorite_flips_action_flags_for_the_viewer_only(
     assert after["favourited_at"] is not None
     assert after["action"]["can_set_favorite"] is False
 
-    gallery = (await authed_client.call("GET", f"/api/user-galleries/{project_task.uid}")).json()["data"]
+    gallery = (
+        await authed_client.call("GET", f"/api/user-galleries/{project_task.uid}", params={"type": "image"})
+    ).json()["data"]["paginated"]
     listed = _find_flat(gallery, result.uid)
     assert listed["favourited_at"] is not None and listed["action"]["can_set_favorite"] is False
 
