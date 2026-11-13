@@ -3,6 +3,7 @@ from uuid import UUID
 from typing import Optional
 from sqlalchemy.orm import load_only, selectinload
 from fastapi import Path, status, Query
+from schemas.payload.elements import CreateElementPayload
 from fastapi_controller import controller
 from apps.controller.core import CoreDependencies
 from log import logging
@@ -10,6 +11,7 @@ from middlewares.lang import resolve_message
 from error import BaseError, DataNotFoundError, DataValidationError, ServiceError
 from schemas.response import PaginationResponse, Response
 from services.mysql.model import (
+    DfEngineElements,
     Employees,
     EntertainmentTaskSongs,
     Projects,
@@ -60,6 +62,7 @@ class ElementsController(CoreDependencies):
     )
     async def elements_with_project_uid_and_task_uid_to_create_element(
         self,
+        schema: CreateElementPayload,
         task_uid: UUID = Path(
             ...,
             description="Task UID.",
@@ -79,7 +82,7 @@ class ElementsController(CoreDependencies):
                     filters=(ProjectTasks.uid == str(task_uid),),
                     columns=(ProjectTasks,),
                     options=(
-                        load_only(ProjectTasks.id, ProjectTasks.name, ProjectTasks.status),  # type: ignore
+                        load_only(ProjectTasks.id, ProjectTasks.project_id, ProjectTasks.name, ProjectTasks.status),  # type: ignore
                         selectinload(ProjectTasks.project).load_only(Projects.status),  # type: ignore
                         selectinload(ProjectTasks.project_task_pics)  # type: ignore
                         .load_only(ProjectTaskPics.employee_id)  # type: ignore
@@ -95,7 +98,7 @@ class ElementsController(CoreDependencies):
                     filters=(ProjectSongLists.uid == str(task_uid),),
                     columns=(ProjectSongLists,),
                     options=(
-                        load_only(ProjectSongLists.id, ProjectSongLists.name),  # type: ignore
+                        load_only(ProjectSongLists.id, ProjectSongLists.project_id, ProjectSongLists.name),  # type: ignore
                         selectinload(ProjectSongLists.task_songs)  # type: ignore
                         .load_only(EntertainmentTaskSongs.status, EntertainmentTaskSongs.employee_id)  # type: ignore
                         .selectinload(EntertainmentTaskSongs.employees)  # type: ignore
@@ -153,9 +156,20 @@ class ElementsController(CoreDependencies):
                 if not is_assigned:
                     raise DataNotFoundError(message="employee_not_assigned_task")
 
-            response.data = project_task
+            element = DfEngineElements(
+                name=schema.name,
+                types=schema.type,  # type: ignore
+                description=schema.description,
+                project_id=project_task["project_id"],
+                task_id=project_task["id"] if task_source == "production" else None,
+                song_id=project_task["id"] if task_source == "entertainment" else None,
+                created_by=int(self.user["user_id"]),
+            )
+            self.db.add(element)
+            await self.db.flush()
+            response.data = {"uid": element.uid}
             logging.info(
-                f"[create-element] user={self.user['user_id']} task_uid={task_uid} source={task_source} validated"
+                f"[create-element] user={self.user['user_id']} task_uid={task_uid} source={task_source} element_uid={element.uid} created"
             )
         except BaseError as e:
             reason = resolve_message(e.message)

@@ -3,8 +3,8 @@ from enum import StrEnum, auto
 from typing import Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, SQLModel
-from sqlalchemy import CHAR, DateTime, Enum, ForeignKey, Text
-from sqlalchemy.dialects.mysql import BIGINT
+from sqlalchemy import CHAR, DateTime, Enum, ForeignKey, String
+from sqlalchemy.dialects.mysql import BIGINT, LONGTEXT
 from utils import local_time
 
 
@@ -23,7 +23,8 @@ class DfEngineElements(SQLModel, table=True):
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True, onupdate=local_time))
     types: Optional[ElementTypes] = Field(default=None, sa_column=Column(Enum(ElementTypes), nullable=True))
-    prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    name: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
+    description: Optional[str] = Field(default=None, sa_column=Column(LONGTEXT, nullable=True))
     task_id: Optional[int] = Field(
         default=None,
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("project_tasks.id", ondelete="SET NULL"), nullable=True),

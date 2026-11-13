@@ -19,7 +19,8 @@ class DfEngineElementsFactory(SQLAlchemyModelFactory):
     created_at = LazyFunction(local_time)
     updated_at = None
     types = ElementTypes.character
-    prompt = Faker("sentence")
+    name = Faker("word")
+    description = Faker("sentence")
     task_id = None
     song_id = None
     project_id = None

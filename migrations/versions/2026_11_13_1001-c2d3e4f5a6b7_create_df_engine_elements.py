@@ -10,7 +10,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.mysql import BIGINT
+from sqlalchemy.dialects.mysql import BIGINT, LONGTEXT
 
 # revision identifiers, used by Alembic.
 revision: str = "c2d3e4f5a6b7"
@@ -31,7 +31,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime, nullable=True),
         sa.Column("types", ELEMENT_TYPES, nullable=True),
-        sa.Column("prompt", sa.Text, nullable=True),
+        sa.Column("name", sa.String(255), nullable=True),
+        sa.Column("description", LONGTEXT, nullable=True),
         sa.Column(
             "task_id", BIGINT(unsigned=True), sa.ForeignKey("project_tasks.id", ondelete="SET NULL"), nullable=True
         ),
