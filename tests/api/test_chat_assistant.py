@@ -57,8 +57,11 @@ async def assistant_model(db_session, ranking_model):
         yield ranking_model
     finally:
         await _reset()
-        if previous_value is not None:  # pragma: no cover - only hit if assistant_model was already configured
-            db_session.add(DfEngineSettings(code="admin_setting", key="assistant_model", value=previous_value))
+        # branch-free so coverage doesn't depend on whether the DB had a setting before the test
+        db_session.add_all(
+            [DfEngineSettings(code="admin_setting", key="assistant_model", value=previous_value)]
+            * (previous_value is not None)
+        )
         await db_session.commit()
         await delete_pattern(redis_client(), CacheKeys().setting_global())
 

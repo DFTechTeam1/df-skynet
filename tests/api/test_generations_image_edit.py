@@ -358,6 +358,7 @@ async def test_response_format_matches_the_plain_generate_endpoint(
         "model",
         "prompt",
         "full_prompt",
+        "before_enhance",
         "action",
         "type",
     }
