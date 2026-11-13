@@ -315,7 +315,7 @@ async def run_turn(
     else:
         for turn, paths in await get_turns(ctx, chat):
             history += [
-                _user_message(turn.prompt, [_stored_uri(p) for p in paths]),
+                _user_message(turn.raw_prompt, [_stored_uri(p) for p in paths]),
                 {"role": "assistant", "content": turn.response},
             ]
 
@@ -336,7 +336,7 @@ async def run_turn(
         sourceable_id=api_key["id"],
         sourceable_type=DfEngineApiKeys.__name__,
         chat_id=chat.id,
-        prompt=prompt,
+        raw_prompt=prompt,
         response=answer,
         status=GenerationStatuses.success,
         status_code=status_code,
@@ -428,7 +428,9 @@ async def get_chat_detail(ctx: ConnectionContext, chat_uid: UUID, user_id: int) 
     messages: list[ChatAssistantMessage] = []
     for generation, paths in await get_turns(ctx, chat):
         messages.append(
-            ChatAssistantMessage(role="user", text=generation.prompt, images=paths, created_at=generation.created_at)
+            ChatAssistantMessage(
+                role="user", text=generation.raw_prompt, images=paths, created_at=generation.created_at
+            )
         )
         messages.append(
             ChatAssistantMessage(role="assistant", text=generation.response, created_at=generation.created_at)

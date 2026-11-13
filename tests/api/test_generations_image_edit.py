@@ -356,8 +356,8 @@ async def test_response_format_matches_the_plain_generate_endpoint(
         "cost_usd",
         "cost_idr",
         "model",
-        "prompt",
-        "full_prompt",
+        "raw_prompt",
+        "finalized_prompt",
         "action",
         "type",
     }

@@ -3,7 +3,7 @@ import re
 import traceback
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 from fastapi import status, Path, Query, Depends, Request
 from fastapi import Response as FastAPIResponse
@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from config.variables import USD_TO_IDR_RATE
-from schemas.response import PromptEnhancerResult, Response
+from schemas.response import PaginationResponse, PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql import get_usd_rate, query
@@ -44,7 +44,7 @@ from services.dto.asynced.generation_files import (
     get_enhance_prompt,
     get_generation_main_refactored,
 )
-from services.dto.asynced.generation_files import _build_references, overlay_favourites, overlay_prompts
+from services.dto.asynced.generation_files import _build_references, _enhancer, overlay_favourites, overlay_prompts
 from services.dto.asynced.uploaded_files import get_uploaded_files
 from services.dto.asynced.api_keys import get_employee_api_key, validate_api_key_limitation
 from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting, get_model, get_menu
@@ -69,7 +69,7 @@ from services import frame_reference_color
 from services.redis import CacheKeys
 from services.tasks.image_generation import image_generation
 from services.tasks.video_generation import video_generation
-from services.dto.format_response import GenerationResultRecord
+from services.dto.format_response import GenerationResultRecord, prompt_fields
 from utils.formatter import format_datetime, format_user_employees
 from apps.dependency.rate_limitter import generation_throttle
 
@@ -293,7 +293,7 @@ class GenerationsController(CoreDependencies):
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
-            merged_prompt = "\n".join([schema.prompt, *injected_prompts])
+            full_prompt = "\n".join([schema.prompt, *injected_prompts])
 
             enhancer_setting = admin_setting.get("enhancer_model")
             enhancer_model = (
@@ -355,7 +355,7 @@ class GenerationsController(CoreDependencies):
                 )
 
             image_urls = await validate_image_availability([r["path"] for r in reference_records])
-            enhancer_input = merged_prompt
+            enhancer_input = full_prompt
             if reference_records:
                 enhancer_input += "\nReferences (in image order): " + ", ".join(
                     str(r["uid"]) for r in reference_records
@@ -383,8 +383,9 @@ class GenerationsController(CoreDependencies):
                 project_id=project["id"],
                 task_id=None if task.get("is_song") else task["id"],
                 song_id=task["id"] if task.get("is_song") else None,
-                prompt=schema.prompt,
-                full_prompt=merged_prompt,
+                raw_prompt=schema.prompt,
+                full_prompt=full_prompt,
+                finalized_prompt=enhanced["text"],
                 response=enhanced["text"],
                 status=GenerationStatuses.success,
                 status_code=enhanced["status_code"],
@@ -418,8 +419,8 @@ class GenerationsController(CoreDependencies):
                 cache_key.enhancer_detail(str(generation.uid)),
                 {
                     "id": generation.id,
-                    "prompt": generation.prompt,
-                    "full_prompt": generation.full_prompt,
+                    "raw_prompt": generation.raw_prompt,
+                    "finalized_prompt": generation.finalized_prompt,
                     "response": enhanced["text"],
                     "enhance_uid": str(generation.uid),
                 },
@@ -540,22 +541,22 @@ class GenerationsController(CoreDependencies):
                     context={"length": len(schema.prompt), "max_chars": project_setting["compose_input_max_chars"]},
                 )
 
-            resolved_prompt = schema.prompt
             enhance_id = None
+            enhanced_prompt = None
             if schema.enhance_uid:
                 enhanced = await get_enhance_prompt(ctx, schema.enhance_uid)
                 response.data = enhanced
                 enhance_id = enhanced["id"]
-                resolved_prompt = enhanced["response"]
+                enhanced_prompt = enhanced["response"]
 
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
-            merged_prompt = resolved_prompt if schema.enhance_uid else "\n".join([resolved_prompt, *injected_prompts])
+            full_prompt = "\n".join([schema.prompt, *injected_prompts])
             if schema.x_min is not None:
-                merged_prompt = "\n".join(
+                full_prompt = "\n".join(
                     [
-                        merged_prompt,
+                        full_prompt,
                         f"Apply edits only within the focus area (normalized 0-1 coordinates): "
                         f"x_min={schema.x_min}, x_max={schema.x_max}, y_min={schema.y_min}, y_max={schema.y_max}.",
                     ]
@@ -611,11 +612,11 @@ class GenerationsController(CoreDependencies):
                     "image_generation",
                     record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
                 ),
-                asyncio.sleep(0, {"text": merged_prompt})
+                asyncio.sleep(0, {"text": enhanced_prompt})
                 if schema.enhance_uid
-                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
+                else enhance_prompt(full_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
-            merged_prompt = final["text"]
+            finalized_prompt = final["text"]
 
             """Insert generation record"""
             generation = DfEngineGenerations(
@@ -628,8 +629,9 @@ class GenerationsController(CoreDependencies):
                 project_id=project["id"],
                 task_id=None if task.get("is_song") else task["id"],
                 song_id=task["id"] if task.get("is_song") else None,
-                prompt=resolved_prompt,
-                full_prompt=merged_prompt,
+                raw_prompt=schema.prompt,
+                full_prompt=full_prompt,
+                finalized_prompt=finalized_prompt,
                 parameter=schema.parameter,
                 created_by=user_id,
                 enhance_id=enhance_id,
@@ -654,7 +656,7 @@ class GenerationsController(CoreDependencies):
                 )
             payload = parse_openrouter_payload(
                 generation_model["model_id"],
-                merged_prompt,
+                finalized_prompt,
                 schema.parameter,
                 all_references,
                 "image",
@@ -687,6 +689,7 @@ class GenerationsController(CoreDependencies):
                         .selectinload(Users.employees)  # type: ignore
                         .load_only(Employees.nickname),  # type: ignore
                         selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+                        _enhancer(),
                     ),
                     filters=(DfEngineGenerations.id == generation.id,),
                     fetch_one=True,
@@ -702,7 +705,7 @@ class GenerationsController(CoreDependencies):
                 status=record["status"],
                 creator=format_user_employees(record.get("created_by_user")),
                 model=(record.get("model_option") or {}).get("name"),
-                prompt=record["prompt"],
+                **prompt_fields(record),
                 parameter=record.get("parameter"),
             ).model_dump(
                 mode="json",
@@ -780,18 +783,18 @@ class GenerationsController(CoreDependencies):
                     context={"length": len(schema.prompt), "max_chars": project_setting["compose_input_max_chars"]},
                 )
 
-            resolved_prompt = schema.prompt
             enhance_id = None
+            enhanced_prompt = None
             if schema.enhance_uid:
                 enhanced = await get_enhance_prompt(ctx, schema.enhance_uid)
                 response.data = enhanced
                 enhance_id = enhanced["id"]
-                resolved_prompt = enhanced["response"]
+                enhanced_prompt = enhanced["response"]
 
             menu = await get_menu(ctx, user_id, menu_uid=schema.menu_uid, feature_uid=schema.feature_uid)
             matched_feature = next(feature for feature in menu["features"] if feature["uid"] == str(schema.feature_uid))  # type: ignore
             injected_prompts = [template["prompt"] for template in matched_feature["prompt_templates"]]
-            merged_prompt = resolved_prompt if schema.enhance_uid else "\n".join([resolved_prompt, *injected_prompts])
+            full_prompt = "\n".join([schema.prompt, *injected_prompts])
 
             assistant_setting = admin_setting.get("assistant_model")
             enhancer_setting = admin_setting.get("enhancer_model")
@@ -842,11 +845,11 @@ class GenerationsController(CoreDependencies):
                     "image_generation" if schema.type == "image" else "video_generation",
                     record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
                 ),
-                asyncio.sleep(0, {"text": merged_prompt})
+                asyncio.sleep(0, {"text": enhanced_prompt})
                 if schema.enhance_uid
-                else enhance_prompt(merged_prompt, ranking_model["model_id"], api_key["key"], user_id),
+                else enhance_prompt(full_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
-            merged_prompt = final["text"]
+            finalized_prompt = final["text"]
 
             """Insert generation record"""
             generation = DfEngineGenerations(
@@ -859,8 +862,9 @@ class GenerationsController(CoreDependencies):
                 project_id=project["id"],
                 task_id=None if task.get("is_song") else task["id"],
                 song_id=task["id"] if task.get("is_song") else None,
-                prompt=resolved_prompt,
-                full_prompt=merged_prompt,
+                raw_prompt=schema.prompt,
+                full_prompt=full_prompt,
+                finalized_prompt=finalized_prompt,
                 parameter=schema.parameter,
                 created_by=user_id,
                 enhance_id=enhance_id,
@@ -884,7 +888,7 @@ class GenerationsController(CoreDependencies):
                     validate_image_model_parameter(schema.parameter, generation_model)
                     payload = parse_openrouter_payload(
                         generation_model["model_id"],
-                        merged_prompt,
+                        finalized_prompt,
                         schema.parameter,
                         validated_image_references,
                         schema.type,
@@ -945,7 +949,7 @@ class GenerationsController(CoreDependencies):
                     )
                     payload = parse_openrouter_payload(
                         model_id=generation_model["model_id"],
-                        prompt=merged_prompt,
+                        prompt=finalized_prompt,
                         parameter=schema.parameter,
                         references=validated_image_references,
                         type=schema.type,
@@ -998,6 +1002,7 @@ class GenerationsController(CoreDependencies):
                         .selectinload(Users.employees)  # type: ignore
                         .load_only(Employees.nickname),  # type: ignore
                         selectinload(DfEngineGenerations.model_option).load_only(DfEngineModelOptions.name),  # type: ignore
+                        _enhancer(),
                     ),
                     filters=(DfEngineGenerations.id == generation.id,),
                     fetch_one=True,
@@ -1012,7 +1017,7 @@ class GenerationsController(CoreDependencies):
                 status=record["status"],
                 creator=format_user_employees(record.get("created_by_user")),
                 model=(record.get("model_option") or {}).get("name"),
-                prompt=record["prompt"],
+                **prompt_fields(record),
                 parameter=record.get("parameter"),
             ).model_dump(
                 mode="json",
@@ -1067,12 +1072,18 @@ class GenerationsController(CoreDependencies):
                             DfEngineGenerations.uid,  # type: ignore
                             DfEngineGenerations.kind,  # type: ignore
                             DfEngineGenerations.status,  # type: ignore
-                            DfEngineGenerations.prompt,  # type: ignore
-                            DfEngineGenerations.full_prompt,  # type: ignore
+                            DfEngineGenerations.raw_prompt,  # type: ignore
+                            DfEngineGenerations.finalized_prompt,  # type: ignore
+                            DfEngineGenerations.enhance_id,  # type: ignore
                             DfEngineGenerations.cost,  # type: ignore
                         )
                         .selectinload(DfEngineGenerations.model_option)  # type: ignore
                         .load_only(DfEngineModelOptions.name),  # type: ignore
+                        selectinload(DfEngineGenerationResults.generation)
+                        .selectinload(  # type: ignore
+                            DfEngineGenerations.enhancer  # type: ignore
+                        )
+                        .load_only(DfEngineGenerations.raw_prompt, DfEngineGenerations.finalized_prompt),  # type: ignore
                     ),
                     filters=(
                         DfEngineGenerations.uid == str(generation_uid),  # type: ignore
@@ -1095,7 +1106,6 @@ class GenerationsController(CoreDependencies):
                     "is_main",
                     "version",
                     "updated_at",
-                    "full_prompt",
                 },
             )
             logging.info(f"user={user_id} fetched generation result source=db generation_uid={generation_uid}")
@@ -1145,12 +1155,18 @@ class GenerationsController(CoreDependencies):
                             DfEngineGenerations.uid,  # type: ignore
                             DfEngineGenerations.kind,  # type: ignore
                             DfEngineGenerations.status,  # type: ignore
-                            DfEngineGenerations.prompt,  # type: ignore
-                            DfEngineGenerations.full_prompt,  # type: ignore
+                            DfEngineGenerations.raw_prompt,  # type: ignore
+                            DfEngineGenerations.finalized_prompt,  # type: ignore
+                            DfEngineGenerations.enhance_id,  # type: ignore
                             DfEngineGenerations.cost,  # type: ignore
                         )
                         .selectinload(DfEngineGenerations.model_option)  # type: ignore
                         .load_only(DfEngineModelOptions.name),  # type: ignore
+                        selectinload(DfEngineGenerationResults.generation)
+                        .selectinload(  # type: ignore
+                            DfEngineGenerations.enhancer  # type: ignore
+                        )
+                        .load_only(DfEngineGenerations.raw_prompt, DfEngineGenerations.finalized_prompt),  # type: ignore
                         selectinload(DfEngineGenerationResults.generation)  # type: ignore
                         .selectinload(DfEngineGenerations.generation_references)  # type: ignore
                         .selectinload(DfEngineGenerationReferences.result)  # type: ignore
@@ -1199,7 +1215,8 @@ class GenerationsController(CoreDependencies):
         "/user-galleries/{task_uid}",
         summary="List generation galleries for a task",
         description=(
-            "Returns the current (main) file version of every image or video generated on this task; "
+            "Returns a page of the current (main) file version of every image or video (`type`, default video) "
+            "generated on this task; "
             "older versions are grouped underneath the current one rather than listed separately. "
             "Set `my_task=true` to only see files you generated yourself, or leave it false to also "
             "include the current version generated by other members. Use `search` to filter by "
@@ -1219,6 +1236,7 @@ class GenerationsController(CoreDependencies):
                 "If false, also include the current version generated by other members on this task."
             ),
         ),
+        type: Literal["image", "video"] = Query("video", description="Which kind of files to list."),
         search: Optional[str] = Query(
             None,
             min_length=1,
@@ -1227,43 +1245,52 @@ class GenerationsController(CoreDependencies):
                 "Leave empty to return all files."
             ),
         ),
+        page: int = Query(default=1, ge=1, description="1-indexed page number to fetch."),
+        itemsPerPage: int = Query(default=100, ge=1, le=100, description="Number of files to return per page."),
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
         can_override = has_override(self.user["roles"])
         ctx = ConnectionContext(self.db, self.redis, cache_key)
+        kinds = ("image", "image_edit") if type == "image" else ("video",)
         try:
             project_task = await get_project_task(ctx, task_uid)
             task_id = project_task["id"] if project_task["is_song"] is False else None
             song_id = project_task["id"] if project_task["is_song"] is True else None
 
             if search:
-                main_generations = await search_task_generations(str(task_uid), search, user_id, can_override, my_task)
+                main_generations = await search_task_generations(
+                    str(task_uid), search, user_id, can_override, my_task, kinds
+                )
                 await overlay_favourites(ctx, main_generations, user_id)
                 await overlay_prompts(ctx, main_generations)
             else:
                 main_generations = await get_generation_main_refactored(
                     ctx=ctx,
                     viewer_id=user_id,
-                    project_id=project_task["project_id"],  # keeps the cache key under the project-wide invalidation
+                    project_id=project_task["project_id"],
                     task_id=task_id,
                     song_id=song_id,
                     personal_file=my_task,
                     has_override=can_override,
                 )
+                main_generations = [g for g in main_generations if g["kind"] in kinds]
             for generation in main_generations:
                 generation.pop("references", None)
                 generation.pop("variants", None)
                 generation.pop("is_main", None)
-                generation.pop("full_prompt", None)
-                generation.pop("prompt", None)
+                generation.pop("raw_prompt", None)
+                generation.pop("finalized_prompt", None)
                 generation.pop("version", None)
                 generation.pop("parent_id", None)
 
-            response.data = main_generations
+            start = (page - 1) * itemsPerPage
+            response.data = PaginationResponse(
+                paginated=main_generations[start : start + itemsPerPage], totalData=len(main_generations)
+            )
             logging.info(
-                f"user={user_id} fetched user galleries task_uid={task_uid} my_task={my_task} "
-                f"search={search} count={len(main_generations)}"
+                f"user={user_id} fetched user galleries task_uid={task_uid} my_task={my_task} type={type} "
+                f"search={search} page={page} total={len(main_generations)}"
             )
         except BaseError:
             raise
