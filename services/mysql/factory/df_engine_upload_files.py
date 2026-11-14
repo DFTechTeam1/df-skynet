@@ -25,6 +25,5 @@ class DfEngineUploadFilesFactory(SQLAlchemyModelFactory):
     size = Faker("random_int", min=1024, max=10_485_760)
     project_id = None
     task_id = None
-    element_id = None
     created_by = None
     updated_by = None

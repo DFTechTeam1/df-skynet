@@ -181,6 +181,8 @@ Table df_engine_elements {
     project_id bigint [default: null]
     created_by bigint [default: null]
     updated_by bigint [default: null]
+    sourceable_id bigint [default: null]
+    sourceable_type varchar(255) [default: null, note: "Polymorph to df_engine_generation_results or df_engine_element_uploads"]
 }
 
 Table df_engine_scenes {
@@ -203,6 +205,21 @@ Table df_engine_element_generations {
     id bigint [pk, increment]
     element_id bigint [not null]
     generation_id bigint [not null]
+}
+
+Table df_engine_element_uploads {
+    id bigint [pk, increment]
+    uid varchar(36) [not null, unique]
+    created_at timestamp [default: `now()`]
+    updated_at timestamp [default: null]
+    name varchar(255) [not null]
+    path text [not null]
+    md5 varchar(255) [default: null]
+    size bigint [not null]
+    element_id bigint [not null]
+    project_id bigint [not null]
+    created_by bigint [default: null]
+    updated_by bigint [default: null]
 }
 
 
@@ -451,7 +468,6 @@ Table df_engine_upload_files {
     path text [not null]
     md5 varchar(255) [default: null]
     size bigint [not null]
-    element_id bigint [default: null]
     project_id bigint [not null]
     task_id bigint [default: null]
     song_id bigint [default: null]
@@ -754,6 +770,10 @@ Ref: df_engine_prompt_templates.id < df_engine_prompt_template_references.refere
 Ref: df_engine_elements.id < df_engine_scenes.location_id
 Ref: df_engine_storyboards.id < df_engine_scenes.story_id
 Ref: df_engine_elements.id < df_engine_element_generations.element_id
+Ref: df_engine_elements.id < df_engine_element_uploads.element_id
+Ref: projects.id < df_engine_element_uploads.project_id
+Ref: users.id < df_engine_element_uploads.created_by
+Ref: users.id < df_engine_element_uploads.updated_by
 Ref: df_engine_storyboards.id < df_engine_storyboard_generations.story_id
 Ref: df_engine_generations.id < df_engine_storyboard_generations.generation_id
 Ref: df_engine_generations.id < df_engine_element_generations.generation_id
@@ -769,4 +789,3 @@ Ref: users.id < df_engine_scenes.created_by
 Ref: users.id < df_engine_scenes.updated_by
 Ref: users.id < df_engine_elements.created_by
 Ref: users.id < df_engine_elements.updated_by
-Ref: df_engine_elements.id < df_engine_upload_files.element_id

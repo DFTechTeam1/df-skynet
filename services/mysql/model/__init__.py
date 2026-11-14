@@ -18,6 +18,7 @@ from services.mysql.model.df_engine_model_options import DfEngineModelOptions
 from services.mysql.model.df_engine_motion_details import DfEngineMotionDetails
 from services.mysql.model.df_engine_elements import DfEngineElements
 from services.mysql.model.df_engine_element_generations import DfEngineElementGenerations
+from services.mysql.model.df_engine_element_uploads import DfEngineElementUploads
 from services.mysql.model.df_engine_external_api_calls import DfEngineExternalApiCalls
 from services.mysql.model.df_engine_preferences import DfEnginePreferences
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
@@ -65,6 +66,7 @@ __all__ = [
     "DfEngineMotionDetails",
     "DfEngineElements",
     "DfEngineElementGenerations",
+    "DfEngineElementUploads",
     "DfEngineExternalApiCalls",
     "DfEnginePreferences",
     "DfEngineProjectSettings",

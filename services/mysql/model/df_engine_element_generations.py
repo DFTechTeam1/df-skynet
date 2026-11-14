@@ -1,4 +1,5 @@
-from sqlmodel import Column, Field, SQLModel
+from typing import Optional
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import ForeignKey
 from sqlalchemy.dialects.mysql import BIGINT
 
@@ -13,3 +14,5 @@ class DfEngineElementGenerations(SQLModel, table=True):
     generation_id: int = Field(
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_generations.id"), nullable=False)
     )
+
+    element: Optional["DfEngineElements"] = Relationship(back_populates="generations")  # type: ignore

@@ -18,7 +18,7 @@ class DfEngineElementsFactory(SQLAlchemyModelFactory):
     uid = LazyFunction(lambda: str(uuid4()))
     created_at = LazyFunction(local_time)
     updated_at = None
-    types = ElementTypes.character
+    type = ElementTypes.character
     name = Faker("word")
     description = Faker("sentence")
     task_id = None
@@ -26,3 +26,5 @@ class DfEngineElementsFactory(SQLAlchemyModelFactory):
     project_id = None
     created_by = None
     updated_by = None
+    sourceable_id = None
+    sourceable_type = None

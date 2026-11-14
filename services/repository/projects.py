@@ -1,4 +1,5 @@
 from typing import Any, Optional
+from error import DataValidationError
 from services.mysql.model import EntertainmentTaskSongs, ProjectSongLists, Projects, ProjectTasks
 from services.repository.base import BaseRepository
 
@@ -135,3 +136,24 @@ class ProjectRepository(BaseRepository):
             raise_if_null,
             context,
         )
+
+    async def get_task(self, task_uid: str) -> dict[str, Any]:
+        """Find which kind of task `task_uid` is, and its id.
+
+        Returns:
+            `{"type": "production" | "entertainment", "id": int}`.
+
+        Raises:
+            DataValidationError: `project_task_not_found` (HTTP 422) when it is neither.
+        """
+        task_id = await self.get_production_task(
+            (ProjectTasks.uid == task_uid,), (ProjectTasks.id,), raise_if_null=False
+        )
+        if task_id:
+            return {"type": "production", "id": task_id}
+        task_id = await self.get_entertainment_task(
+            (ProjectSongLists.uid == task_uid,), (ProjectSongLists.id,), raise_if_null=False
+        )
+        if task_id:
+            return {"type": "entertainment", "id": task_id}
+        raise DataValidationError(message="project_task_not_found")
