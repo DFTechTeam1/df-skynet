@@ -578,7 +578,6 @@ class GenerationsController(CoreDependencies):
             generated_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "generated"]
             uploaded_file_uids = [str(ref.file_uid) for ref in schema.references if ref.type == "upload"]
             if is_upload_source:
-                # the edited upload goes first so it stays the primary image sent to the model
                 uploaded_file_uids = list(dict.fromkeys([str(file_uid), *uploaded_file_uids]))
             else:
                 generated_file_uids.append(str(file_uid))
@@ -614,7 +613,8 @@ class GenerationsController(CoreDependencies):
                 ),
                 asyncio.sleep(0, {"text": enhanced_prompt})
                 if schema.enhance_uid
-                else enhance_prompt(full_prompt, ranking_model["model_id"], api_key["key"], user_id),
+                else asyncio.sleep(0, {"text": full_prompt}),
+                # else enhance_prompt(full_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
             finalized_prompt = final["text"]
 
@@ -847,7 +847,8 @@ class GenerationsController(CoreDependencies):
                 ),
                 asyncio.sleep(0, {"text": enhanced_prompt})
                 if schema.enhance_uid
-                else enhance_prompt(full_prompt, ranking_model["model_id"], api_key["key"], user_id),
+                else asyncio.sleep(0, {"text": full_prompt}),
+                # else enhance_prompt(full_prompt, ranking_model["model_id"], api_key["key"], user_id),
             )
             finalized_prompt = final["text"]
 
