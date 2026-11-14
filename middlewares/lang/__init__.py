@@ -16,6 +16,7 @@ from middlewares.lang.en.model_management import ModelManagementMessage as _EnMo
 from middlewares.lang.en.prompt_template import (
     PromptTemplateMessage as _EnPromptTemplate,
 )
+from middlewares.lang.en.projects import ProjectsMessage as _EnProjects
 from middlewares.lang.en.setting import SettingMessage as _EnSetting
 from middlewares.lang.id.auth import AuthMessage as _IdAuth
 from middlewares.lang.id.common import CommonMessage as _IdCommon
@@ -34,6 +35,7 @@ from middlewares.lang.id.model_management import ModelManagementMessage as _IdMo
 from middlewares.lang.id.prompt_template import (
     PromptTemplateMessage as _IdPromptTemplate,
 )
+from middlewares.lang.id.projects import ProjectsMessage as _IdProjects
 from middlewares.lang.id.setting import SettingMessage as _IdSetting
 
 DEFAULT_LANG = "en"
@@ -53,6 +55,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_EnMenuManagement().message,
         **_EnModelManagement().message,
         **_EnPromptTemplate().message,
+        **_EnProjects().message,
         **_EnSetting().message,
     },
     "id": {
@@ -67,6 +70,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         **_IdMenuManagement().message,
         **_IdModelManagement().message,
         **_IdPromptTemplate().message,
+        **_IdProjects().message,
         **_IdSetting().message,
     },
 }

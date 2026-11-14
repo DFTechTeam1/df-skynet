@@ -1,0 +1,230 @@
+flowchart LR
+    %% Terminals
+    start([Start])
+    finish([End])
+
+    subgraph client["Client"]
+        ui["Web app"]
+    end
+
+    subgraph ProjectValidations["Project Validations"]
+        getProject["Get project"]
+        errProjectNotFound(["Error: Project not found"])
+        isProjectOngoing{"Is project ongoing?"}
+        errProjectNotOngoing(["Error: Project is not ongoing"])
+        getProjectTasks["Get project tasks or song list"]
+        errNoProjectTasks(["Error: No project tasks found"])
+        isTaskCompleted{"Is project task completed?"}
+        errTaskCompleted(["Error: Project task is already completed"])
+
+        getProject -.->|"Found"| isProjectOngoing
+        getProject -.->|"Not found"| errProjectNotFound
+        isProjectOngoing -.->|"No"| errProjectNotOngoing
+        isProjectOngoing -.->|"Yes"| getProjectTasks
+        getProjectTasks -.->|"None"| errNoProjectTasks
+        getProjectTasks -.->|"Found"| isTaskCompleted
+        isTaskCompleted -.->|"Yes"| errTaskCompleted
+    end
+
+    subgraph UserValidations["User Validations"]
+        getUser["Get user"]
+        hasUserResigned{"Has user resigned?"}
+        errUserResigned(["Error: User has resigned"])
+        checkUserRole{"What is the user role?"}
+        isUserAssigned{"Is user assigned to the task?"}
+        errUserNotAssigned(["Error: User is not assigned to the task"])
+
+        getUser --> hasUserResigned
+        hasUserResigned -.->|"Yes"| errUserResigned
+        hasUserResigned -.->|"No"| checkUserRole
+        checkUserRole -.->|"Staff"| isUserAssigned
+        isUserAssigned -.->|"No"| errUserNotAssigned
+    end
+
+    subgraph AdminValidations["Admin Validations"]
+        getAdminSettings["Get admin settings"]
+        hasClassLimitations{"Is project class limitation configured in admin settings?"}
+        errClassLimitationsNotConfigured(["Error: Project class limitation is not configured in admin settings"])
+        hasProjectSetting{"Does project have a spend limit setting?"}
+        getDefaultSpendLimit["Get default spend limit by project class"]
+        hasProjectClass{"Is the project assigned to a project class?"}
+        errProjectClassNotAssigned(["Error: Project has no project class"])
+        hasClassLimitEntry{"Does the project class have a limitation entry?"}
+        errClassLimitNotFound(["Error: Limitation for this project class not found"])
+        isSpendLimitReached{"Is project spend limit reached?"}
+        errSpendLimitReached(["Error: Project spend limit reached"])
+
+        %% The limitation data (token limit, chars, max scenes, max shots, threshold) depends on project_class_limitations.
+        %% A project setting cannot exist without it, so it is checked first, before looking at the project setting.
+        getAdminSettings --> hasClassLimitations
+        hasClassLimitations -.->|"No"| errClassLimitationsNotConfigured
+        hasClassLimitations -.->|"Yes"| hasProjectSetting
+        hasProjectSetting -.->|"Yes"| isSpendLimitReached
+        hasProjectSetting -.->|"No"| getDefaultSpendLimit
+        getDefaultSpendLimit --> hasProjectClass
+        hasProjectClass -.->|"No"| errProjectClassNotAssigned
+        hasProjectClass -.->|"Yes"| hasClassLimitEntry
+        hasClassLimitEntry -.->|"No"| errClassLimitNotFound
+        hasClassLimitEntry -.->|"Yes"| isSpendLimitReached
+        isSpendLimitReached -.->|"Yes"| errSpendLimitReached
+    end
+
+    subgraph EmployeeAPIKeyValidations["Employee API Key Validations"]
+        getDefaultTextModel["Get default assistant or enhancer model"]
+        errNoDefaultModel(["Error: No default model found"])
+        hasUserApiKey{"Does user have an API key?"}
+        errNoApiKey(["Error: No API key found"])
+
+        getDefaultTextModel -.->|"None"| errNoDefaultModel
+        getDefaultTextModel -.->|"Found"| hasUserApiKey
+        hasUserApiKey -.->|"No"| errNoApiKey
+    end
+
+    subgraph GuardrailValidations["Guardrail Validations"]
+        getPromptGuardrail["Get prompt guardrail"]
+        isPromptRelevant{"Is prompt relevant to storyboards?"}
+        errIrrelevantPrompt(["Error: Prompt is irrelevant to creating storyboards"])
+        isWithinCharLimit{"Is story within character limit?"}
+        errCharLimitExceeded(["Error: Storyboard character limit exceeded"])
+
+        getPromptGuardrail -.->|"No guardrail"| isWithinCharLimit
+        getPromptGuardrail -.->|"Has guardrail"| isPromptRelevant
+        isPromptRelevant -.->|"Yes"| isWithinCharLimit
+        isPromptRelevant -.->|"No"| errIrrelevantPrompt
+        isWithinCharLimit -.->|"No"| errCharLimitExceeded
+    end
+
+    %% ---- Shared by create AND rebreakdown: duration (seconds) ceiling ----
+    %% max_duration = max_scene_per_storyboard x max_shot_per_scene x longest supported video model duration
+    subgraph DurationValidations["Duration Validations"]
+        getVideoModels["Get video models: type = video, is_available = true, is_enabled = true, not deleted"]
+        errNoVideoModel(["Error: No active video model found"])
+        getMaxModelDuration["Max model duration = highest value across all models' supported_durations"]
+        calcMaxDuration["Max duration (s) = max_scenes x max_shots x max model duration (e.g. 2 x 10 x 25 = 500s)"]
+        isDurationValid{"Is requested duration (s) within max duration?"}
+        errDurationExceeded(["Error: Duration is too long. Please enter {max_duration} seconds or less."])
+
+        getVideoModels -.->|"None"| errNoVideoModel
+        getVideoModels -.->|"Found"| getMaxModelDuration
+        getMaxModelDuration --> calcMaxDuration
+        calcMaxDuration --> isDurationValid
+        isDurationValid -.->|"No"| errDurationExceeded
+    end
+
+    %% ---- Rebreakdown-only guards (storyboard must already exist) ----
+    subgraph RebreakdownGuards["Rebreakdown Guards"]
+        CheckStoryboardExists["Check if storyboard exists"]
+        IsUserCreatorOrOverrider{"Is user the creator or an overrider?"}
+        errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+        CheckAlreadyGeneratedMotionOrKeyframes{"Has the storyboard already generated motion or keyframes?"}
+        errAlreadyGeneratedMotionOrKeyframes(["Error: Storyboard has already generated motion or keyframes"])
+        IsStoryboardArchived{"Is the storyboard archived?"}
+        errRebreakdownArchived(["Error: Storyboard is archived. Please unarchive it first"])
+
+        CheckStoryboardExists -.->|"Found"| IsStoryboardArchived
+        IsStoryboardArchived -.->|"Yes"| errRebreakdownArchived
+        IsStoryboardArchived -.->|"No"| IsUserCreatorOrOverrider
+        IsUserCreatorOrOverrider -.->|"Creator"| CheckAlreadyGeneratedMotionOrKeyframes
+        IsUserCreatorOrOverrider -.->|"Overrider"| CheckAlreadyGeneratedMotionOrKeyframes
+        IsUserCreatorOrOverrider -.->|"Neither"| errNotCreatorOrOverrider
+        CheckAlreadyGeneratedMotionOrKeyframes -.->|"Yes"| errAlreadyGeneratedMotionOrKeyframes
+    end
+
+    %% ---- Shared by create AND rebreakdown ----
+    subgraph BreakdownProcess["Breakdown Process"]
+        getAvailableElements["Get available elements scoped by project_id and created_by"]
+        callOpenRouter["Send story, duration, max_scenes, max_shots (as context) and project's available elements to OpenRouter (LLM returns scenes, shots and relevant element matches)"]
+        isRebreakdown{"Is this a rebreakdown?"}
+
+        getAvailableElements --> callOpenRouter
+        callOpenRouter --> isRebreakdown
+    end
+
+    subgraph CreatePersistence["Create: persist new storyboard"]
+        createStoryboardProcess["Create storyboard process"]
+        createStoryboardRecords["Create storyboard records"]
+        attachStoryboardToGenerations["Attach storyboard to generations"]
+
+        createStoryboardProcess --> createStoryboardRecords
+        createStoryboardRecords --> attachStoryboardToGenerations
+    end
+
+    subgraph RebreakdownPersistence["Rebreakdown: update existing storyboard"]
+        lockAndRecheck{"Lock storyboard: still no motions or keyframes?"}
+        replaceStoryboardElements["Remove old elements and update storyboard records"]
+
+        lockAndRecheck -.->|"Yes (none generated)"| replaceStoryboardElements
+    end
+
+    subgraph ElementResolution["Element Resolution"]
+        readStoryElements["Read story elements from LLM response"]
+        hasStoryElements{"Does the story contain any elements?"}
+        hasExistingElement{"For each element: does it match a project element that is relevant?"}
+        setElementReference["Auto-attach: set reference to existing project element"]
+        createPlaceholderElement["Create placeholder element ('Need to generate first')"]
+        attachElementsToStoryboard["Attach elements to storyboard"]
+
+        readStoryElements --> hasStoryElements
+        hasStoryElements -.->|"Yes"| hasExistingElement
+        hasExistingElement -.->|"Yes"| setElementReference
+        hasExistingElement -.->|"No"| createPlaceholderElement
+        setElementReference --> attachElementsToStoryboard
+        createPlaceholderElement --> attachElementsToStoryboard
+    end
+
+    %% Links between the validation groups
+    checkUserRole -.->|"Overrider"| getAdminSettings
+    isUserAssigned -.->|"Yes"| getAdminSettings
+    isSpendLimitReached -.->|"No"| getDefaultTextModel
+    validatePayload["Validate storyboard payload"]
+    validatePayload --> getPromptGuardrail
+    %% Shot generation (generate-keyframe / generate-motion / edit-keyframe .mmd) REUSES the groups above: it enters getProject and
+    %% branches back out here instead of going to the storyboard payload validation.
+    shotGenerationEntry(["Entered from generate-keyframe / generate-motion / edit-keyframe .mmd"]) -.-> getProject
+    hasUserApiKey -.->|"Yes"| whichRequestAfterKey{"Which request?"}
+    whichRequestAfterKey -.->|"Storyboard breakdown"| validatePayload
+    whichRequestAfterKey -.->|"Shot generation"| toShotGeneration(["Continue in generate-keyframe / generate-motion / edit-keyframe .mmd"])
+    isWithinCharLimit -.->|"Yes"| getVideoModels
+    isDurationValid -.->|"Yes"| getAvailableElements
+
+    %% Links into / out of the shared process
+    isRebreakdown -.->|"No (create)"| createStoryboardProcess
+    isRebreakdown -.->|"Yes"| lockAndRecheck
+    lockAndRecheck -.->|"No (generated meanwhile)"| errAlreadyGeneratedMotionOrKeyframes
+    attachStoryboardToGenerations --> readStoryElements
+    replaceStoryboardElements --> readStoryElements
+    hasStoryElements -.->|"No"| finish
+    attachElementsToStoryboard --> finish
+
+    %% ================= ENTRY =================
+    start --> ui
+    ui --> storyboardMenu["Storyboard menu"]
+    ui --> genMenu["Generation menu"]
+
+    %% ---------- Create storyboard ----------
+    storyboardMenu --> createStoryboard["POST /storyboards/tasks/{task_uid}"]
+    createStoryboard --> getProject
+    isTaskCompleted -.->|"No"| getUser
+
+    %% ---------- Re-breakdown storyboard (on an already created storyboard) ----------
+    storyboardMenu --> rebreakdownStoryboard["POST /storyboards/{story_uid}/rebreakdown"]
+    rebreakdownStoryboard --> CheckStoryboardExists
+    CheckStoryboardExists -.->|"Not found"| errStoryboardNotFound
+    CheckAlreadyGeneratedMotionOrKeyframes -.->|"No"| getUser
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+    errStoryboardNotFound --> finish
+
+    %% ================= OTHER ENDPOINTS (one file each, same directory) =================
+    %%   GET   /storyboards/{task_uid}?archived=false                  list-storyboards.mmd
+    %%   GET   /storyboards/{story_uid}                                get-storyboard.mmd
+    %%   GET   /storyboards/{story_uid}/details                        get-storyboard-details.mmd
+    %%   PATCH /storyboards/{story_uid}/reorder                        reorder-storyboard.mmd
+    %%   PATCH /storyboards/{story_uid}/set-archive                    set-archive-storyboard.mmd
+    %%   POST  /storyboards/{story_uid}/scenes                         add-scene.mmd
+    %%   PATCH /storyboards/{story_uid}/scenes/{scene_uid}             edit-scene.mmd
+    %%   POST  /storyboards/{story_uid}/scenes/{scene_uid}/shots       add-shot.mmd
+    %%   GET   /shots/{shot_uid}                                       get-shot.mmd
+    %%   POST  /shots/{shot_uid}/keyframe                              generate-keyframe.mmd
+    %%   POST  /shots/{shot_uid}/motion                                generate-motion.mmd
+    %%   POST  /shots/{shot_uid}/edit-keyframes/{keyframe_uid}         edit-keyframe.mmd

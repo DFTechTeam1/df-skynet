@@ -1,0 +1,45 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+    errRebreakdownArchived(["Error: Storyboard is archived. Please unarchive it first"])
+    errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+    errSceneNotFound(["Error: Scene not found"])
+
+    %% Creates only a placeholder entry in the shots table (optional placeholder prompt).
+    %% No generation data is created.
+    storyboardMenu --> addShot["POST /storyboards/{story_uid}/scenes/{scene_uid}/shots"]
+    addShot --> checkAddShotStoryboardExists["Check if storyboard exists"]
+    checkAddShotStoryboardExists -.->|"Not found"| errStoryboardNotFound
+    checkAddShotStoryboardExists -.->|"Found"| isAddShotStoryboardArchived{"Is the storyboard archived?"}
+    isAddShotStoryboardArchived -.->|"Yes"| errRebreakdownArchived
+    isAddShotStoryboardArchived -.->|"No"| isAddShotEditor{"Is user the creator or an overrider?"}
+    isAddShotEditor -.->|"Neither"| errNotCreatorOrOverrider
+    isAddShotEditor -.->|"Yes"| checkAddShotSceneExists{"Does the scene exist under this storyboard?"}
+    checkAddShotSceneExists -.->|"No"| errSceneNotFound
+    checkAddShotSceneExists -.->|"Yes"| hasShotClassLimitations{"Is project class limitation configured in admin settings?"}
+    %% A project setting depends on the global project class limitation, so this is checked first, even when the project has its own setting
+    hasShotClassLimitations -.->|"No"| errClassLimitationsNotConfigured(["Error: Project class limitation is not configured in admin settings"])
+    hasShotClassLimitations -.->|"Yes"| hasShotProjectSetting{"Does the project have its own setting?"}
+    hasShotProjectSetting -.->|"Yes"| useProjectMaxShots["Use max shots per scene from the project setting"]
+    hasShotProjectSetting -.->|"No"| hasShotClassLimitEntry{"Does the project have a class with a limitation entry?"}
+    hasShotClassLimitEntry -.->|"No"| errClassLimitNotFound(["Error: Limitation for this project class not found"])
+    hasShotClassLimitEntry -.->|"Yes"| useAdminMaxShots["Use max shots per scene from the admin setting (project class limit) as fallback"]
+    useProjectMaxShots --> lockSceneAndCountShots
+    useAdminMaxShots --> lockSceneAndCountShots["Lock the scene row, then count the shots already saved in the DB for this scene"]
+    lockSceneAndCountShots --> isMaxShotsReached{"Is the shot count already at the max shots per scene?"}
+    isMaxShotsReached -.->|"Yes"| errMaxShotsReached(["Error: This scene already has the maximum number of shots ({max_shots})"])
+    isMaxShotsReached -.->|"No"| createShotPlaceholder["Create new shot entry at the end of the scene (placeholder prompt may be empty)"]
+    createShotPlaceholder --> returnCreatedShot(["Return the new shot"])
+    returnCreatedShot --> finish
+    errMaxShotsReached --> finish
+    errStoryboardNotFound --> finish
+    errRebreakdownArchived --> finish
+    errNotCreatorOrOverrider --> finish
+    errSceneNotFound --> finish
+    errClassLimitationsNotConfigured --> finish
+    errClassLimitNotFound --> finish

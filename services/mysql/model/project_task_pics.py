@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.mysql import BIGINT
 
@@ -21,3 +21,7 @@ class ProjectTaskPics(SQLModel, table=True):
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("employees.id"), nullable=True)
     )
     approved_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+
+    employees: Optional["Employees"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"foreign_keys": "[ProjectTaskPics.employee_id]"}
+    )

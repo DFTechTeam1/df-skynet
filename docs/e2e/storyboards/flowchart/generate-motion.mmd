@@ -1,0 +1,142 @@
+flowchart LR
+    %% Self-contained flow: every validation is drawn here.
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errShotNotFound(["Error: Shot not found"])
+    errRebreakdownArchived(["Error: Storyboard is archived. Please unarchive it first"])
+    errNotCreatorOrOverrider(["Error: User is not the creator or an overrider"])
+
+    storyboardMenu --> entry["POST /shots/{shot_uid}/motion"]
+    entry --> getShotForGen["Get shot with its scene and storyboard"]
+    getShotForGen -.->|"None"| errShotNotFound
+    getShotForGen -.->|"Found"| isShotGenArchived{"Is the storyboard archived?"}
+    isShotGenArchived -.->|"Yes"| errRebreakdownArchived
+    isShotGenArchived -.->|"No"| isShotGenCreatorOrOverrider{"Is user the creator or an overrider?"}
+    isShotGenCreatorOrOverrider -.->|"Neither"| errNotCreatorOrOverrider
+    isShotGenCreatorOrOverrider -.->|"Yes"| getProject["Get project (resolved from the shot's storyboard)"]
+
+    %% ---- Project validations ----
+    errProjectNotFound(["Error: Project not found"])
+    errProjectNotOngoing(["Error: Project is not ongoing"])
+    errNoProjectTasks(["Error: No project tasks found"])
+    errTaskCompleted(["Error: Project task is already completed"])
+    getProject -.->|"Not found"| errProjectNotFound
+    getProject -.->|"Found"| isProjectOngoing{"Is project ongoing?"}
+    isProjectOngoing -.->|"No"| errProjectNotOngoing
+    isProjectOngoing -.->|"Yes"| getProjectTasks["Get project tasks or song list"]
+    getProjectTasks -.->|"None"| errNoProjectTasks
+    getProjectTasks -.->|"Found"| isTaskCompleted{"Is project task or song task completed?"}
+    isTaskCompleted -.->|"Yes"| errTaskCompleted
+    isTaskCompleted -.->|"No"| getUser["Get user"]
+
+    %% ---- User validations ----
+    errUserResigned(["Error: User has resigned"])
+    errUserNotAssigned(["Error: User is not assigned to the task"])
+    getUser --> hasUserResigned{"Has user resigned?"}
+    hasUserResigned -.->|"Yes"| errUserResigned
+    hasUserResigned -.->|"No"| checkUserRole{"What is the user role?"}
+    checkUserRole -.->|"Staff"| isUserAssigned{"Is user assigned to the task?"}
+    checkUserRole -.->|"Overrider (skips assignment)"| getAdminSettings["Get admin settings"]
+    isUserAssigned -.->|"No"| errUserNotAssigned
+    isUserAssigned -.->|"Yes"| getAdminSettings
+
+    %% ---- Admin validations ----
+    errClassLimitationsNotConfigured(["Error: Project class limitation is not configured in admin settings"])
+    errProjectClassNotAssigned(["Error: Project has no project class"])
+    errClassLimitNotFound(["Error: Limitation for this project class not found"])
+    errSpendLimitReached(["Error: Project spend limit reached"])
+    getAdminSettings --> hasClassLimitations{"Is project class limitation configured in admin settings?"}
+    hasClassLimitations -.->|"No"| errClassLimitationsNotConfigured
+    hasClassLimitations -.->|"Yes"| hasProjectSetting{"Does project have a spend limit setting?"}
+    hasProjectSetting -.->|"Yes"| isSpendLimitReached{"Is project spend limit reached?"}
+    hasProjectSetting -.->|"No"| getDefaultSpendLimit["Get default spend limit by project class"]
+    getDefaultSpendLimit --> hasProjectClass{"Is the project assigned to a project class?"}
+    hasProjectClass -.->|"No"| errProjectClassNotAssigned
+    hasProjectClass -.->|"Yes"| hasClassLimitEntry{"Does the project class have a limitation entry?"}
+    hasClassLimitEntry -.->|"No"| errClassLimitNotFound
+    hasClassLimitEntry -.->|"Yes"| isSpendLimitReached
+    isSpendLimitReached -.->|"Yes"| errSpendLimitReached
+    isSpendLimitReached -.->|"No"| getDefaultTextModel["Get default assistant or enhancer model"]
+
+    %% ---- Employee API key validations ----
+    errNoDefaultModel(["Error: No default model found"])
+    errNoApiKey(["Error: No API key found"])
+    getDefaultTextModel -.->|"None"| errNoDefaultModel
+    getDefaultTextModel -.->|"Found"| hasUserApiKey{"Does user have an API key?"}
+    hasUserApiKey -.->|"No"| errNoApiKey
+
+    %% Optional enhance from the pop up in the generate dialog
+    hasUserApiKey -.->|"Yes"| hasEnhanceUid{"Did user enhance the prompt in the pop up (enhance_uid)?"}
+
+    %% Optional enhance from the pop up in the generate dialog
+    hasEnhanceUid -.->|"Yes"| useEnhancedPrompt["Use the enhanced prompt (not enhanced again)"]
+    hasEnhanceUid -.->|"No"| hasShotReferences
+    useEnhancedPrompt --> hasShotReferences{"Did user add references?"}
+
+    %% References: from elements, image generations or image uploads. Every reference must be an image and be accessible.
+    errReferenceSourceInvalid(["Error: Reference must be an element, image generation or image upload"])
+    errReferenceNotFound(["Error: Reference not found"])
+    errReferenceNotImage(["Error: Reference must be an image"])
+    errTooManyReferences(["Error: Too many references for the selected model"])
+    errReferenceUnavailable(["Error: Reference image is unavailable"])
+    hasShotReferences -.->|"Yes"| isReferenceSourceAllowed{"Is each reference an element, image generation or image upload?"}
+    isReferenceSourceAllowed -.->|"No"| errReferenceSourceInvalid
+    isReferenceSourceAllowed -.->|"Yes"| doesReferenceExist{"Does each reference exist and is accessible (not deleted, user may use it)?"}
+    doesReferenceExist -.->|"No"| errReferenceNotFound
+    doesReferenceExist -.->|"Yes"| isReferenceImage{"Is each reference an image (not a video)?"}
+    isReferenceImage -.->|"No"| errReferenceNotImage
+    isReferenceImage -.->|"Yes"| isWithinReferenceLimit{"Is the number of references within the selected model limit?"}
+    isWithinReferenceLimit -.->|"No"| errTooManyReferences
+    isWithinReferenceLimit -.->|"Yes"| isReferenceReachable{"Is each reference file still reachable (image availability check)?"}
+    isReferenceReachable -.->|"No"| errReferenceUnavailable
+    isReferenceReachable -.->|"Yes"| afterReferences(["References OK"])
+    hasShotReferences -.->|"No"| afterReferences
+
+    errNoShotPrompt(["Error: Shot has no prompt. Please fill in the shot placeholder first"])
+    errKeyframeNotFound(["Error: Keyframe not found"])
+    errKeyframeNotReady(["Error: Keyframe is not ready to use"])
+    afterReferences --> resolveMotionPrompt{"Prompt = enhanced prompt, else payload prompt, else shot placeholder. Any prompt?"}
+    resolveMotionPrompt -.->|"No (all null)"| errNoShotPrompt
+    resolveMotionPrompt -.->|"Yes"| loadMotionSceneContext["Load scene context: scene_setting, time_of_day, lighting_mood, location_text (added to prompt), location_id (attached as image reference)"]
+    %% The FE decides the first frame (it already has keyframes[] and latest_generation) and sends keyframe_uid. The BE never picks it.
+    loadMotionSceneContext --> hasMotionKeyframeUid{"Did the FE send keyframe_uid (first frame)?"}
+    hasMotionKeyframeUid -.->|"Yes"| motionKeyframeBelongsToShot{"Does the keyframe exist and belong to this shot?"}
+    hasMotionKeyframeUid -.->|"No"| motionFromPrompt["Generate from prompt, scene context and references only"]
+    motionKeyframeBelongsToShot -.->|"No"| errKeyframeNotFound
+    motionKeyframeBelongsToShot -.->|"Yes"| isMotionKeyframeReady{"Is the keyframe a completed image?"}
+    isMotionKeyframeReady -.->|"No"| errKeyframeNotReady
+    isMotionKeyframeReady -.->|"Yes"| motionFromKeyframe["Send the keyframe as the first frame"]
+    motionFromKeyframe --> createMotionRecord
+    motionFromPrompt --> createMotionRecord["Create generation record and a new motion under this shot (status queued). Generating again adds another motion to the list"]
+    createMotionRecord --> queueVideoWorker["Queue video_generation worker (OpenRouter video)"]
+    queueVideoWorker --> queueUdinUploader
+    queueUdinUploader["Queue udin_uploader worker (upload result file to Udin)"]
+    queueUdinUploader --> returnQueuedGeneration(["Return generation as queued. It becomes the shot's latest generation once completed"])
+    returnQueuedGeneration --> finish
+
+    errShotNotFound --> finish
+    errProjectNotFound --> finish
+    errProjectNotOngoing --> finish
+    errNoProjectTasks --> finish
+    errTaskCompleted --> finish
+    errUserResigned --> finish
+    errUserNotAssigned --> finish
+    errClassLimitationsNotConfigured --> finish
+    errProjectClassNotAssigned --> finish
+    errClassLimitNotFound --> finish
+    errSpendLimitReached --> finish
+    errNoDefaultModel --> finish
+    errNoApiKey --> finish
+    errRebreakdownArchived --> finish
+    errNotCreatorOrOverrider --> finish
+    errReferenceSourceInvalid --> finish
+    errReferenceNotFound --> finish
+    errReferenceNotImage --> finish
+    errTooManyReferences --> finish
+    errReferenceUnavailable --> finish
+    errNoShotPrompt --> finish
+    errKeyframeNotFound --> finish
+    errKeyframeNotReady --> finish

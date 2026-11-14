@@ -16,6 +16,8 @@ from services.mysql.model.df_engine_menu_feature_mappings import DfEngineMenuFea
 from services.mysql.model.df_engine_menus import DfEngineMenus
 from services.mysql.model.df_engine_model_options import DfEngineModelOptions
 from services.mysql.model.df_engine_motion_details import DfEngineMotionDetails
+from services.mysql.model.df_engine_elements import DfEngineElements
+from services.mysql.model.df_engine_element_generations import DfEngineElementGenerations
 from services.mysql.model.df_engine_external_api_calls import DfEngineExternalApiCalls
 from services.mysql.model.df_engine_preferences import DfEnginePreferences
 from services.mysql.model.df_engine_project_settings import DfEngineProjectSettings
@@ -61,6 +63,8 @@ __all__ = [
     "DfEngineMenus",
     "DfEngineModelOptions",
     "DfEngineMotionDetails",
+    "DfEngineElements",
+    "DfEngineElementGenerations",
     "DfEngineExternalApiCalls",
     "DfEnginePreferences",
     "DfEngineProjectSettings",

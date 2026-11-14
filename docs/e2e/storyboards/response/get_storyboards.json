@@ -1,0 +1,48 @@
+[
+  {
+    "uid": "uid1",
+    "created_at": "15 October 2026, 11:43",
+    "updated_at": null,
+    "updater": null,
+    "name": "Storyboard name here",
+    "keyframes": ["list of all images"],
+    "motions": ["list of all videos"],
+    "description": "Storyboard description here",
+    "icon": "storyboard icon",
+    "color": "storyboard color",
+    "creator": {
+      "user_id": 68,
+      "image": null,
+      "nickname": "Bastian Armananta Pratama Putra"
+    },
+    "action": {
+      "can_fetch_detail": true,
+      "can_archieve": true,
+      "can_update": true,
+      "can_rebreakdown": true
+    }
+  },
+  {
+    "uid": "uid2",
+    "created_at": "15 October 2026, 11:43",
+    "updated_at": null,
+    "updater": null,
+    "name": "Storyboard name here",
+    "description": "Storyboard description here",
+    "keyframes": ["list of all images"],
+    "motions": ["list of all videos"],
+    "icon": "storyboard icon",
+    "color": "storyboard color",
+    "creator": {
+      "user_id": 68,
+      "image": null,
+      "nickname": "Bastian Armananta Pratama Putra"
+    },
+    "action": {
+      "can_fetch_detail": true,
+      "can_archieve": true,
+      "can_update": true,
+      "can_rebreakdown": true
+    }
+  }
+]

@@ -1,0 +1,22 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    %% Response: placeholder, latest_generation, latest_generation_uid, keyframes[], motions[], references[] (image type only)
+    %%   latest_generation = "keyframes" | "motions" | null (which list holds the newest completed item)
+    %%   latest_generation_uid = uid of that item. Lists are sorted newest first; every item has uid and status.
+    %%   The FE uses keyframes[] / latest_generation to choose the motion first frame (sent as keyframe_uid).
+    storyboardMenu --> getShotDetail["GET /shots/{shot_uid}"]
+    getShotDetail --> getShot["Get shot by ID with its scene and storyboard"]
+    getShot -.->|"None"| errShotNotFound(["Error: Shot not found"])
+    getShot -.->|"Found"| getShotMedia["Get the shot's keyframes (images), motions (videos), image references and placeholder prompt"]
+    getShotMedia --> resolveLatestGeneration["Resolve latest_generation: newest completed keyframe or motion (null when none generated)"]
+    resolveLatestGeneration --> isShotEditor{"Is user the creator or an overrider, and storyboard not archived?"}
+    isShotEditor -.->|"Yes"| returnShotActions(["Return shot detail, actions allowed (generate keyframe, generate motion)"])
+    isShotEditor -.->|"No"| returnShotReadOnly(["Return shot detail, view only"])
+    returnShotActions --> finish
+    returnShotReadOnly --> finish
+    errShotNotFound --> finish

@@ -1,0 +1,19 @@
+flowchart LR
+    %% Endpoint flow. Shared validation groups live in storyboard-elements.mmd
+    start([Start])
+    finish([End])
+    storyboardMenu["Storyboard menu"]
+    start --> storyboardMenu
+
+    errStoryboardNotFound(["Error: Storyboard not found"])
+
+    storyboardMenu --> getStoryboardFull["GET /storyboards/{story_uid}/details"]
+    getStoryboardFull --> getStoryboardWithScenes["Get storyboard by ID with its scenes and each scene's shots"]
+    getStoryboardWithScenes -.->|"None"| errStoryboardNotFound
+    getStoryboardWithScenes -.->|"Found"| isDetailsEditor{"Is user the creator or an overrider?"}
+    %% Archived storyboards are view only for everyone: generate motions / keyframes are blocked until unarchived
+    isDetailsEditor -.->|"Yes"| returnStoryboardFullActions(["Return storyboard with scenes, each scene has a list of shots, actions allowed (generate motions, generate keyframes) unless the storyboard is archived"])
+    isDetailsEditor -.->|"No"| returnStoryboardFullReadOnly(["Return storyboard with scenes, each scene has a list of shots, view only (no actions allowed)"])
+    returnStoryboardFullActions --> finish
+    returnStoryboardFullReadOnly --> finish
+    errStoryboardNotFound --> finish

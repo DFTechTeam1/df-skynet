@@ -18,6 +18,8 @@ from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.factory.df_engine_motion_details import DfEngineMotionDetailsFactory
+from services.mysql.factory.df_engine_elements import DfEngineElementsFactory
+from services.mysql.factory.df_engine_element_generations import DfEngineElementGenerationsFactory
 from services.mysql.factory.df_engine_external_api_calls import DfEngineExternalApiCallsFactory
 from services.mysql.factory.df_engine_preferences import DfEnginePreferencesFactory
 from services.mysql.factory.df_engine_prompt_templates import DfEnginePromptTemplatesFactory
@@ -51,6 +53,8 @@ __all__ = [
     "DfEngineMenusFactory",
     "DfEngineModelOptionsFactory",
     "DfEngineMotionDetailsFactory",
+    "DfEngineElementsFactory",
+    "DfEngineElementGenerationsFactory",
     "DfEngineExternalApiCallsFactory",
     "DfEnginePreferencesFactory",
     "DfEnginePromptTemplatesFactory",
