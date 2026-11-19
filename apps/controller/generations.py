@@ -62,7 +62,6 @@ from validations.model import (
     validate_image_model_parameter,
     validate_video_model_parameter,
     validate_total_image_references,
-    validate_image_availability,
 )
 from parser.openrouter import parse_openrouter_payload
 from services import frame_reference_color
@@ -305,15 +304,6 @@ class GenerationsController(CoreDependencies):
 
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
-            await validate_prompt(
-                ctx,
-                schema.prompt,
-                enhancer_model["model_id"],
-                api_key["key"],
-                user_id,
-                "prompt_enhancement",
-                record=validation_record(enhancer_model["id"], api_key["id"], project["id"], task),
-            )
 
             """Resolve tagged references by the source the FE sent; order follows the request."""
             upload_uids = [str(r.uid) for r in schema.references if r.source == "upload"]
@@ -354,7 +344,16 @@ class GenerationsController(CoreDependencies):
                     }
                 )
 
-            image_urls = await validate_image_availability([r["path"] for r in reference_records])
+            await validate_prompt(
+                ctx,
+                schema.prompt,
+                enhancer_model["model_id"],
+                api_key["key"],
+                user_id,
+                "prompt_enhancement",
+                record=validation_record(enhancer_model["id"], api_key["id"], project["id"], task),
+            )
+            image_urls = [r["path"] for r in reference_records]
             enhancer_input = merged_prompt
             if reference_records:
                 enhancer_input += "\nReferences (in image order): " + ", ".join(
@@ -600,22 +599,16 @@ class GenerationsController(CoreDependencies):
 
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
-            all_references, _, final = await asyncio.gather(
-                validate_image_availability(user_image_references),
-                validate_prompt(
-                    ctx,
-                    schema.prompt,
-                    ranking_model["model_id"],
-                    api_key["key"],
-                    user_id,
-                    "image_generation",
-                    record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
-                ),
-                asyncio.sleep(0, {"text": merged_prompt})
-                if schema.enhance_uid
-                else asyncio.sleep(0, {"text": merged_prompt}),
+            await validate_prompt(
+                ctx,
+                schema.prompt,
+                ranking_model["model_id"],
+                api_key["key"],
+                user_id,
+                "image_generation",
+                record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
             )
-            merged_prompt = final["text"]
+            all_references = user_image_references
 
             """Insert generation record"""
             generation = DfEngineGenerations(
@@ -831,22 +824,16 @@ class GenerationsController(CoreDependencies):
             api_key = await get_employee_api_key(ctx, project["id"], employee_user)
             await validate_api_key_limitation(ctx, project["id"], api_key["id"])
 
-            validated_image_references, _, final = await asyncio.gather(
-                validate_image_availability(user_image_references),
-                validate_prompt(
-                    ctx,
-                    schema.prompt,
-                    ranking_model["model_id"],
-                    api_key["key"],
-                    user_id,
-                    "image_generation" if schema.type == "image" else "video_generation",
-                    record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
-                ),
-                asyncio.sleep(0, {"text": merged_prompt})
-                if schema.enhance_uid
-                else asyncio.sleep(0, {"text": merged_prompt}),
+            await validate_prompt(
+                ctx,
+                schema.prompt,
+                ranking_model["model_id"],
+                api_key["key"],
+                user_id,
+                "image_generation" if schema.type == "image" else "video_generation",
+                record=validation_record(ranking_model["id"], api_key["id"], project["id"], task),
             )
-            merged_prompt = final["text"]
+            validated_image_references = user_image_references
 
             """Insert generation record"""
             generation = DfEngineGenerations(
@@ -930,13 +917,7 @@ class GenerationsController(CoreDependencies):
                         for ref in schema.frame_images
                     ]
 
-                    validated_frame_image_paths = await validate_image_availability(
-                        [frame["image"] for frame in unvalidated_frame_images]
-                    )
-                    validated_frame_images = [
-                        {"frame_type": frame["frame_type"], "image": image}
-                        for frame, image in zip(unvalidated_frame_images, validated_frame_image_paths)
-                    ]
+                    validated_frame_images = unvalidated_frame_images
 
                     color_frame_type = validate_video_model_parameter(
                         {**schema.parameter, "frame_images": validated_frame_images},

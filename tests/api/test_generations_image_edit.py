@@ -214,9 +214,6 @@ def fake_generation_backends(monkeypatch, fake_enhance):
     async def _fake_rank_prompt(*args, **kwargs):
         return None
 
-    async def _fake_validate_references(references, *args, **kwargs):
-        return references
-
     delay_calls = []
 
     class _FakeImageGenerationTask:
@@ -224,7 +221,6 @@ def fake_generation_backends(monkeypatch, fake_enhance):
             delay_calls.append((args, kwargs))
 
     monkeypatch.setattr("apps.controller.generations.validate_prompt", _fake_rank_prompt)
-    monkeypatch.setattr("apps.controller.generations.validate_image_availability", _fake_validate_references)
     monkeypatch.setattr("apps.controller.generations.image_generation", _FakeImageGenerationTask())
     return delay_calls
 

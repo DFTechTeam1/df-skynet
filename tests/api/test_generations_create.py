@@ -426,12 +426,8 @@ def _color_payload(menu, feature, model, frames, color="#4cfb2b"):
 
 @pytest.fixture
 def color_env(monkeypatch, tmp_path):
-    """Frame availability check is network-bound -> stub it; color files go to a temp dir."""
+    """Color files go to a temp dir."""
 
-    async def _same(urls):
-        return list(urls)
-
-    monkeypatch.setattr("apps.controller.generations.validate_image_availability", _same)
     monkeypatch.setattr("services.frame_reference_color.FRAME_COLOR_DIR", str(tmp_path))
     return tmp_path
 
