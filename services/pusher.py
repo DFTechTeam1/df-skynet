@@ -55,3 +55,18 @@ def broadcast_generation_status(
         logging.exception(f"pusher broadcast failed user_id={user_id} gid={gid} status={status}")
     if status in ("success", "failed"):
         broadcast_token()
+
+
+def broadcast_prompt_enhancer(
+    project_uid: str, task_uid: str, user_id: int, gid: str, status: str, error: Optional[str] = None
+) -> None:
+    """status is "success" or "failed", same as the generation-status event."""
+    try:
+        get_pusher().trigger(
+            f"user-generation-project-{project_uid}-task-{task_uid}-user-{user_id}",
+            "prompt-enhancer",
+            {"s": status, "gid": gid, "e": error},
+        )
+    except Exception:
+        logging.exception(f"pusher prompt-enhancer broadcast failed user_id={user_id} gid={gid} status={status}")
+    broadcast_token()

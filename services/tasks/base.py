@@ -209,6 +209,11 @@ def _redelivery_count(generation_id: int, task_id: str, attempt: int) -> int:
 
 
 class GenerationTask(celery_app.Task):
+    def _broadcast(
+        self, project_uid: str, task_uid: str, user_id: int, gid: str, status: str, error: Optional[str] = None
+    ) -> None:
+        broadcast_generation_status(project_uid, task_uid, user_id, gid, status, error=error)
+
     def _attempt_duration_ms(self) -> Optional[int]:
         """Milliseconds since this attempt's `before_start`, or None if it never ran. The start time lives on
         `self.request`, which Celery creates per execution, so concurrent tasks and retries never share it."""
@@ -245,9 +250,7 @@ class GenerationTask(celery_app.Task):
         context = _generation_broadcast_context(generation_id, user_id)
         if context:
             gid, project_uid, task_uid, user_id = context
-            broadcast_generation_status(
-                project_uid, task_uid, user_id, gid, STAGE_STATUSES.get(self.name, "processing")
-            )
+            self._broadcast(project_uid, task_uid, user_id, gid, STAGE_STATUSES.get(self.name, "processing"))
 
     def on_retry(self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: ExceptionInfo) -> None:
         detail = (
@@ -269,7 +272,7 @@ class GenerationTask(celery_app.Task):
         context = _generation_broadcast_context(generation_id, user_id)
         if context:
             gid, project_uid, task_uid, user_id = context
-            broadcast_generation_status(project_uid, task_uid, user_id, gid, "retry", error=str(exc))
+            self._broadcast(project_uid, task_uid, user_id, gid, "retry", error=str(exc))
 
     def on_success(self, retval: Any, task_id: str, args: tuple, kwargs: dict) -> None:
         _release_reupload_lock(args[0] if args else kwargs["generation_id"])
@@ -317,4 +320,4 @@ class GenerationTask(celery_app.Task):
         context = _generation_broadcast_context(generation_id, user_id)
         if context:
             gid, project_uid, task_uid, user_id = context
-            broadcast_generation_status(project_uid, task_uid, user_id, gid, "failed", error=str(exc))
+            self._broadcast(project_uid, task_uid, user_id, gid, "failed", error=str(exc))

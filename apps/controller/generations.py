@@ -1,5 +1,5 @@
 import asyncio
-import re
+import json
 import traceback
 from datetime import timedelta
 from decimal import Decimal
@@ -7,6 +7,8 @@ from typing import Any, Optional
 from uuid import UUID
 from fastapi import status, Path, Query, Depends, Request
 from fastapi import Response as FastAPIResponse
+from fastapi.responses import JSONResponse
+from middlewares.lang import current_lang, resolve_message
 from fastapi_controller import controller
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload, load_only
@@ -57,7 +59,7 @@ from services.search.query import group_reference_picker, search_project_files, 
 from services.model_management import ModelManagement
 from utils import local_time
 from utils.serializer import serialize
-from validations.prompt import enhance_prompt, validate_prompt
+from validations.prompt import validate_prompt
 from validations.model import (
     validate_image_model_parameter,
     validate_video_model_parameter,
@@ -68,6 +70,7 @@ from services import frame_reference_color
 from services.redis import CacheKeys
 from services.tasks.image_generation import image_generation
 from services.tasks.video_generation import video_generation
+from services.tasks.prompt_enhancement import prompt_enhancement
 from services.dto.format_response import GenerationResultRecord
 from utils.formatter import format_datetime, format_user_employees
 from apps.dependency.rate_limitter import generation_throttle
@@ -240,7 +243,8 @@ class GenerationsController(CoreDependencies):
         description=(
             "Refines and expands the user's original prompt for the generation task "
             "identified by `task_uid`, adding clarity and detail to improve output quality. "
-            "Returns the enhanced prompt without starting a new generation."
+            "Queues the enhancement and returns the generation uid (`gid`) right away; the result arrives via "
+            "the `prompt-enhancer` Pusher event, then fetch it from `/generation-enhance-results/{generation_uid}`."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
@@ -362,16 +366,6 @@ class GenerationsController(CoreDependencies):
             if schema.params:
                 enhancer_input += "\nAdditional parameters to take into account: " + str(schema.params)
 
-            enhanced = await enhance_prompt(
-                enhancer_input, enhancer_model["model_id"], api_key["key"], user_id, image_urls
-            )
-            """Normalize every user-passed uid to the template format `<refer to uid>`."""
-            for r in reference_records:
-                uid = str(r["uid"])
-                enhanced["text"] = re.sub(rf"(?<!<refer to ){re.escape(uid)}", f"<refer to {uid}>", enhanced["text"])
-                if f"<refer to {uid}>" not in enhanced["text"]:
-                    enhanced["text"] += f" <refer to {uid}>"
-
             generation = DfEngineGenerations(
                 kind=GenerationKinds.enhancer,
                 model_id=enhancer_model["id"],
@@ -384,12 +378,12 @@ class GenerationsController(CoreDependencies):
                 song_id=task["id"] if task.get("is_song") else None,
                 prompt=schema.prompt,
                 full_prompt=merged_prompt,
-                response=enhanced["text"],
-                status=GenerationStatuses.success,
-                status_code=enhanced["status_code"],
-                token_usage=enhanced["usage"].get("total_tokens"),
-                cost=enhanced["usage"].get("cost"),
-                exchange_rate=await self.db.run_sync(get_usd_rate),
+                parameter={
+                    "references": [
+                        {"uid": str(r["uid"]), "source": r["source"], "name": r["name"]} for r in reference_records
+                    ]
+                },
+                status=GenerationStatuses.queued,
                 created_by=user_id,
             )
             self.db.add(generation)
@@ -405,25 +399,21 @@ class GenerationsController(CoreDependencies):
                     else DfEngineGenerationReferences(generation_id=generation.id, result_id=record["id"])
                 )
                 self.db.add(link)
-            await self.db.flush()
+            await self.db.commit()
+            await dispatch_generation(
+                self.db,
+                generation,
+                prompt_enhancement,
+                user_id,
+                api_key=api_key["key"],
+                model_id=enhancer_model["model_id"],
+                enhancer_input=enhancer_input,
+                image_urls=image_urls,
+                reference_uids=[str(r["uid"]) for r in reference_records],
+            )
 
-            response.data = PromptEnhancerResult(
-                prompt=enhanced["text"],
-                enhance_uid=generation.uid,  # type: ignore
-                references=[{"uid": r["uid"], "source": r["source"], "name": r["name"]} for r in reference_records],  # type: ignore
-            )
-            await set_json(
-                ctx.redis,
-                cache_key.enhancer_detail(str(generation.uid)),
-                {
-                    "id": generation.id,
-                    "prompt": generation.prompt,
-                    "full_prompt": generation.full_prompt,
-                    "response": enhanced["text"],
-                    "enhance_uid": str(generation.uid),
-                },
-            )
-            logging.info(f"user={user_id} enhanced prompt task_uid={task_uid} enhance_uid={generation.uid}")
+            response.data = generation.uid
+            logging.info(f"user={user_id} queued prompt enhance task_uid={task_uid} gid={generation.uid}")
         except BaseError:
             raise
         except Exception:
@@ -1011,6 +1001,56 @@ class GenerationsController(CoreDependencies):
             logging.info(
                 f"user={user_id} queued {schema.type} generation task_uid={task_uid} generation_uid={generation.uid}"
             )
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/generation-enhance-results/{generation_uid}",
+        summary="Fetch enhanced prompt result.",
+        description="Call this after the `prompt-enhancer` Pusher event reports success to fetch the enhanced prompt.",
+        status_code=status.HTTP_200_OK,
+        tags=["Generations"],
+        response_model=Response,
+    )
+    async def generation_with_generation_uid_to_fetch_enhance_result(
+        self, generation_uid: UUID = Path(description="Generation UID returned by the enhance endpoint.")
+    ) -> Response:
+        response = Response()
+        user_id = int(self.user["user_id"])
+        try:
+            filters = [
+                DfEngineGenerations.uid == str(generation_uid),  # type: ignore
+                DfEngineGenerations.kind == GenerationKinds.enhancer,  # type: ignore
+            ]
+            if not has_override(self.user["roles"]):
+                filters.append(DfEngineGenerations.created_by == user_id)  # type: ignore
+            generation = await query(self.db, DfEngineGenerations, filters=tuple(filters), fetch_one=True)
+            if not generation:
+                raise DataNotFoundError(message="enhanced_prompt_not_found")
+            if generation.status == GenerationStatuses.failed:
+                try:
+                    error = (json.loads(generation.response or "{}").get("error") or {}).get("message")
+                except (ValueError, AttributeError):
+                    error = None
+                error = error or resolve_message("prompt_enhance_failed", current_lang.get())
+                return JSONResponse(
+                    {"message": error, "data": None, "error": error},
+                )  # type: ignore
+            if generation.status != GenerationStatuses.success:
+                return JSONResponse(  # type: ignore
+                    {"message": resolve_message("enhance_not_ready", current_lang.get()), "data": None}
+                )
+
+            response.data = PromptEnhancerResult(
+                prompt=generation.response,  # type: ignore
+                enhance_uid=generation.uid,  # type: ignore
+                references=(generation.parameter or {}).get("references", []),  # type: ignore
+            )
+            logging.info(f"user={user_id} fetched enhance result gid={generation_uid}")
         except BaseError:
             raise
         except Exception:

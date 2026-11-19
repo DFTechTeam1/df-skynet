@@ -34,6 +34,7 @@ class GenerationsMessage:
             "prompt_ranking_failed": "Kami tidak bisa memverifikasi prompt ini saat ini. Silakan coba lagi nanti.",
             "prompt_enhance_failed": "Kami tidak bisa menyempurnakan prompt ini saat ini. Silakan coba lagi nanti.",
             "enhanced_prompt_not_found": "Prompt hasil enhance ini tidak ditemukan.",
+            "enhance_not_ready": "Prompt hasil enhance ini masih diproses.",
             "ranking_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk memverifikasi prompt. Silakan hubungi admin.",
             "enhancer_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk menyempurnakan prompt. Silakan hubungi admin.",
             "api_key_token_usage_limit_exceeded": "API key ini sudah mencapai batas penggunaannya dan tidak bisa dipakai untuk generate lagi.",

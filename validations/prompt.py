@@ -302,7 +302,7 @@ async def validate_prompt(
 
 
 async def enhance_prompt(
-    prompt: str, model_id: str, api_key: str, user_id: int, image_urls: list[str] | None = None
+    prompt: str, model_id: str, api_key: str, user_id: int, image_urls: list[str] | None = None, timeout: int = 10
 ) -> dict:
     """Returns OpenRouter's raw `/responses` body so the caller can persist
     status_code/usage alongside the generated text."""
@@ -328,7 +328,7 @@ async def enhance_prompt(
             }
         ]
 
-    caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+    caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
     try:
         response = await caller.openrouter(
             "POST",

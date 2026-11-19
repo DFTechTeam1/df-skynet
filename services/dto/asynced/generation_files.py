@@ -828,6 +828,8 @@ async def get_enhance_prompt(ctx: ConnectionContext, enhance_uid: UUID) -> dict[
     )
     if not generation:
         raise DataNotFoundError(message="enhanced_prompt_not_found")
+    if generation.status != GenerationStatuses.success:
+        raise DataValidationError(message="enhance_not_ready")
 
     data = {
         "id": generation.id,

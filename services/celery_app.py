@@ -13,6 +13,7 @@ celery_app = Celery(
         "services.tasks.udin_sweep",
         "services.tasks.generation_reaper",
         "services.tasks.search_sync",
+        "services.tasks.prompt_enhancement",
     ],
 )
 
@@ -29,6 +30,7 @@ celery_app.conf.update(
     task_routes={
         "df_engine.image_generation": {"queue": "image_generation"},
         "df_engine.video_generation": {"queue": "video_generation"},
+        "df_engine.prompt_enhancement": {"queue": "prompt_enhancement"},
         "df_engine.udin_uploader": {"queue": "udin_uploads"},
         "df_engine.udin_sweep": {"queue": "udin_uploads"},
         "df_engine.generation_reaper": {"queue": "udin_uploads"},
