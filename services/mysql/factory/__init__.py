@@ -2,7 +2,9 @@ from services.mysql.factory.df_engine_api_key_rotation_issues import DfEngineApi
 from services.mysql.factory.df_engine_api_key_snapshots import DfEngineApiKeySnapshotsFactory
 from services.mysql.factory.df_engine_api_keys import DfEngineApiKeysFactory
 from services.mysql.factory.df_engine_chat_assistants import DfEngineChatAssistantsFactory
-from services.mysql.factory.df_engine_chat_assistant_image_references import DfEngineChatAssistantImageReferencesFactory
+from services.mysql.factory.df_engine_chat_attachments import DfEngineChatAttachmentsFactory
+from services.mysql.factory.df_engine_chat_references import DfEngineChatReferencesFactory
+from services.mysql.factory.df_engine_chat_sessions import DfEngineChatSessionsFactory
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_generation_reconciliation_issues import (
@@ -13,6 +15,7 @@ from services.mysql.factory.df_engine_generation_favourites import DfEngineGener
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_generation_uploads import DfEngineGenerationUploadsFactory
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+from services.mysql.factory.df_engine_guardrail_validations import DfEngineGuardrailValidationsFactory
 from services.mysql.factory.df_engine_keyframe_details import DfEngineKeyframeDetailsFactory
 from services.mysql.factory.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappingsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
@@ -37,7 +40,9 @@ __all__ = [
     "DfEngineApiKeySnapshotsFactory",
     "DfEngineApiKeysFactory",
     "DfEngineChatAssistantsFactory",
-    "DfEngineChatAssistantImageReferencesFactory",
+    "DfEngineChatAttachmentsFactory",
+    "DfEngineChatReferencesFactory",
+    "DfEngineChatSessionsFactory",
     "DfEngineFeaturePromptMappingsFactory",
     "DfEngineFeaturesFactory",
     "DfEngineGenerationReconciliationIssuesFactory",
@@ -46,6 +51,7 @@ __all__ = [
     "DfEngineGenerationResultsFactory",
     "DfEngineGenerationUploadsFactory",
     "DfEngineGenerationsFactory",
+    "DfEngineGuardrailValidationsFactory",
     "DfEngineKeyframeDetailsFactory",
     "DfEngineMenuFeatureMappingsFactory",
     "DfEngineMenusFactory",

@@ -1,0 +1,164 @@
+from typing import Any, Optional
+from error import DataValidationError
+from services.mysql.model import EntertainmentTaskSongs, ProjectSongLists, Projects, ProjectTasks
+from services.repository.base import BaseRepository
+
+
+class ProjectRepository(BaseRepository):
+    """Lookups for projects and their tasks (production tasks and entertainment songs).
+
+    Every `get_*` method takes the same arguments and returns the same thing:
+
+    Args:
+        filters: SQLAlchemy conditions that identify the row,
+            e.g. `(Projects.uid == project_uid,)`.
+        columns: Columns to return. Each method documents its own default.
+        options: SQLAlchemy loader options, e.g. `(selectinload(Projects.project_tasks),)`.
+        joins: Tables to join, each a join target (e.g. `Projects.project_tasks`) or an explicit
+            `(target, onclause)` / `(target, onclause, is_outer)` tuple.
+        raise_if_null: Raise an error when nothing matches (default `True`).
+            Set to `False` to get `None` back instead.
+        context: Values that fill `{placeholders}` in the not-found message,
+            e.g. `{"uid": project_uid}` for "Project {uid} not found." Ignored if the message has none.
+
+    Returns:
+        A `Row` with the requested columns. Read values as attributes, e.g. `project.name`.
+        If only one column is requested, that value is returned directly instead of a `Row`.
+        `None` when nothing matches and `raise_if_null=False`.
+
+    Example:
+        >>> repo = ProjectRepository(db)
+        >>> project = await repo.get_project((Projects.uid == project_uid,))
+        >>> project.name, project.classification, project.status
+        >>> task = await repo.get_production_task((ProjectTasks.uid == uid,), raise_if_null=False)  # None if missing
+    """
+
+    async def get_project(
+        self,
+        filters: Optional[tuple[Any, ...]] = None,
+        columns: Optional[tuple[Any, ...]] = None,
+        options: Optional[tuple[Any, ...]] = None,
+        joins: Optional[tuple[Any, ...]] = None,
+        raise_if_null: bool = True,
+        context: Optional[dict[str, Any]] = None,
+        fetch_one: bool = True,
+        limit: Optional[int] = None,
+    ) -> Any:
+        """Get a single project. Columns default to `name`, `classification` and `status`.
+
+        Raises:
+            DataValidationError: `project_not_found` (HTTP 422) when nothing matches
+                and `raise_if_null=True`.
+        """
+        return await self._get(
+            Projects,
+            (Projects.name, Projects.classification, Projects.status),
+            "project_not_found",
+            filters,
+            columns,
+            options,
+            joins,
+            raise_if_null,
+            context,
+            fetch_one,
+            limit,
+        )
+
+    async def get_production_task(
+        self,
+        filters: Optional[tuple[Any, ...]] = None,
+        columns: Optional[tuple[Any, ...]] = None,
+        options: Optional[tuple[Any, ...]] = None,
+        joins: Optional[tuple[Any, ...]] = None,
+        raise_if_null: bool = True,
+        context: Optional[dict[str, Any]] = None,
+        fetch_one: bool = True,
+        limit: Optional[int] = None,
+    ) -> Any:
+        """Get a single production task (`project_tasks` table).
+
+        Columns default to `id`, `uid`, `project_id`, `name` and `status`.
+
+        Raises:
+            DataValidationError: `project_task_not_found` (HTTP 422) when nothing matches
+                and `raise_if_null=True`.
+        """
+        return await self._get(
+            ProjectTasks,
+            (ProjectTasks.id, ProjectTasks.uid, ProjectTasks.project_id, ProjectTasks.name, ProjectTasks.status),
+            "project_task_not_found",
+            filters,
+            columns,
+            options,
+            joins,
+            raise_if_null,
+            context,
+            fetch_one,
+            limit,
+        )
+
+    async def get_entertainment_task(
+        self,
+        filters: Optional[tuple[Any, ...]] = None,
+        columns: Optional[tuple[Any, ...]] = None,
+        options: Optional[tuple[Any, ...]] = None,
+        joins: Optional[tuple[Any, ...]] = None,
+        raise_if_null: bool = True,
+        context: Optional[dict[str, Any]] = None,
+        fetch_one: bool = True,
+        limit: Optional[int] = None,
+    ) -> Any:
+        """Get a single entertainment task, which is a song (`project_song_lists` table).
+
+        Columns default to `id`, `uid`, `project_id`, `name` and `status`. A song has no status of
+        its own: `status` comes from `entertainment_task_songs` (left-joined, so it is `None` when
+        the song has no assignment yet). If a song has several assignments, the first one is used.
+
+        Raises:
+            DataValidationError: `project_song_not_found` (HTTP 422) when nothing matches
+                and `raise_if_null=True`.
+        """
+        joins = (
+            (EntertainmentTaskSongs, EntertainmentTaskSongs.project_song_list_id == ProjectSongLists.id, True),
+            *(joins or ()),
+        )
+        return await self._get(
+            ProjectSongLists,
+            (
+                ProjectSongLists.id,
+                ProjectSongLists.uid,
+                ProjectSongLists.project_id,
+                ProjectSongLists.name,
+                EntertainmentTaskSongs.status,
+            ),
+            "project_song_not_found",
+            filters,
+            columns,
+            options,
+            joins,
+            raise_if_null,
+            context,
+            fetch_one,
+            limit,
+        )
+
+    async def get_task(self, task_uid: str) -> dict[str, Any]:
+        """Find which kind of task `task_uid` is, and its id.
+
+        Returns:
+            `{"type": "production" | "entertainment", "id": int}`.
+
+        Raises:
+            DataValidationError: `project_task_not_found` (HTTP 422) when it is neither.
+        """
+        task_id = await self.get_production_task(
+            (ProjectTasks.uid == task_uid,), (ProjectTasks.id,), raise_if_null=False
+        )
+        if task_id:
+            return {"type": "production", "id": task_id}
+        task_id = await self.get_entertainment_task(
+            (ProjectSongLists.uid == task_uid,), (ProjectSongLists.id,), raise_if_null=False
+        )
+        if task_id:
+            return {"type": "entertainment", "id": task_id}
+        raise DataValidationError(message="project_task_not_found")
