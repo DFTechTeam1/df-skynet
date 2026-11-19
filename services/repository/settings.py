@@ -15,6 +15,8 @@ class AdminSettingRepository(BaseRepository):
         context: Optional[dict[str, Any]] = None,
         fetch_one: bool = True,
         limit: Optional[int] = None,
+        group_by: Optional[tuple[Any, ...]] = None,
+        having: Optional[tuple[Any, ...]] = None,
     ) -> Any:
         """Get setting row(s) with `value` already JSON-decoded (`None` when empty).
 
@@ -32,6 +34,8 @@ class AdminSettingRepository(BaseRepository):
             context,
             fetch_one,
             limit,
+            group_by,
+            having,
         )
         for row in result if isinstance(result, list) else [result]:
             if isinstance(row, dict) and "value" in row:

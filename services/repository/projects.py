@@ -43,6 +43,8 @@ class ProjectRepository(BaseRepository):
         context: Optional[dict[str, Any]] = None,
         fetch_one: bool = True,
         limit: Optional[int] = None,
+        group_by: Optional[tuple[Any, ...]] = None,
+        having: Optional[tuple[Any, ...]] = None,
     ) -> Any:
         """Get a single project. Columns default to `name`, `classification` and `status`.
 
@@ -62,6 +64,8 @@ class ProjectRepository(BaseRepository):
             context,
             fetch_one,
             limit,
+            group_by,
+            having,
         )
 
     async def get_production_task(
@@ -74,6 +78,8 @@ class ProjectRepository(BaseRepository):
         context: Optional[dict[str, Any]] = None,
         fetch_one: bool = True,
         limit: Optional[int] = None,
+        group_by: Optional[tuple[Any, ...]] = None,
+        having: Optional[tuple[Any, ...]] = None,
     ) -> Any:
         """Get a single production task (`project_tasks` table).
 
@@ -95,6 +101,8 @@ class ProjectRepository(BaseRepository):
             context,
             fetch_one,
             limit,
+            group_by,
+            having,
         )
 
     async def get_entertainment_task(
@@ -107,6 +115,8 @@ class ProjectRepository(BaseRepository):
         context: Optional[dict[str, Any]] = None,
         fetch_one: bool = True,
         limit: Optional[int] = None,
+        group_by: Optional[tuple[Any, ...]] = None,
+        having: Optional[tuple[Any, ...]] = None,
     ) -> Any:
         """Get a single entertainment task, which is a song (`project_song_lists` table).
 
@@ -140,6 +150,8 @@ class ProjectRepository(BaseRepository):
             context,
             fetch_one,
             limit,
+            group_by,
+            having,
         )
 
     async def get_task(self, task_uid: str) -> dict[str, Any]:

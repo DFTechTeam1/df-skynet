@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import Boolean, DateTime, ForeignKey
 from sqlalchemy.dialects.mysql import BIGINT
 
@@ -14,3 +14,6 @@ class ProjectPersonInCharges(SQLModel, table=True):
     is_lead: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     created_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+
+    project: Optional["Projects"] = Relationship(back_populates="project_person_in_charges")  # type: ignore
+    pic: Optional["Employees"] = Relationship(back_populates="project_person_in_charges")  # type: ignore

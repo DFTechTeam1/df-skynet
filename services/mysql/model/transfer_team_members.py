@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.mysql import BIGINT, CHAR, TINYINT
 
@@ -34,3 +34,17 @@ class TransferTeamMembers(SQLModel, table=True):
     completed_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     created_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+
+    project: Optional["Projects"] = Relationship(back_populates="transfer_team_members")  # type: ignore
+    employee: Optional["Employees"] = Relationship(  # type: ignore
+        back_populates="transfer_team_members",
+        sa_relationship_kwargs={"foreign_keys": "[TransferTeamMembers.employee_id]"},
+    )
+    request_to_employee: Optional["Employees"] = Relationship(  # type: ignore
+        back_populates="incoming_transfer_requests",
+        sa_relationship_kwargs={"foreign_keys": "[TransferTeamMembers.request_to]"},
+    )
+    requested_by_employee: Optional["Employees"] = Relationship(  # type: ignore
+        back_populates="outgoing_transfer_requests",
+        sa_relationship_kwargs={"foreign_keys": "[TransferTeamMembers.requested_by]"},
+    )

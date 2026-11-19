@@ -41,7 +41,7 @@ from services.mysql.model.project_person_in_charges import ProjectPersonInCharge
 from services.mysql.model.project_song_lists import ProjectSongLists
 from services.mysql.model.project_task_pics import ProjectTaskPics
 from services.mysql.model.project_tasks import ProjectTasks
-from services.mysql.model.projects import Projects
+from services.mysql.model.projects import PROJECT_STATUS_ONGOING, Projects
 from services.mysql.model.transfer_team_members import TransferTeamMembers
 from services.mysql.model.users import Users
 
@@ -90,6 +90,7 @@ __all__ = [
     "ProjectTaskPics",
     "ProjectTasks",
     "Projects",
+    "PROJECT_STATUS_ONGOING",
     "TransferTeamMembers",
     "Users",
 ]

@@ -14,6 +14,8 @@ class MenuRepository(BaseRepository):
         context: Optional[dict[str, Any]] = None,
         fetch_one: bool = True,
         limit: Optional[int] = None,
+        group_by: Optional[tuple[Any, ...]] = None,
+        having: Optional[tuple[Any, ...]] = None,
     ) -> Any:
         return await self._get(
             DfEngineMenus,
@@ -27,4 +29,6 @@ class MenuRepository(BaseRepository):
             context,
             fetch_one,
             limit,
+            group_by,
+            having,
         )
