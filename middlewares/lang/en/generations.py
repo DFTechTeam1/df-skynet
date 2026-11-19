@@ -34,6 +34,7 @@ class GenerationsMessage:
             "prompt_ranking_failed": "We couldn't verify this prompt right now. Please try again later.",
             "prompt_enhance_failed": "We couldn't enhance this prompt right now. Please try again later.",
             "enhanced_prompt_not_found": "This enhanced prompt could not be found.",
+            "enhance_not_ready": "This enhanced prompt is still being processed.",
             "ranking_model_not_configured": "No text model is configured to verify prompts. Please contact an administrator.",
             "enhancer_model_not_configured": "No text model is configured to enhance prompts. Please contact an administrator.",
             "api_key_token_usage_limit_exceeded": "This API key has reached its usage limit and can no longer be used to generate.",

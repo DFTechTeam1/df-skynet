@@ -21,14 +21,19 @@ def _payload(menu, feature, **overrides):
 
 @pytest.fixture
 def fake_enhancer(monkeypatch):
-    async def _enhance(prompt, model_id, key, user_id, image_urls=None):
-        return {"text": "enhanced!", "status_code": 200, "usage": {"total_tokens": 3, "cost": 0.1}}
+    """The endpoint only queues the Celery task; capture the `.delay` call instead of hitting the broker."""
+    delay_calls = []
 
-    monkeypatch.setattr("apps.controller.generations.enhance_prompt", _enhance)
+    class _FakeEnhanceTask:
+        def delay(self, *args, **kwargs):
+            delay_calls.append((args, kwargs))
+
+    monkeypatch.setattr("apps.controller.generations.prompt_enhancement", _FakeEnhanceTask())
+    return delay_calls
 
 
 @pytest.mark.asyncio
-async def test_enhance_returns_and_records_the_enhanced_prompt(
+async def test_enhance_queues_and_returns_the_generation_uid(
     authed_client,
     project_task,
     generation_menu_feature,
@@ -39,18 +44,19 @@ async def test_enhance_returns_and_records_the_enhanced_prompt(
     fake_enhancer,
     db_session,
 ):
-    """200; the enhanced text is returned and an `enhancer` generation row is stored against the task."""
+    """200; only the generation uid is returned, a queued `enhancer` row is stored and the task is dispatched."""
     menu, feature = generation_menu_feature
     resp = await authed_client.call("POST", f"{URL}/{project_task.uid}", json=_payload(menu, feature))
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["prompt"] == "enhanced!"
     row = (
-        (await db_session.execute(select(DfEngineGenerations).where(DfEngineGenerations.uid == data["enhance_uid"])))
+        (await db_session.execute(select(DfEngineGenerations).where(DfEngineGenerations.uid == data["gid"])))
         .scalars()
         .first()
     )
     assert row.task_id == project_task.id and row.song_id is None
+    assert row.status == "queued"
+    assert len(fake_enhancer) == 1
 
 
 @pytest.mark.asyncio
@@ -108,7 +114,7 @@ async def test_enhance_unexpected_failure_is_500(
     async def _boom(*a, **k):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("apps.controller.generations.enhance_prompt", _boom)
+    monkeypatch.setattr("apps.controller.generations.dispatch_generation", _boom)
     menu, feature = generation_menu_feature
     resp = await authed_client.call(
         "POST", f"{URL}/{project_task.uid}", json=_payload(menu, feature), raise_for_status=False
@@ -151,3 +157,23 @@ async def test_enhance_rejects_reference_not_tagged_in_prompt(
         "POST", f"{URL}/{project_task.uid}", json=_payload(menu, feature, references=refs), raise_for_status=False
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_enhance_result_not_ready_while_queued(
+    authed_client,
+    project_task,
+    generation_menu_feature,
+    pic_api_key,
+    ranking_model,
+    generation_project_settings,
+    fake_generation_backends,
+    fake_enhancer,
+):
+    """GET result is 200 with data null until the worker marks the row success."""
+    menu, feature = generation_menu_feature
+    resp = await authed_client.call("POST", f"{URL}/{project_task.uid}", json=_payload(menu, feature))
+    gid = resp.json()["data"]["gid"]
+    result = await authed_client.call("GET", f"/api/generation-enhance-results/{gid}", raise_for_status=False)
+    assert result.status_code == 200
+    assert result.json() == {"message": resolve_message("enhance_not_ready", "en"), "data": None}

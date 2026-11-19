@@ -130,7 +130,7 @@ sh script/run_server.sh --env dev   # API on http://127.0.0.1:10000 (stg: 11000,
 Generation needs the Celery workers too (the API alone will accept jobs but nothing will process them):
 
 ```bash
-celery -A services.celery_app:celery_app worker -Q image_generation,video_generation -n generation@%h
+celery -A services.celery_app:celery_app worker -Q image_generation,video_generation,prompt_enhancement -n generation@%h
 celery -A services.celery_app:celery_app worker -Q udin_uploads -n udin@%h
 celery -A services.celery_app:celery_app beat      # periodic udin_sweep
 ```
