@@ -63,7 +63,7 @@ def broadcast_prompt_enhancer(
     """status is "success" or "failed", same as the generation-status event."""
     try:
         get_pusher().trigger(
-            f"user-generation-project-{project_uid}-task-{task_uid}-user-{user_id}",
+            f"prompt-enhancer-project-{project_uid}-task-{task_uid}-user-{user_id}",
             "prompt-enhancer",
             {"s": status, "gid": gid, "e": error},
         )
