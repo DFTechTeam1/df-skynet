@@ -1,3 +1,4 @@
+import asyncio
 from sqlalchemy.orm import load_only
 import json
 import time
@@ -8,6 +9,17 @@ from services.mysql import get_db, make_sync_session, query, query_sync
 from services.mysql.model import DfEngineExternalApiCalls, Employees
 from services.openrouter_credits import refresh_credits, refresh_credits_sync
 from log import logging
+
+
+_background_tasks: set[asyncio.Task] = set()  # keeps refs so tasks aren't garbage-collected mid-flight
+
+
+async def _refresh_credits_background() -> None:
+    try:
+        async for db in get_db():
+            await refresh_credits(db)
+    except Exception:
+        logging.exception("openrouter credits refresh failed")
 
 
 class APICaller:
@@ -144,11 +156,9 @@ class APICaller:
             )
 
         if type == "openrouter" and OPENROUTER_MANAGEMENT_KEY:
-            try:
-                async for db in get_db():
-                    await refresh_credits(db)
-            except Exception:
-                logging.exception("openrouter credits refresh failed")
+            task = asyncio.create_task(_refresh_credits_background())
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
         if raise_for_status:
             response.raise_for_status()

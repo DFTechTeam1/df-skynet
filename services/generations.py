@@ -1,3 +1,4 @@
+import asyncio
 import json
 import traceback
 from typing import Any
@@ -75,7 +76,7 @@ def validation_record(model_id: int, api_key_id: int, project_id: int, task: dic
 async def dispatch_generation(db: AsyncSession, generation: Any, task: Any, user_id: int, **kwargs: Any) -> None:
     """Enqueue the Celery task; if the broker rejects it, mark the committed row failed so it isn't a ghost `pending`."""
     try:
-        task.delay(generation.id, user_id, **kwargs)
+        await asyncio.to_thread(task.delay, generation.id, user_id, **kwargs)
     except Exception:
         logging.error(traceback.format_exc())
         generation.status = GenerationStatuses.failed

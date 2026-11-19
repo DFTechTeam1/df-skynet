@@ -328,7 +328,7 @@ async def enhance_prompt(
             }
         ]
 
-    caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"})
+    caller = APICaller(base_url=OPENROUTER_BASE_URL, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
     try:
         response = await caller.openrouter(
             "POST",
