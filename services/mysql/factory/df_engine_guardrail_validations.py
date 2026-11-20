@@ -16,8 +16,12 @@ class DfEngineGuardrailValidationsFactory(SQLAlchemyModelFactory):
     id = None
     uid = LazyFunction(lambda: str(uuid4()))
     created_at = LazyFunction(local_time)
-    menu_id = None
-    feature_id = None
+    sourceable_id = None
+    sourceable_type = None
+    apikeyable_id = None
+    apikeyable_type = None
+    model_id = None
+    message = "test message"
     payload = LazyFunction(dict)
     response = LazyFunction(dict)
     status_code = 200

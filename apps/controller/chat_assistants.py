@@ -1,5 +1,6 @@
+import json
 import traceback
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlalchemy import func
 from sqlalchemy.orm import load_only, selectinload
 from fastapi import Form, Path, Query, Request, status
@@ -8,7 +9,13 @@ from error import ServiceError, BaseError, RateLimitedError, DataNotFoundError, 
 from apps.controller.core import CoreDependencies
 from error import BaseError, ServiceError
 from log import logging
+from schemas.payload.chat_assistants import CreateNewSessionPayload
+from middlewares.lang import resolve_message
+from services.mysql import get_usd_rate
+from services.openrouter import call_prompt_guardrail
 from schemas.response import Response
+from utils.formatter import format_udin_url
+from services.mysql.model.df_engine_generations import GenerationKinds
 from services.mysql.model import (
     PROJECT_STATUS_ONGOING,
     Projects,
@@ -23,7 +30,13 @@ from services.mysql.model import (
     DfEngineGenerations,
     TransferTeamMembers,
     Users,
+    DfEngineUploadFiles,
+    DfEngineGenerationResults,
+    DfEngineGuardrailValidations,
 )
+
+
+CHAT_GUARDRAIL_TYPES = ["prompt_injection", "nfsw", "chat_assistant"]
 
 
 class ChatAssistantsController(CoreDependencies):
@@ -55,7 +68,10 @@ class ChatAssistantsController(CoreDependencies):
         response_model=Response,
     )
     async def chat_assistants_with_project_uid_and_menu_uid_to_create_new_session(
-        self, project_uid: UUID = Path(...), menu_uid: UUID = Path(...)
+        self,
+        schema: CreateNewSessionPayload,
+        project_uid: UUID = Path(...),
+        menu_uid: UUID = Path(...),
     ) -> Response:
         response = Response()
         limit_api_key = None
@@ -64,6 +80,10 @@ class ChatAssistantsController(CoreDependencies):
         global_project_settings = None
         project_setting = None
         project_api_key = None
+        prompt_validations = []
+        uploaded_files = None
+        generated_results = None
+        attachment_errors = None
         log_prefix = f"[chat-assistant:new] user={self.user['user_id']} project={project_uid} menu={menu_uid}"
 
         try:
@@ -100,8 +120,8 @@ class ChatAssistantsController(CoreDependencies):
                         DfEngineProjectSettings.token_usage_limit,  # type: ignore
                         DfEngineProjectSettings.token_limit_threshold,  # type: ignore
                     ),
-                    selectinload(Projects.project_person_in_charges)
-                    .load_only(  # type: ignore
+                    selectinload(Projects.project_person_in_charges)  # type: ignore
+                    .load_only(
                         ProjectPersonInCharges.pic_id,  # type: ignore
                         ProjectPersonInCharges.is_lead,  # type: ignore
                     )
@@ -307,7 +327,117 @@ class ChatAssistantsController(CoreDependencies):
                     context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
                 )
 
-            response.data = project
+            # Keep only the enabled (threshold > 0) guardrails this chat should validate against
+            if prompt_guardrails:
+                for prompt in prompt_guardrails:
+                    if prompt["type"] in CHAT_GUARDRAIL_TYPES:
+                        prompt_validations.append(prompt)
+
+            logging.info(f"{log_prefix} guardrails to validate: {[prompt['type'] for prompt in prompt_validations]}")
+
+            # Get attachment uid
+            if schema.attachments:
+                uploaded_files = [str(a.file_uid) for a in schema.attachments if a.type == "upload"]
+                generated_results = [str(a.file_uid) for a in schema.attachments if a.type == "generated"]
+
+            #  Get uploaded files
+            if uploaded_files:
+                uploaded_files = await self.uploaded_file_repo.get_uploaded_file(
+                    filters=(
+                        DfEngineUploadFiles.uid.in_(uploaded_files),  # type: ignore
+                        DfEngineUploadFiles.type.in_(["image"]),  # type: ignore
+                    ),
+                    raise_if_null=False,
+                    fetch_one=False,
+                )
+
+            # Get generated results
+            if generated_results:
+                generated_results = await self.generation_result_repo.get_generation_file(
+                    joins=(DfEngineGenerationResults.generation,),  # type: ignore
+                    filters=(
+                        DfEngineGenerationResults.uid.in_(generated_results),  # type: ignore
+                        DfEngineGenerations.kind.in_([GenerationKinds.image, GenerationKinds.image_edit]),  # type: ignore
+                    ),
+                    raise_if_null=False,
+                    fetch_one=False,
+                )
+
+            # Every attachment the client sent must exist; report each missing one by its own index.
+            found = {
+                "upload": {f["uid"] for f in uploaded_files or []},  # type: ignore
+                "generated": {f["uid"] for f in generated_results or []},  # type: ignore
+            }
+            attachment_errors = {
+                f"attachments.{idx}": [
+                    "uploaded_file_not_found" if a.type == "upload" else "generation_result_not_found"
+                ]
+                for idx, a in enumerate(schema.attachments)
+                if str(a.file_uid) not in found[a.type]
+            }
+            if attachment_errors:
+                logging.warning(f"{log_prefix} attachments not found: {list(attachment_errors)}")
+                raise DataNotFoundError(message="file_not_found", error=attachment_errors)
+
+            # Merge both sources into one list; `type` keeps them distinguishable.
+            user_attachments = [
+                {**f, "type": attachment_type, "path": format_udin_url(f["path"])}  # type: ignore
+                for attachment_type, files in (("upload", uploaded_files), ("generated", generated_results))
+                for f in files or []
+            ]
+
+            session_uid = str(uuid4())
+
+            guardrail_response = None
+
+            if prompt_validations:
+                log_row = {
+                    "apikeyable_id": project_api_key["id"],
+                    "apikeyable_type": DfEngineApiKeys.__name__,
+                    "model_id": assistant_model["id"],
+                    "created_by": self.user["user_id"],
+                }
+                try:
+                    guardrail_response = await call_prompt_guardrail(
+                        schema.content,
+                        project_api_key["key"],
+                        prompt_validations,
+                        assistant_model["model_id"],
+                        self.user["user_id"],
+                    )
+                except ServiceError as exc:
+                    ctx = exc.context or {}
+                    self.db.add(
+                        DfEngineGuardrailValidations(
+                            **log_row,
+                            message=resolve_message(exc.message),
+                            payload=ctx.get("payload") or {},
+                            response={"error": exc.error, "upstream_body": ctx.get("upstream_body")},
+                            status_code=(exc.error or {}).get("upstream_status", exc.status_code),
+                            exchange_rate=await self.db.run_sync(get_usd_rate),
+                        )
+                    )
+                    await self.db.commit()
+                    raise
+
+                body = guardrail_response.json()
+                usage = body.get("usage") or {}
+                self.db.add(
+                    DfEngineGuardrailValidations(
+                        **log_row,
+                        message="Success",
+                        payload=json.loads(guardrail_response.request.content),
+                        response=body,
+                        status_code=guardrail_response.status_code,
+                        total_tokens=usage.get("total_tokens") or 0,
+                        cached_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0,
+                        cost=usage.get("cost") or 0,  # type: ignore
+                        exchange_rate=await self.db.run_sync(get_usd_rate),
+                    )
+                )
+                await self.db.flush()
+
+            response.data = guardrail_response.json() if guardrail_response else None
         except BaseError:
             raise
         except Exception:

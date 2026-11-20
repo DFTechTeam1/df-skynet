@@ -19,7 +19,8 @@ class DfEngineChatAssistantsFactory(SQLAlchemyModelFactory):
     session_id = None
     content = "hello"
     role = "user"
-    model = "test-model"
+    model_id = None
+    status = "success"
     status_code = 200
     total_tokens = 0
     cached_tokens = 0
@@ -27,3 +28,5 @@ class DfEngineChatAssistantsFactory(SQLAlchemyModelFactory):
     exchange_rate = 0
     has_generation_prompt = False
     sender = "tester"
+    apikeyable_id = None
+    apikeyable_type = None

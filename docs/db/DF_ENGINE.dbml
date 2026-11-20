@@ -48,6 +48,13 @@ Enum generation_statuses {
     failed
 }
 
+Enum chat_assistant_statuses {
+    queued
+    processing
+    success
+    failed
+}
+
 Enum focal_lengths {
   mm_14
   mm_24
@@ -513,14 +520,31 @@ Table df_engine_chat_assistants {
     session_id bigint [not null]
     content longtext [not null]
     role varchar(255) [not null, note: "system, assistant, user"]
-    model varchar(255) [not null]
-    status_code integer [not null, default: 200]
+    model_id bigint [default: null, note: "The text model that answered. NULL for system/user rows and legacy rows"]
+    status chat_assistant_statuses [not null, default: "success", note: "queued -> processing -> success/failed for assistant rows answered by the worker; system/user rows are always success"]
+    status_code integer [default: null, note: "NULL for system/user rows (no completion happened)"]
     total_tokens bigint [not null, default: 0]
     cached_tokens bigint [not null, default: 0]
     cost decimal(10, 2) [not null, default: 0]
     exchange_rate decimal(20, 8) [not null, default: 0]
     has_generation_prompt bool [not null, default: false]
     sender varchar(255) [not null, note: "<username> or openrouter"]
+    apikeyable_id bigint [default: null, note: "NULL for system/user rows"]
+    apikeyable_type varchar(255) [default: null, note: "Polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+
+    indexes {
+        (apikeyable_type, apikeyable_id) [name: 'idx_chat_assistants_apikeyable']
+    }
+}
+
+Table df_engine_chat_errors {
+    id bigint [pk, increment]
+    chat_id bigint [not null]
+    message text [not null]
+
+    indexes {
+        chat_id [name: 'idx_chat_errors_chat_id']
+    }
 }
 
 
@@ -528,8 +552,12 @@ Table df_engine_guardrail_validations {
     id bigint [pk, increment]
     uid char(36) [not null, unique]
     created_at timestamp [default: `now()`]
-    menu_id bigint [not null]
-    feature_id bigint [not null]
+    sourceable_id bigint [default: null, note: "The validated row. NULL for rows created before this column existed"]
+    sourceable_type varchar(255) [default: null, note: "Polymorph to df_engine_chat_assistants"]
+    apikeyable_id bigint [default: null, note: "The key that paid for the validation call. NULL for rows created before this column existed"]
+    apikeyable_type varchar(255) [default: null, note: "Polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
+    model_id bigint [default: null, note: "The text model used for the validation. NULL for legacy rows"]
+    message text [not null]
     payload json [not null]
     response json [not null]
     status_code integer [not null, default: 200]
@@ -538,6 +566,11 @@ Table df_engine_guardrail_validations {
     cost decimal(10, 2) [not null, default: 0]
     exchange_rate decimal(20, 8) [not null, default: 0]
     created_by bigint [not null]
+
+    indexes {
+        (sourceable_type, sourceable_id) [name: 'idx_guardrail_validations_sourceable']
+        (apikeyable_type, apikeyable_id) [name: 'idx_guardrail_validations_apikeyable']
+    }
 }
 
 
@@ -740,9 +773,10 @@ Ref: projects.id < df_engine_chat_sessions.project_id
 Ref: users.id < df_engine_chat_sessions.created_by
 Ref: users.id < df_engine_guardrail_validations.created_by
 Ref: df_engine_chat_assistants.id < df_engine_chat_references.chat_id
+Ref: df_engine_chat_assistants.id < df_engine_chat_errors.chat_id
+Ref: df_engine_model_options.id < df_engine_chat_assistants.model_id
+Ref: df_engine_model_options.id < df_engine_guardrail_validations.model_id
 Ref: df_engine_chat_attachments.id < df_engine_chat_references.attachment_id
 Ref: df_engine_chat_sessions.id < df_engine_chat_assistants.session_id
 Ref: df_engine_menus.id< df_engine_chat_sessions.menu_id
 Ref: df_engine_features.id< df_engine_chat_sessions.feature_id
-Ref: df_engine_menus.id< df_engine_guardrail_validations.menu_id
-Ref: df_engine_features.id< df_engine_guardrail_validations.feature_id

@@ -75,3 +75,14 @@ class PromptEnhancerResult(BaseModel):
     prompt: str
     enhance_uid: UUID
     references: list[EnhancerReference] = Field(default_factory=list)
+
+
+class PromptGuardrailResponse(BaseModel):
+    prompt_injection: bool = Field(default=False)
+    nfsw: bool = Field(default=False)
+    prompt_enhancement: bool = Field(default=True)
+    image_generation: bool = Field(default=True)
+    video_generation: bool = Field(default=True)
+    storyboard_generation: bool = Field(default=True)
+    chat_assistant: bool = Field(default=True)
+    element_generation: bool = Field(default=True)

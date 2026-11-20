@@ -34,14 +34,19 @@ async def test_update_overwrites_instead_of_duplicating(authed_client, db_sessio
 async def test_update_accepts_enabled_available_text_model(authed_client, db_session):
     """200 OK; a type=text, enabled, available model can be saved as enhancer_model.
 
-    The client sends the model UID; it is stored and returned as {"uid", "name"}.
+    The client sends the model UID; it is stored and returned as {"id", "uid", "model_id", "name"}.
     """
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("POST", URL, json={"enhancer_model": model.uid})
     assert resp.status_code == 200
-    assert resp.json()["data"]["enhancer_model"] == {"uid": model.uid, "name": model.name}
+    assert resp.json()["data"]["enhancer_model"] == {
+        "id": model.id,
+        "uid": model.uid,
+        "model_id": model.model_id,
+        "name": model.name,
+    }
 
 
 @pytest.mark.asyncio

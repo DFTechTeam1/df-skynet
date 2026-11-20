@@ -3,6 +3,7 @@ from services.mysql.factory.df_engine_api_key_snapshots import DfEngineApiKeySna
 from services.mysql.factory.df_engine_api_keys import DfEngineApiKeysFactory
 from services.mysql.factory.df_engine_chat_assistants import DfEngineChatAssistantsFactory
 from services.mysql.factory.df_engine_chat_attachments import DfEngineChatAttachmentsFactory
+from services.mysql.factory.df_engine_chat_errors import DfEngineChatErrorsFactory
 from services.mysql.factory.df_engine_chat_references import DfEngineChatReferencesFactory
 from services.mysql.factory.df_engine_chat_sessions import DfEngineChatSessionsFactory
 from services.mysql.factory.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappingsFactory
@@ -41,6 +42,7 @@ __all__ = [
     "DfEngineApiKeysFactory",
     "DfEngineChatAssistantsFactory",
     "DfEngineChatAttachmentsFactory",
+    "DfEngineChatErrorsFactory",
     "DfEngineChatReferencesFactory",
     "DfEngineChatSessionsFactory",
     "DfEngineFeaturePromptMappingsFactory",

@@ -8,8 +8,10 @@ from services.mysql import get_db
 from services.redis import get_redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
-from services.repository.chat_assistant import ChatAssistantRepository
+from services.repository.chat_assistants import ChatAssistantRepository
+from services.repository.generation_results import GenerationResultRepository
 from services.repository.generations import GenerationRepository
+from services.repository.uploaded_files import UploadedFileRepository
 from services.repository.menus import MenuRepository
 from services.repository.projects import ProjectRepository
 from services.repository.settings import AdminSettingRepository
@@ -45,6 +47,14 @@ class CoreDependencies(ApiController):
     @cached_property
     def generation_repo(self) -> GenerationRepository:
         return GenerationRepository(self.db)
+
+    @cached_property
+    def generation_result_repo(self) -> GenerationResultRepository:
+        return GenerationResultRepository(self.db)
+
+    @cached_property
+    def uploaded_file_repo(self) -> UploadedFileRepository:
+        return UploadedFileRepository(self.db)
 
 
 class PlainDependencies(Controller):

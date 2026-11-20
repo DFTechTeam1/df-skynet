@@ -193,7 +193,9 @@ class SettingController(CoreDependencies):
                     table=DfEngineModelOptions,
                     options=(
                         load_only(
+                            DfEngineModelOptions.id,
                             DfEngineModelOptions.uid,
+                            DfEngineModelOptions.model_id,
                             DfEngineModelOptions.name,
                             DfEngineModelOptions.type,
                             DfEngineModelOptions.is_enabled,
@@ -211,7 +213,12 @@ class SettingController(CoreDependencies):
                     raise DataValidationError(message="setting_engine_model_must_be_enabled")
                 if not model.is_available:
                     raise DataValidationError(message="setting_engine_model_must_be_available")
-                resolved_model[field] = {"uid": model.uid, "name": model.name}
+                resolved_model[field] = {
+                    "id": model.id,
+                    "uid": model.uid,
+                    "model_id": model.model_id,
+                    "name": model.name,
+                }
 
             project_classes = await query(
                 db=self.db,
