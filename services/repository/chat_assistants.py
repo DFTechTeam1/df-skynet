@@ -16,6 +16,8 @@ class ChatAssistantRepository(BaseRepository):
         limit: Optional[int] = None,
         group_by: Optional[tuple[Any, ...]] = None,
         having: Optional[tuple[Any, ...]] = None,
+        order_by: Optional[tuple[Any, ...]] = None,
+        offset: Optional[int] = None,
     ) -> Any:
         return await self._get(
             DfEngineChatAssistants,
@@ -31,4 +33,6 @@ class ChatAssistantRepository(BaseRepository):
             limit,
             group_by,
             having,
+            order_by,
+            offset,
         )

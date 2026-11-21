@@ -1,4 +1,5 @@
-from sqlmodel import Column, Field, SQLModel
+from typing import Optional
+from sqlmodel import Column, Field, Relationship, SQLModel
 from sqlalchemy import ForeignKey
 from sqlalchemy.dialects.mysql import BIGINT
 
@@ -13,5 +14,7 @@ class DfEngineChatReferences(SQLModel, table=True):
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_chat_assistants.id"), nullable=False)
     )
     attachment_id: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_chat_attachments.id"), nullable=False)
+        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_attachments.id"), nullable=False)
     )
+
+    attachment: Optional["DfEngineAttachments"] = Relationship()  # type: ignore

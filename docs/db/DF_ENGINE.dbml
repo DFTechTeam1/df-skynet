@@ -500,7 +500,7 @@ Table df_engine_chat_sessions {
     created_by bigint [not null]
 }
 
-Table df_engine_chat_attachments {
+Table df_engine_attachments {
     id bigint [pk, increment]
     sourceable_id bigint [not null]
     sourceable_type varchar(255) [not null, note: "Option are from df_engine_upload_files or df_engine_generation_results"]
@@ -563,7 +563,7 @@ Table df_engine_guardrail_validations {
     status_code integer [not null, default: 200]
     total_tokens bigint [not null, default: 0]
     cached_tokens bigint [not null, default: 0]
-    cost decimal(10, 2) [not null, default: 0]
+    cost decimal(12, 6) [not null, default: 0]
     exchange_rate decimal(20, 8) [not null, default: 0]
     created_by bigint [not null]
 
@@ -776,7 +776,7 @@ Ref: df_engine_chat_assistants.id < df_engine_chat_references.chat_id
 Ref: df_engine_chat_assistants.id < df_engine_chat_errors.chat_id
 Ref: df_engine_model_options.id < df_engine_chat_assistants.model_id
 Ref: df_engine_model_options.id < df_engine_guardrail_validations.model_id
-Ref: df_engine_chat_attachments.id < df_engine_chat_references.attachment_id
+Ref: df_engine_attachments.id < df_engine_chat_references.attachment_id
 Ref: df_engine_chat_sessions.id < df_engine_chat_assistants.session_id
 Ref: df_engine_menus.id< df_engine_chat_sessions.menu_id
 Ref: df_engine_features.id< df_engine_chat_sessions.feature_id

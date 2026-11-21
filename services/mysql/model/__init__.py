@@ -2,7 +2,7 @@ from services.mysql.model.df_engine_api_key_rotation_issues import DfEngineApiKe
 from services.mysql.model.df_engine_api_key_snapshots import DfEngineApiKeySnapshots
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model.df_engine_chat_assistants import DfEngineChatAssistants
-from services.mysql.model.df_engine_chat_attachments import DfEngineChatAttachments
+from services.mysql.model.df_engine_attachments import DfEngineAttachments
 from services.mysql.model.df_engine_chat_errors import DfEngineChatErrors
 from services.mysql.model.df_engine_chat_references import DfEngineChatReferences
 from services.mysql.model.df_engine_chat_sessions import DfEngineChatSessions
@@ -51,7 +51,7 @@ __all__ = [
     "DfEngineApiKeySnapshots",
     "DfEngineApiKeys",
     "DfEngineChatAssistants",
-    "DfEngineChatAttachments",
+    "DfEngineAttachments",
     "DfEngineChatErrors",
     "DfEngineChatReferences",
     "DfEngineChatSessions",

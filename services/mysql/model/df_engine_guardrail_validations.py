@@ -31,7 +31,7 @@ class DfEngineGuardrailValidations(SQLModel, table=True):
     status_code: int = Field(default=200, sa_column=Column(Integer, nullable=False, server_default="200"))
     total_tokens: int = Field(default=0, sa_column=Column(BIGINT(unsigned=True), nullable=False, server_default="0"))
     cached_tokens: int = Field(default=0, sa_column=Column(BIGINT(unsigned=True), nullable=False, server_default="0"))
-    cost: Decimal = Field(default=Decimal("0"), sa_column=Column(DECIMAL(10, 2), nullable=False, server_default="0"))
+    cost: Decimal = Field(default=Decimal("0"), sa_column=Column(DECIMAL(12, 6), nullable=False, server_default="0"))
     exchange_rate: Decimal = Field(
         default=Decimal("0"), sa_column=Column(DECIMAL(20, 8), nullable=False, server_default="0")
     )

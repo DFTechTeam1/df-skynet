@@ -7,11 +7,11 @@ from services.mysql.model.df_engine_generation_results import DfEngineGeneration
 from services.mysql.model.df_engine_upload_files import DfEngineUploadFiles
 
 
-class DfEngineChatAttachments(SQLModel, table=True):
+class DfEngineAttachments(SQLModel, table=True):
     """Polymorphic: `sourceable_type` is `DfEngineUploadFiles` or `DfEngineGenerationResults` (no DB FK)."""
 
-    __tablename__ = "df_engine_chat_attachments"  # type: ignore
-    __table_args__ = (Index("idx_chat_attachments_sourceable", "sourceable_type", "sourceable_id"),)
+    __tablename__ = "df_engine_attachments"  # type: ignore
+    __table_args__ = (Index("idx_attachments_sourceable", "sourceable_type", "sourceable_id"),)
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     sourceable_id: int = Field(sa_column=Column(BIGINT(unsigned=True), nullable=False))
@@ -20,8 +20,8 @@ class DfEngineChatAttachments(SQLModel, table=True):
     upload_file: Optional["DfEngineUploadFiles"] = Relationship(
         sa_relationship_kwargs={
             "primaryjoin": lambda: and_(  # type: ignore
-                foreign(DfEngineChatAttachments.sourceable_id) == DfEngineUploadFiles.id,  # type: ignore
-                DfEngineChatAttachments.sourceable_type == DfEngineUploadFiles.__name__,  # type: ignore
+                foreign(DfEngineAttachments.sourceable_id) == DfEngineUploadFiles.id,  # type: ignore
+                DfEngineAttachments.sourceable_type == DfEngineUploadFiles.__name__,  # type: ignore
             ),
             "viewonly": True,
             "uselist": False,
@@ -30,8 +30,8 @@ class DfEngineChatAttachments(SQLModel, table=True):
     generation_result: Optional["DfEngineGenerationResults"] = Relationship(
         sa_relationship_kwargs={
             "primaryjoin": lambda: and_(  # type: ignore
-                foreign(DfEngineChatAttachments.sourceable_id) == DfEngineGenerationResults.id,  # type: ignore
-                DfEngineChatAttachments.sourceable_type == DfEngineGenerationResults.__name__,  # type: ignore
+                foreign(DfEngineAttachments.sourceable_id) == DfEngineGenerationResults.id,  # type: ignore
+                DfEngineAttachments.sourceable_type == DfEngineGenerationResults.__name__,  # type: ignore
             ),
             "viewonly": True,
             "uselist": False,

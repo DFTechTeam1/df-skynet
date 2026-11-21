@@ -28,9 +28,7 @@ def upgrade() -> None:
         TABLE_NAME,
         sa.Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
         sa.Column("chat_id", BIGINT(unsigned=True), sa.ForeignKey("df_engine_chat_assistants.id"), nullable=False),
-        sa.Column(
-            "attachment_id", BIGINT(unsigned=True), sa.ForeignKey("df_engine_chat_attachments.id"), nullable=False
-        ),
+        sa.Column("attachment_id", BIGINT(unsigned=True), sa.ForeignKey("df_engine_attachments.id"), nullable=False),
     )
 
 

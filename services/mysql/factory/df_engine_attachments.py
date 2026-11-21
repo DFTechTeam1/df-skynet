@@ -1,12 +1,12 @@
 from apps.secret import DB_SYNC_URL
 from factory.alchemy import SQLAlchemyModelFactory
 from services.mysql import make_sync_session
-from services.mysql.model.df_engine_chat_attachments import DfEngineChatAttachments
+from services.mysql.model.df_engine_attachments import DfEngineAttachments
 
 
-class DfEngineChatAttachmentsFactory(SQLAlchemyModelFactory):
+class DfEngineAttachmentsFactory(SQLAlchemyModelFactory):
     class Meta:  # type: ignore
-        model = DfEngineChatAttachments
+        model = DfEngineAttachments
         sqlalchemy_session = make_sync_session(DB_SYNC_URL)
         sqlalchemy_session_persistence = "commit"
 

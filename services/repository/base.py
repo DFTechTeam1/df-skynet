@@ -37,6 +37,8 @@ class BaseRepository:
         limit: Optional[int] = None,
         group_by: Optional[tuple[Any, ...]] = None,
         having: Optional[tuple[Any, ...]] = None,
+        order_by: Optional[tuple[Any, ...]] = None,
+        offset: Optional[int] = None,
     ) -> Any:
         """Fetch one row (default) or every matching row from `table`.
 
@@ -60,6 +62,8 @@ class BaseRepository:
             group_by: Expressions for `GROUP BY`, e.g. `(Projects.status,)`. Pair with an
                 aggregate in `columns` and `fetch_one=False` to get every group.
             having: Conditions on aggregates, e.g. `(func.count(Projects.id) > 1,)`.
+            order_by: Sort expressions, e.g. `(Projects.created_at.desc(),)`.
+            offset: Rows to skip; pair with `limit` and `fetch_one=False` to paginate.
 
         Returns:
             A `Row` with the requested columns (a single value if only one column is requested).
@@ -80,6 +84,8 @@ class BaseRepository:
             fetch_one=fetch_one,
             group_by=group_by,
             having=having,
+            order_by=order_by,
+            offset=offset,
         )
         if (row is None or (not fetch_one and not row)) and raise_if_null:
             raise DataValidationError(message=not_found_message, context=context)

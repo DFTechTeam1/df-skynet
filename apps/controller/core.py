@@ -9,6 +9,7 @@ from services.redis import get_redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 from services.repository.chat_assistants import ChatAssistantRepository
+from services.repository.chat_sessions import ChatSessionRepository
 from services.repository.generation_results import GenerationResultRepository
 from services.repository.generations import GenerationRepository
 from services.repository.uploaded_files import UploadedFileRepository
@@ -43,6 +44,10 @@ class CoreDependencies(ApiController):
     @cached_property
     def chat_assistant_repo(self) -> ChatAssistantRepository:
         return ChatAssistantRepository(self.db)
+
+    @cached_property
+    def chat_session_repo(self) -> ChatSessionRepository:
+        return ChatSessionRepository(self.db)
 
     @cached_property
     def generation_repo(self) -> GenerationRepository:

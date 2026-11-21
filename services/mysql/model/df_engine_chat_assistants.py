@@ -35,7 +35,7 @@ class DfEngineChatAssistants(SQLModel, table=True):
             server_default=QueueStatuses.success.value,
         ),
     )
-    status_code: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
+    status_code: Optional[int] = Field(default=200, sa_column=Column(Integer, nullable=True))
     total_tokens: int = Field(default=0, sa_column=Column(BIGINT(unsigned=True), nullable=False, server_default="0"))
     cached_tokens: int = Field(default=0, sa_column=Column(BIGINT(unsigned=True), nullable=False, server_default="0"))
     cost: Decimal = Field(default=Decimal("0"), sa_column=Column(DECIMAL(10, 2), nullable=False, server_default="0"))
@@ -49,6 +49,7 @@ class DfEngineChatAssistants(SQLModel, table=True):
     apikeyable_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), nullable=True))
     apikeyable_type: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
 
+    chat_references: list["DfEngineChatReferences"] = Relationship()  # type: ignore
     model_option: Optional["DfEngineModelOptions"] = Relationship(back_populates="chat_assistants")  # type: ignore
     api_key: Optional["DfEngineApiKeys"] = Relationship(
         sa_relationship_kwargs={

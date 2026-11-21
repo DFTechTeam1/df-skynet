@@ -1,4 +1,4 @@
-"""create df_engine_chat_attachments
+"""create df_engine_attachments
 
 Revision ID: 3a1b2c3d4e55
 Revises: 3a1b2c3d4e54
@@ -19,7 +19,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-TABLE_NAME = "df_engine_chat_attachments"
+TABLE_NAME = "df_engine_attachments"
 
 
 def upgrade() -> None:
@@ -31,7 +31,7 @@ def upgrade() -> None:
         sa.Column("sourceable_id", BIGINT(unsigned=True), nullable=False),
         sa.Column("sourceable_type", sa.String(255), nullable=False),
     )
-    op.create_index("idx_chat_attachments_sourceable", TABLE_NAME, ["sourceable_type", "sourceable_id"])
+    op.create_index("idx_attachments_sourceable", TABLE_NAME, ["sourceable_type", "sourceable_id"])
 
 
 def downgrade() -> None:
