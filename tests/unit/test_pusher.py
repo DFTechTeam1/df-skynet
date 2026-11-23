@@ -1,3 +1,5 @@
+from uuid import uuid4
+from pusher.util import validate_channel
 import services.pusher as pusher
 
 CHANNEL = "user-generation-project-proj-uid-task-task-uid"
@@ -60,3 +62,22 @@ def test_remain_rounds_and_falls_back(monkeypatch):
     assert pusher._remain() == 30
     _patch_db(monkeypatch, None, None)
     assert pusher._remain() == 0
+
+
+def test_send_chat_assistant_uses_session_channel_and_chat_uid(monkeypatch):
+    calls = _stub(monkeypatch)
+    monkeypatch.setattr(pusher, "_remain", lambda: 1)
+    pusher.send_chat_assistant("success", "sess-uid", "chat-uid")
+    assert calls[0] == ("chat-sessions-sess-uid", "chat-response", {"s": "success", "cid": "chat-uid"})
+    validate_channel(calls[0][0])  # the real Pusher client rejects names with characters like ":"
+    validate_channel(f"chat-sessions-{uuid4()}")
+    assert calls[1][1] == "token-update"
+
+
+def test_send_chat_assistant_swallows_errors(monkeypatch):
+    def boom():
+        raise RuntimeError("pusher down")
+
+    monkeypatch.setattr(pusher, "get_pusher", boom)
+    monkeypatch.setattr(pusher, "broadcast_token", lambda: None)
+    pusher.send_chat_assistant("failed", "sess-uid", "chat-uid")  # must not raise

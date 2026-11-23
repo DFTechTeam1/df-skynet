@@ -75,25 +75,3 @@ class PromptEnhancerResult(BaseModel):
     prompt: str
     enhance_uid: UUID
     references: list[EnhancerReference] = Field(default_factory=list)
-
-
-class PromptGuardrailResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    prompt_injection: bool = Field(default=False)
-    nfsw: bool = Field(default=False)
-    prompt_enhancement: bool = Field(default=True)
-    image_generation: bool = Field(default=True)
-    video_generation: bool = Field(default=True)
-    storyboard_generation: bool = Field(default=True)
-    chat_assistant: bool = Field(default=True)
-    element_generation: bool = Field(default=True)
-
-    @model_validator(mode="after")
-    def all_flags_present(self) -> "PromptGuardrailResponse":
-        """The defaults only keep the request schema simple; a reply must state every flag itself,
-        otherwise a missing `prompt_injection` would silently count as false."""
-        missing = set(type(self).model_fields) - self.model_fields_set
-        if missing:
-            raise ValueError(f"guardrail reply is missing flags: {sorted(missing)}")
-        return self

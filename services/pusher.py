@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Literal
 from pusher import Pusher
 from apps.secret import PUSHER_APP_CLUSTER, PUSHER_APP_ID, PUSHER_APP_KEY, PUSHER_APP_SECRET
 from log import logging
@@ -53,5 +53,14 @@ def broadcast_generation_status(
         )
     except Exception:
         logging.exception(f"pusher broadcast failed user_id={user_id} gid={gid} status={status}")
+    if status in ("success", "failed"):
+        broadcast_token()
+
+
+def send_chat_assistant(status: Literal["success", "failed"], session_uid: str, chat_uid: Optional[str] = None) -> None:
+    try:
+        get_pusher().trigger(f"chat-sessions-{session_uid}", "chat-response", {"s": status, "cid": chat_uid})
+    except Exception:
+        logging.exception(f"pusher chat broadcast failed session_uid={session_uid} chat_uid={chat_uid}")
     if status in ("success", "failed"):
         broadcast_token()

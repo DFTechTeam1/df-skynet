@@ -20,7 +20,6 @@ class DfEngineChatAssistantsFactory(SQLAlchemyModelFactory):
     content = "hello"
     role = "user"
     model_id = None
-    status = "success"
     status_code = 200
     total_tokens = 0
     cached_tokens = 0

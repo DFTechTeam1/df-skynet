@@ -48,13 +48,6 @@ Enum generation_statuses {
     failed
 }
 
-Enum chat_assistant_statuses {
-    queued
-    processing
-    success
-    failed
-}
-
 Enum focal_lengths {
   mm_14
   mm_24
@@ -177,7 +170,7 @@ Table df_engine_settings {
     updated_at timestamp [default: null]
     key varchar(255) [default: null]
     value text [default: null]
-    code varchar(255) [default: null, note: "Groups related key/value rows, e.g. code='admin_setting' for keys like 'project_class_limitations', 'assistant_model', 'enhancer_model'."]
+    code varchar(255) [default: null, note: "Groups related key/value rows, e.g. code='admin_setting' for keys like 'project_class_limitations', 'chat_assistant_settings', 'assistant_model', 'enhancer_model'. A model reference ('assistant_model', 'enhancer_model') stores id, uid, model_id, name and top_provider (the context window as synced from OpenRouter)."]
 
     note: "Generic key/value settings store, referenced by df_engine_project_settings.token_limit_threshold's admin_setting fallback."
 }
@@ -426,7 +419,7 @@ Table df_engine_generations {
     response longtext [default: null, note: "Base64 image/video payload or raw text, not a JSON column — response bodies can be large (base64 media routinely exceeds TEXT's 64KB cap) and aren't queried in-DB."]
     status_code integer [default: null]
     token_usage integer [default: null]
-    cost decimal(10, 2) [default: null]
+    cost decimal(12, 6) [default: null]
     exchange_rate decimal(20, 8) [not null, default: 0]
     created_by bigint [default: null]
     enhance_id bigint [default: null, note: "References df_engine_generations.id where kind = 'enhancer'. If filled (kind = 'image'), FE shows raw_prompt/finalized_prompt of this row"]
@@ -521,11 +514,10 @@ Table df_engine_chat_assistants {
     content longtext [not null]
     role varchar(255) [not null, note: "system, assistant, user"]
     model_id bigint [default: null, note: "The text model that answered. NULL for system/user rows and legacy rows"]
-    status chat_assistant_statuses [not null, default: "success", note: "queued -> processing -> success/failed for assistant rows answered by the worker; system/user rows are always success"]
     status_code integer [default: null, note: "NULL for system/user rows (no completion happened)"]
     total_tokens bigint [not null, default: 0]
     cached_tokens bigint [not null, default: 0]
-    cost decimal(10, 2) [not null, default: 0]
+    cost decimal(12, 6) [not null, default: 0]
     exchange_rate decimal(20, 8) [not null, default: 0]
     has_generation_prompt bool [not null, default: false]
     sender varchar(255) [not null, note: "<username> or openrouter"]

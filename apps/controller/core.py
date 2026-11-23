@@ -12,6 +12,7 @@ from services.repository.chat_assistants import ChatAssistantRepository
 from services.repository.chat_sessions import ChatSessionRepository
 from services.repository.generation_results import GenerationResultRepository
 from services.repository.generations import GenerationRepository
+from services.repository.guardrail_validations import GuardrailValidationRepository
 from services.repository.uploaded_files import UploadedFileRepository
 from services.repository.menus import MenuRepository
 from services.repository.projects import ProjectRepository
@@ -52,6 +53,10 @@ class CoreDependencies(ApiController):
     @cached_property
     def generation_repo(self) -> GenerationRepository:
         return GenerationRepository(self.db)
+
+    @cached_property
+    def guardrail_validation_repo(self) -> GuardrailValidationRepository:
+        return GuardrailValidationRepository(self.db)
 
     @cached_property
     def generation_result_repo(self) -> GenerationResultRepository:

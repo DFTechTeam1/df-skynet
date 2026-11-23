@@ -131,6 +131,28 @@ class PromptValidation(BaseModel):
     )
 
 
+class ChatAssistantSettings(BaseModel):
+    """Limits for one chat assistant session."""
+
+    max_chat_messages: int = Field(
+        default=500,
+        ge=1,
+        description=(
+            "Most messages (the user's and the assistant's together, system prompts not counted) "
+            "one chat may hold. Once reached, the user can't add to it and starts a new chat with "
+            "'transfer knowledge'. Transfer only opens at 80% of this number."
+        ),
+    )
+    max_unique_attachments: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Most different files (uploads and generated results together) one chat may refer to. "
+            "A file used again in the same chat counts once."
+        ),
+    )
+
+
 class AdminGlobalSettingPayload(BaseModel):
     """Workspace-wide DF Engine settings. This is a full replace — send the whole
     document, not just the fields you changed. Every field has a default so the
@@ -147,6 +169,10 @@ class AdminGlobalSettingPayload(BaseModel):
             "before create/move folder requests are rejected."
         ),
         ge=1,
+    )
+    chat_assistant_settings: ChatAssistantSettings = Field(
+        default_factory=ChatAssistantSettings,
+        description="Limits for the chat assistant: messages and distinct files per chat.",
     )
     project_class_limitations: list[ProjectClassLimitations] = Field(
         default_factory=list,

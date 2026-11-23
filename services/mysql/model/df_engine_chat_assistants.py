@@ -3,13 +3,12 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import uuid4
 from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import CHAR, DECIMAL, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, and_, false
+from sqlalchemy import CHAR, DECIMAL, Boolean, DateTime, ForeignKey, Integer, String, Text, and_, false
 from sqlalchemy.dialects.mysql import BIGINT
 from sqlalchemy.orm import foreign
 from services.mysql.model.df_engine_api_key_snapshots import DfEngineApiKeySnapshots
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from utils import local_time
-from enums.base import QueueStatuses
 
 
 class DfEngineChatAssistants(SQLModel, table=True):
@@ -27,18 +26,10 @@ class DfEngineChatAssistants(SQLModel, table=True):
         default=None,
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_model_options.id"), nullable=True),
     )
-    status: QueueStatuses = Field(
-        default=QueueStatuses.success,
-        sa_column=Column(
-            Enum(QueueStatuses, name="chat_assistant_statuses"),
-            nullable=False,
-            server_default=QueueStatuses.success.value,
-        ),
-    )
     status_code: Optional[int] = Field(default=200, sa_column=Column(Integer, nullable=True))
     total_tokens: int = Field(default=0, sa_column=Column(BIGINT(unsigned=True), nullable=False, server_default="0"))
     cached_tokens: int = Field(default=0, sa_column=Column(BIGINT(unsigned=True), nullable=False, server_default="0"))
-    cost: Decimal = Field(default=Decimal("0"), sa_column=Column(DECIMAL(10, 2), nullable=False, server_default="0"))
+    cost: Decimal = Field(default=Decimal("0"), sa_column=Column(DECIMAL(12, 6), nullable=False, server_default="0"))
     exchange_rate: Decimal = Field(
         default=Decimal("0"), sa_column=Column(DECIMAL(20, 8), nullable=False, server_default="0")
     )

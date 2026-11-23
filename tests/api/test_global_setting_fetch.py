@@ -62,7 +62,7 @@ async def test_fetch_lists_every_project_class(authed_client, db_session, projec
 
 @pytest.mark.asyncio
 async def test_fetch_returns_enhancer_and_assistant_model_ref(authed_client, db_session):
-    """200 OK; enhancer_model/assistant_model come back as {"id", "uid", "model_id", "name"}, not a bare UID or name."""
+    """200 OK; enhancer_model/assistant_model come back as {"id", "uid", "model_id", "name", "top_provider"}, not a bare UID or name."""
     await clear_setting_state(db_session)
     enhancer = DfEngineModelOptionsFactory.create(
         name="Enhancer-A", type="text", is_available=True, is_enabled=True, is_main=False
@@ -78,12 +78,14 @@ async def test_fetch_returns_enhancer_and_assistant_model_ref(authed_client, db_
         "uid": enhancer.uid,
         "model_id": enhancer.model_id,
         "name": enhancer.name,
+        "top_provider": None,
     }
     assert body["assistant_model"] == {
         "id": assistant.id,
         "uid": assistant.uid,
         "model_id": assistant.model_id,
         "name": assistant.name,
+        "top_provider": None,
     }
 
 

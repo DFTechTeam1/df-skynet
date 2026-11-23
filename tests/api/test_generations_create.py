@@ -532,7 +532,7 @@ def _sent_prompt(delay_calls) -> str:
 
 
 @pytest.mark.asyncio
-async def test_without_enhance_uid_prompt_is_enhanced_before_dispatch(
+async def test_without_enhance_uid_prompt_is_not_enhanced(
     authed_client,
     project_task,
     generation_menu_feature,
@@ -544,14 +544,12 @@ async def test_without_enhance_uid_prompt_is_enhanced_before_dispatch(
     fake_enhance,
     db_session,
 ):
-    """200 OK; no enhance_uid → enhancer called once with the raw prompt, and its text is what gets dispatched.
-    Row: raw_prompt = schema.prompt, full_prompt = prompt + templates, finalized_prompt = enhancer text."""
+    """200 OK; auto-enhance is disabled → enhancer not called, full_prompt is dispatched as-is.
+    Row: raw_prompt = schema.prompt, full_prompt = prompt + templates, finalized_prompt = full_prompt."""
     menu, feature = generation_menu_feature
     resp = await authed_client.call("POST", _url(project_task.uid), json=_payload(menu, feature, image_model))
     assert resp.status_code == 200
-    assert len(fake_enhance.calls) == 1
-    assert fake_enhance.calls[0].startswith("a scenic mountain view at sunrise")
-    assert _sent_prompt(fake_generation_backends) == "ENHANCED"
+    assert fake_enhance.calls == []
     row = (
         (await db_session.execute(select(DfEngineGenerations).order_by(DfEngineGenerations.id.desc()).limit(1)))
         .scalars()
@@ -559,7 +557,8 @@ async def test_without_enhance_uid_prompt_is_enhanced_before_dispatch(
     )
     assert row.raw_prompt == "a scenic mountain view at sunrise"
     assert row.full_prompt.startswith(row.raw_prompt)
-    assert row.finalized_prompt == "ENHANCED"
+    assert row.finalized_prompt == row.full_prompt
+    assert _sent_prompt(fake_generation_backends) == row.full_prompt
 
 
 @pytest.mark.asyncio
@@ -590,27 +589,3 @@ async def test_with_enhance_uid_skips_enhancer_and_injected_prompts(
     assert resp.status_code == 200
     assert fake_enhance.calls == []
     assert _sent_prompt(fake_generation_backends) == "STORED"
-
-
-@pytest.mark.asyncio
-async def test_enhancer_failure_is_422_and_dispatches_nothing(
-    authed_client,
-    project_task,
-    generation_menu_feature,
-    image_model,
-    pic_api_key,
-    ranking_model,
-    generation_project_settings,
-    fake_generation_backends,
-    fake_enhance,
-):
-    """422; a failing enhancer stops the request before any task is dispatched."""
-    from error import DataValidationError
-
-    fake_enhance.error = DataValidationError(message="prompt_enhance_failed")
-    menu, feature = generation_menu_feature
-    resp = await authed_client.call(
-        "POST", _url(project_task.uid), json=_payload(menu, feature, image_model), raise_for_status=False
-    )
-    assert resp.status_code == 422
-    assert len(fake_generation_backends) == 0
