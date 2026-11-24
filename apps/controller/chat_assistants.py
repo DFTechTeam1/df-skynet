@@ -460,7 +460,7 @@ class ChatAssistantsController(CoreDependencies):
                     context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
                 )
 
-            # Keep only the enabled (threshold > 0) guardrails this chat should validate against
+            # Keep only the guardrail types this chat should validate against
             if prompt_guardrails:
                 for prompt in prompt_guardrails:
                     if prompt["type"] in CHAT_GUARDRAIL_TYPES:
@@ -1146,7 +1146,7 @@ class ChatAssistantsController(CoreDependencies):
                     context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
                 )
 
-            # Keep only the enabled (threshold > 0) guardrails this chat should validate against
+            # Keep only the guardrail types this chat should validate against
             if prompt_guardrails:
                 for prompt in prompt_guardrails:
                     if prompt["type"] in CHAT_GUARDRAIL_TYPES:
@@ -1747,7 +1747,7 @@ class ChatAssistantsController(CoreDependencies):
                     context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
                 )
 
-            # Keep only the enabled (threshold > 0) guardrails this chat should validate against
+            # Keep only the guardrail types this chat should validate against
             if prompt_guardrails:
                 for prompt in prompt_guardrails:
                     if prompt["type"] in CHAT_GUARDRAIL_TYPES:

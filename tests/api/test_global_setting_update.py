@@ -307,3 +307,17 @@ async def test_update_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("POST", URL, json={}, raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_update_guardrail_has_no_threshold(authed_client, db_session):
+    """200 OK; a guardrail rule needs only type + instruction, and a legacy `threshold` key is dropped."""
+    await clear_setting_state(db_session)
+
+    rules = [{"type": "nfsw", "instruction": "x"}, {"type": "image_generation", "instruction": "y", "threshold": 0.5}]
+    resp = await authed_client.call("POST", URL, json={"prompt_guardrails": rules})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["prompt_guardrails"] == [
+        {"type": "nfsw", "instruction": "x"},
+        {"type": "image_generation", "instruction": "y"},
+    ]

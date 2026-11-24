@@ -1,3 +1,4 @@
+from sqlalchemy import delete, select
 from sqlalchemy.orm import load_only
 import sys
 import asyncio
@@ -16,6 +17,8 @@ from services.mysql.model import (
     DfEngineMenus,
     DfEngineFeaturePromptMappings,
     DfEngineMenuFeatureMappings,
+    DfEngineChatSessions,
+    DfEngineGenerations,
 )
 from services.redis import client as redis_client, delete_pattern
 from utils import local_time
@@ -40,6 +43,48 @@ MENU_ICONS = {
     "Storyboard": "mdi-movie-open",
     "Elements": "mdi-shape",
 }
+
+
+async def prune(db, menu_names: set, template_names: set, feature_types: set) -> dict:
+    """Make SEED the only source of menus/features/templates: delete everything else together with its mappings.
+    A row still referenced by chat sessions or generations keeps its history, so it is deactivated instead."""
+    out = {"deleted": [], "deactivated": []}
+
+    async def referenced(model_cols) -> bool:
+        for col in model_cols:
+            if (await db.execute(select(col).where(col == _id).limit(1))).first():
+                return True
+        return False
+
+    async def drop(table, label, row, ref_cols=()):
+        nonlocal _id
+        _id = row.id
+        if ref_cols and await referenced(ref_cols):
+            if row.is_active:
+                row.is_active = False
+                db.add(row)
+            out["deactivated"].append(f"{label}:{getattr(row, 'name')}")
+        else:
+            await db.delete(row)
+            out["deleted"].append(f"{label}:{getattr(row, 'name')}")
+
+    _id = None
+    features = await query(db=db, table=DfEngineFeatures)
+    for f in [f for f in features if f.type not in feature_types]:
+        await db.execute(delete(DfEngineMenuFeatureMappings).where(DfEngineMenuFeatureMappings.feature_id == f.id))
+        await db.execute(delete(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.feature_id == f.id))
+        await drop(DfEngineFeatures, "feature", f, (DfEngineGenerations.feature_id, DfEngineChatSessions.feature_id))
+    await db.flush()
+
+    for m in [m for m in await query(db=db, table=DfEngineMenus) if m.name not in menu_names]:
+        await db.execute(delete(DfEngineMenuFeatureMappings).where(DfEngineMenuFeatureMappings.menu_id == m.id))
+        await drop(DfEngineMenus, "menu", m, (DfEngineGenerations.menu_id, DfEngineChatSessions.menu_id))
+    await db.flush()
+
+    for t in [t for t in await query(db=db, table=DfEnginePromptTemplates) if t.name not in template_names]:
+        await db.execute(delete(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.template_id == t.id))
+        await drop(DfEnginePromptTemplates, "template", t)
+    return out
 
 
 async def seed() -> None:
@@ -115,12 +160,13 @@ async def seed() -> None:
                 {"feature_id": feature.id, "template_id": templates[tpl].id},
             )
 
+        removed = await prune(db, set(menus), set(templates), {ftype for _, ftype, _ in SEED})
         await db.commit()
 
         redis = redis_client()
         for pattern in ("menu_management:*", "feature_management:*", "prompt_template:*", "menus:features:*"):
             await delete_pattern(redis, pattern)
-        logging.info(f"seeder=menu done, created={stats['created']} updated={stats['updated']}")
+        logging.info(f"seeder=menu done, created={stats['created']} updated={stats['updated']} {removed}")
 
 
 async def main() -> None:
