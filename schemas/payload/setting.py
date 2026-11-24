@@ -118,14 +118,8 @@ PromptValidationType = Literal[
 
 class PromptValidation(BaseModel):
     type: PromptValidationType = Field(description="Type of prompt validation to perform.")
-    threshold: float = Field(
-        default=0,
-        ge=0,
-        le=1,
-        description="Threshold for the prompt validation. If not provided 0 then no validation will be performed. If provided > 0, the prompt will be validated against this threshold.",
-    )
     instruction: str = Field(
-        description="What the checker scores for this type. Required; only used when the threshold is above 0.",
+        description="What the checker scores for this type. Required.",
         min_length=1,
         max_length=16_000,
     )
@@ -204,8 +198,8 @@ class AdminGlobalSettingPayload(BaseModel):
         min_length=1,
         max_length=len(PromptValidationType.__args__),
         description=(
-            "Prompt guardrails checked before generating or enhancing. Each rule has a type, a "
-            "threshold (0 = off, above 0 = on) and the instruction the checker scores against. "
+            "Prompt guardrails checked before generating or enhancing. Each rule has a type and the "
+            "instruction the checker classifies against; every listed rule is always checked. "
             "Omit the field to keep the saved rules; send null to clear them (no guardrails run)."
         ),
     )

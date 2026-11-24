@@ -34,8 +34,6 @@ def project_class_config(project_classes: list[ProjectClasses]) -> list[dict]:
     ]
 
 
-DEFAULT_THRESHOLD = 0.0
-
 DEFAULT_VALIDATIONS = {
     "prompt_enhancement": """\
 Pesan BUKAN berupa ide, deskripsi kasar, atau prompt visual yang bisa diperluas menjadi prompt generasi yang detail untuk gambar, video, storyboard, atau elemen/aset.
@@ -160,22 +158,39 @@ YANG BOLEH:
 
 
 def validation_config() -> list[dict]:
+    return [{"type": type, "instruction": instruction} for type, instruction in DEFAULT_VALIDATIONS.items()]
+
+
+def reconcile_guardrails(current: list | None) -> list[dict]:
+    """Keep exactly the seeded guardrail types: drop unknown types and legacy fields (e.g. `threshold`),
+    add missing types, keep the admin's saved instruction for types that already exist."""
+    saved = {r["type"]: r for r in current or [] if isinstance(r, dict) and r.get("type") in DEFAULT_VALIDATIONS}
     return [
-        {"type": type, "threshold": DEFAULT_THRESHOLD, "instruction": instruction}
-        for type, instruction in DEFAULT_VALIDATIONS.items()
+        {"type": t, "instruction": (saved.get(t) or {}).get("instruction") or default}
+        for t, default in DEFAULT_VALIDATIONS.items()
     ]
+
+
+def reconcile_class_limits(current: list | None, project_classes: list[ProjectClasses]) -> list[dict]:
+    """One entry per existing project class: drop entries of classes that no longer exist, add missing ones,
+    keep saved values for known fields and drop unknown fields."""
+    saved = {r["id"]: r for r in current or [] if isinstance(r, dict) and "id" in r}
+    out = []
+    for default in project_class_config(project_classes):
+        old = saved.get(default["id"]) or {}
+        out.append(
+            {
+                **default,
+                **{k: v for k, v in old.items() if k in default},
+                "name": default["name"],
+                "color": default["color"],
+            }
+        )
+    return out
 
 
 async def seed() -> None:
     async with make_session(DB_ASYNC_URL)() as db:
-        existing = await query(
-            db=db,
-            table=DfEngineSettings,
-            options=(load_only(DfEngineSettings.key),),
-            filters=(DfEngineSettings.code == SETTING_CODE,),
-        )
-        existing_keys = {row.key for row in existing}
-
         project_classes = await query(
             db=db,
             table=ProjectClasses,
@@ -185,25 +200,55 @@ async def seed() -> None:
             logging.error(f"seeder={SETTING_CODE} aborted, project_classes table is empty")
             return
 
-    settings = {
-        "admin_view": {"see_all_asset": True},
-        "folder_depth_limit": 2,
-        "chat_assistant_settings": {"max_chat_messages": 500, "max_unique_attachments": 50},
-        "project_class_limitations": project_class_config(project_classes),
-        "enhancer_model": None,
-        "assistant_model": None,
-        "prompt_guardrails": validation_config(),
-    }
-    missing = {k: v for k, v in settings.items() if k not in existing_keys}
-    if not missing:
-        logging.info(f"seeder={SETTING_CODE} skipped, {len(existing_keys)} row(s) already present")
-        return
+        settings = {
+            "admin_view": {"see_all_asset": True},
+            "folder_depth_limit": 2,
+            "chat_assistant_settings": {"max_chat_messages": 500, "max_unique_attachments": 50},
+            "project_class_limitations": project_class_config(project_classes),
+            "enhancer_model": None,
+            "assistant_model": None,
+            "prompt_guardrails": validation_config(),
+        }
+        rows = await query(db=db, table=DfEngineSettings, filters=(DfEngineSettings.code == SETTING_CODE,))
+        by_key = {row.key: row for row in rows}
 
+        deleted = [key for key in by_key if key not in settings]
+        for key in deleted:
+            await db.delete(by_key[key])
+
+        fixed = []
+        for key, row in by_key.items():
+            if key not in settings:
+                continue
+            try:
+                current = json.loads(row.value) if row.value else None
+            except ValueError:
+                current = None
+            if key == "prompt_guardrails":
+                valid = reconcile_guardrails(current)
+            elif key == "project_class_limitations":
+                valid = reconcile_class_limits(current, project_classes)
+            elif key == "chat_assistant_settings":
+                valid = {k: (current or {}).get(k, v) for k, v in settings[key].items()}
+            else:
+                valid = current if row.value else settings[key]
+            if valid != current:
+                row.value = json.dumps(valid)
+                db.add(row)
+                fixed.append(key)
+
+        await db.commit()
+
+    missing = {k: v for k, v in settings.items() if k not in by_key}
     for key, value in missing.items():
         DfEngineSettingsFactory.create(key=key, value=json.dumps(value), code=SETTING_CODE)
 
-    await redis_client().delete(CacheKeys().setting_global())
-    logging.info(f"seeder={SETTING_CODE} inserted {len(missing)} new row(s) for {len(project_classes)} project class")
+    if missing or deleted or fixed:
+        await redis_client().delete(CacheKeys().setting_global())
+    logging.info(
+        f"seeder={SETTING_CODE} inserted={len(missing)} fixed={fixed} deleted={deleted} "
+        f"valid={len(settings) - len(missing) - len(fixed)}"
+    )
 
 
 async def main() -> None:
