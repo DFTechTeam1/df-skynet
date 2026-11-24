@@ -56,6 +56,7 @@ from services.files import (
     call_udin_folder,
     ensure_task_assigned,
     find_folder,
+    delete_upload_file_row,
     delete_upload_files_under,
     folder_scope,
     get_folder_depth_limit,
@@ -1361,7 +1362,7 @@ class FilesController(CoreDependencies):
             )
             for row in rows:
                 await ctx.redis.delete(cache_key.user_file_detail(row.uid))  # type: ignore
-                await self.db.delete(row)
+                await delete_upload_file_row(self.db, row)
             await apply_folder_changes(ctx, project_task, user_id)
             await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
             await dispatch_search_sync(

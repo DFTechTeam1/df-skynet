@@ -1,9 +1,14 @@
 class ApiKeyManagementMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
+            "project_lead_api_key_not_found": "The project lead, {nickname}, doesn't have an API key yet. Please create one in API Key Management first.",
+            "project_lead_api_key_multiple": "The project lead, {nickname}, has {total_key} main API keys, but only one is allowed. Please keep a single main API key in API Key Management.",
+            "project_cost_limit_exceeded": "This project has used {spent} of its {limit} usage limit, so the chat assistant can't be used right now. Please contact your admin to raise the limit.",
+            "prompt_guardrail_timeout": "The prompt safety check took too long to respond. Please try again in a moment.",
+            "prompt_guardrail_provider_error": "The prompt safety check couldn't be completed because the AI provider returned an error. Please try again or contact your admin.",
+            "prompt_guardrail_unreachable": "The prompt safety check couldn't reach the AI provider. Please try again in a moment.",
             "api_key_not_found": "API key not found.",
             "api_key_already_exists": "An API key with this name already exists.",
-            "employee_not_found": "We couldn't find an employee matching this PIC.",
             "employee_already_resigned": "This employee has already resigned and can't be assigned as PIC.",
             "employee_position_not_allowed": "Only a Project Manager or Assistant Project Manager can be assigned as PIC.",
             "cannot_delete_main_api_key": "This key is currently marked as main and can't be deleted. Reassign or update it first.",

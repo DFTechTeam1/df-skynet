@@ -3,7 +3,8 @@ from typing import Any, Optional
 from urllib.parse import unquote
 from fastapi import status
 from httpx import Timeout, TimeoutException
-from sqlalchemy import or_
+from sqlalchemy import delete, or_
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, load_only
 from error import BaseError, DataNotFoundError, DataValidationError
 from log import logging
@@ -15,7 +16,11 @@ from services.dto.asynced.admin_settings import get_admin_settings, get_folder_d
 from services.dto.asynced.employees import get_employee
 from services.dto.asynced.projects import get_project, get_project_task, get_user_tasks
 from services.mysql import query
-from services.mysql.model import DfEngineGenerationResults, DfEngineUploadFiles
+from services.mysql.model import (
+    DfEngineAttachments,
+    DfEngineGenerationResults,
+    DfEngineUploadFiles,
+)
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.mysql.model.entertainment_task_songs import EntertainmentTaskSongs
 from services.redis import delete_pattern, invalidate_project_files
@@ -387,6 +392,18 @@ async def call_udin_folder(
     return data.get("data")
 
 
+async def delete_upload_file_row(db: AsyncSession, row: DfEngineUploadFiles) -> None:
+    """Delete an upload file row together with the chat attachments that point at it (their chat links go with them
+    through the DB cascade): the physical file is deleted on Udin too, so nothing is left to show."""
+    await db.execute(
+        delete(DfEngineAttachments).where(
+            DfEngineAttachments.sourceable_type == DfEngineUploadFiles.__name__,  # type: ignore
+            DfEngineAttachments.sourceable_id == row.id,  # type: ignore
+        )
+    )
+    await db.delete(row)
+
+
 async def delete_upload_files_under(
     ctx: ConnectionContext, project_uid: str, project_name: str, user_id: int, path: str
 ) -> list[str]:
@@ -414,7 +431,7 @@ async def delete_upload_files_under(
     )
     for row in rows:
         await ctx.redis.delete(ctx.key.user_file_detail(row.uid))  # type: ignore
-        await ctx.db.delete(row)
+        await delete_upload_file_row(ctx.db, row)
     await ctx.db.flush()
     return [row.uid for row in rows if row.type != UploadFileTypes.folder]
 
@@ -533,7 +550,7 @@ async def apply_folder_changes(
             scopes.add((row.task_id, row.song_id))
             creators.add(row.created_by)
             upload_uids.add(row.uid)
-            await ctx.db.delete(row)
+            await delete_upload_file_row(ctx.db, row)
     await ctx.db.flush()
 
     await dispatch_search_sync(ctx.db, generations=index_generations, uploads=index_uploads)

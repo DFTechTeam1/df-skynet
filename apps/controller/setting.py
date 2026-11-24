@@ -1,7 +1,7 @@
 import json
 import traceback
 from uuid import UUID
-from typing import Optional
+from typing import Any, Optional
 from fastapi import status, Query, Request, Path
 from fastapi_controller import controller
 from sqlalchemy import func
@@ -183,7 +183,7 @@ class SettingController(CoreDependencies):
         response = Response()
         cache_key = CacheKeys()
         try:
-            resolved_model: dict[str, Optional[dict[str, str]]] = {"enhancer_model": None, "assistant_model": None}
+            resolved_model: dict[str, Optional[dict[str, Any]]] = {"enhancer_model": None, "assistant_model": None}
             for field in ("enhancer_model", "assistant_model"):
                 model_uid = getattr(schema, field)
                 if model_uid is None:
@@ -193,11 +193,14 @@ class SettingController(CoreDependencies):
                     table=DfEngineModelOptions,
                     options=(
                         load_only(
+                            DfEngineModelOptions.id,
                             DfEngineModelOptions.uid,
+                            DfEngineModelOptions.model_id,
                             DfEngineModelOptions.name,
                             DfEngineModelOptions.type,
                             DfEngineModelOptions.is_enabled,
                             DfEngineModelOptions.is_available,
+                            DfEngineModelOptions.top_provider,
                         ),
                     ),
                     filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
@@ -211,7 +214,13 @@ class SettingController(CoreDependencies):
                     raise DataValidationError(message="setting_engine_model_must_be_enabled")
                 if not model.is_available:
                     raise DataValidationError(message="setting_engine_model_must_be_available")
-                resolved_model[field] = {"uid": model.uid, "name": model.name}
+                resolved_model[field] = {
+                    "id": model.id,
+                    "uid": model.uid,
+                    "model_id": model.model_id,
+                    "name": model.name,
+                    "top_provider": model.top_provider,
+                }
 
             project_classes = await query(
                 db=self.db,
@@ -257,6 +266,7 @@ class SettingController(CoreDependencies):
             incoming = {
                 "admin_view": schema.admin_view.model_dump(mode="json"),
                 "folder_depth_limit": schema.folder_depth_limit,
+                "chat_assistant_settings": schema.chat_assistant_settings.model_dump(mode="json"),
                 "enhancer_model": resolved_model["enhancer_model"],
                 "assistant_model": resolved_model["assistant_model"],
                 "prompt_guardrails": prompt_guardrails,

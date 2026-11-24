@@ -62,7 +62,7 @@ async def test_fetch_lists_every_project_class(authed_client, db_session, projec
 
 @pytest.mark.asyncio
 async def test_fetch_returns_enhancer_and_assistant_model_ref(authed_client, db_session):
-    """200 OK; enhancer_model/assistant_model come back as {"uid", "name"}, not a bare UID or name."""
+    """200 OK; enhancer_model/assistant_model come back as {"id", "uid", "model_id", "name", "top_provider"}, not a bare UID or name."""
     await clear_setting_state(db_session)
     enhancer = DfEngineModelOptionsFactory.create(
         name="Enhancer-A", type="text", is_available=True, is_enabled=True, is_main=False
@@ -73,8 +73,20 @@ async def test_fetch_returns_enhancer_and_assistant_model_ref(authed_client, db_
     await authed_client.call("POST", URL, json={"enhancer_model": enhancer.uid, "assistant_model": assistant.uid})
 
     body = (await authed_client.call("GET", URL)).json()["data"]
-    assert body["enhancer_model"] == {"uid": enhancer.uid, "name": enhancer.name}
-    assert body["assistant_model"] == {"uid": assistant.uid, "name": assistant.name}
+    assert body["enhancer_model"] == {
+        "id": enhancer.id,
+        "uid": enhancer.uid,
+        "model_id": enhancer.model_id,
+        "name": enhancer.name,
+        "top_provider": None,
+    }
+    assert body["assistant_model"] == {
+        "id": assistant.id,
+        "uid": assistant.uid,
+        "model_id": assistant.model_id,
+        "name": assistant.name,
+        "top_provider": None,
+    }
 
 
 @pytest.mark.asyncio

@@ -318,12 +318,12 @@ class ModelManagementController(CoreDependencies):
                             model_id = item.get("id")
                             if not model_id:
                                 continue
-                            row = saved_by_model_id.get(model_id) or DfEngineModelOptions(
-                                model_id=model_id,
-                                type=model_type,  # type: ignore
-                            )
-                            # A soft-deleted model stays frozen: sync neither refreshes
-                            # it nor touches its is_available. Recover it to bring it back.
+                            row = saved_by_model_id.get(model_id)
+                            if row is None:
+                                row = saved_by_model_id[model_id] = DfEngineModelOptions(
+                                    model_id=model_id,
+                                    type=model_type,  # type: ignore
+                                )
                             if row.deleted_at is not None:
                                 continue
                             row.name = item.get("name") or model_id
@@ -352,7 +352,6 @@ class ModelManagementController(CoreDependencies):
                         disabled_main_names: set[str] = set()
                         disabled_main_uids: set[str] = set()
                         for model_id, row in saved_by_model_id.items():
-                            # Deleted models keep their is_available frozen, matched or not.
                             if model_id not in fetched_model_ids and row.deleted_at is None:
                                 row.is_available = False
                                 if row.is_main:
@@ -369,7 +368,6 @@ class ModelManagementController(CoreDependencies):
                             cleared = False
                             for row in setting_rows:
                                 stored = json.loads(row.value) if row.value else None
-                                # New shape: {"uid", "name"} — match on uid. Legacy shape: bare name string.
                                 matched = (
                                     stored.get("uid") in disabled_main_uids
                                     if isinstance(stored, dict)

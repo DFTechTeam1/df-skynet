@@ -29,7 +29,8 @@ class DfEngineProjectSettings(SQLModel, table=True):
     )
 
     project: Optional["Projects"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEngineProjectSettings.project_id]"}
+        back_populates="project_setting",
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineProjectSettings.project_id]"},
     )
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineProjectSettings.created_by]"}

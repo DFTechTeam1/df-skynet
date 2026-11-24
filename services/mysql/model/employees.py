@@ -141,3 +141,20 @@ class Employees(SQLModel, table=True):
 
     position_backups: Optional["PositionBackups"] = Relationship(back_populates="employees")  # type: ignore
     users: Optional["Users"] = Relationship(back_populates="employees", sa_relationship_kwargs={"uselist": False})  # type: ignore
+    project_person_in_charges: list["ProjectPersonInCharges"] = Relationship(back_populates="pic")  # type: ignore
+    api_keys: list["DfEngineApiKeys"] = Relationship(  # type: ignore
+        back_populates="employees",
+        sa_relationship_kwargs={"foreign_keys": "[DfEngineApiKeys.employee_id]"},
+    )
+    transfer_team_members: list["TransferTeamMembers"] = Relationship(  # type: ignore
+        back_populates="employee",
+        sa_relationship_kwargs={"foreign_keys": "[TransferTeamMembers.employee_id]"},
+    )
+    incoming_transfer_requests: list["TransferTeamMembers"] = Relationship(  # type: ignore
+        back_populates="request_to_employee",
+        sa_relationship_kwargs={"foreign_keys": "[TransferTeamMembers.request_to]"},
+    )
+    outgoing_transfer_requests: list["TransferTeamMembers"] = Relationship(  # type: ignore
+        back_populates="requested_by_employee",
+        sa_relationship_kwargs={"foreign_keys": "[TransferTeamMembers.requested_by]"},
+    )

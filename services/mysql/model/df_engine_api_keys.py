@@ -38,7 +38,7 @@ class DfEngineApiKeys(SQLModel, table=True):
     )
 
     employees: Optional["Employees"] = Relationship(  # type: ignore
-        sa_relationship_kwargs={"foreign_keys": "[DfEngineApiKeys.employee_id]"}
+        back_populates="api_keys", sa_relationship_kwargs={"foreign_keys": "[DfEngineApiKeys.employee_id]"}
     )
     created_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineApiKeys.created_by]"}

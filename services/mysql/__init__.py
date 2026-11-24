@@ -95,6 +95,8 @@ def _build_stmt(
     limit: Optional[int],
     offset: Optional[int],
     fetch_one: bool,
+    group_by: Optional[tuple[Any, ...]] = None,
+    having: Optional[tuple[Any, ...]] = None,
 ) -> Select[Any]:
     columns = _label_duplicates(columns) if columns else columns
     stmt = select(*columns) if columns else select(table)
@@ -116,6 +118,12 @@ def _build_stmt(
 
     if filters is not None:
         stmt = stmt.where(*filters)
+
+    if group_by is not None:
+        stmt = stmt.group_by(*group_by)
+
+    if having is not None:
+        stmt = stmt.having(*having)
 
     if order_by is not None:
         stmt = stmt.order_by(*order_by)
@@ -151,6 +159,8 @@ async def query(
     limit: Optional[int] = None,
     offset: Optional[int] = None,
     fetch_one: bool = False,
+    group_by: Optional[tuple[Any, ...]] = None,
+    having: Optional[tuple[Any, ...]] = None,
 ) -> Any:
     """Generic SELECT builder so controllers don't hand-roll a query method per
     relation/filter/paging combination.
@@ -166,8 +176,11 @@ async def query(
     `fetch_one`: return a single result (or `None`) instead of a list — the
     shape (model instance / scalar / `Row`) follows `columns` the same way.
     Implies `limit=1` when `limit` isn't set, so only one row is fetched.
+    `group_by` / `having`: tuples of SQLAlchemy expressions for `GROUP BY` / `HAVING`, e.g.
+    `group_by=(Projects.status,)`, `having=(func.count(Projects.id) > 1,)`. Put the aggregate
+    (e.g. `func.count(...)`) in `columns`; `fetch_one=False` returns every group.
     """
-    stmt = _build_stmt(table, columns, joins, filters, options, order_by, limit, offset, fetch_one)
+    stmt = _build_stmt(table, columns, joins, filters, options, order_by, limit, offset, fetch_one, group_by, having)
     return _fetch(await db.execute(stmt), columns, fetch_one)
 
 
@@ -182,10 +195,12 @@ def query_sync(
     limit: Optional[int] = None,
     offset: Optional[int] = None,
     fetch_one: bool = False,
+    group_by: Optional[tuple[Any, ...]] = None,
+    having: Optional[tuple[Any, ...]] = None,
 ) -> Any:
     """Sync mirror of `query()` for Celery tasks — same SELECT-builder, same
     signature, `db.execute(stmt)` without `await`."""
-    stmt = _build_stmt(table, columns, joins, filters, options, order_by, limit, offset, fetch_one)
+    stmt = _build_stmt(table, columns, joins, filters, options, order_by, limit, offset, fetch_one, group_by, having)
     return _fetch(db.execute(stmt), columns, fetch_one)
 
 

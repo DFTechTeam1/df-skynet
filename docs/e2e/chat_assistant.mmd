@@ -1,0 +1,49 @@
+flowchart TD
+    Start([Start])
+    subgraph CreateNewSessionGraph
+        Start-->UserInputPrompt
+        UserInputPrompt-->ChatValidationGraph
+        ChatValidationGraph-->GetChatAssistantFeature
+        GetChatAssistantFeature-->GetChatAssistantMDFile
+        GetChatAssistantMDFile-->InsertToChatAssistantTable
+        GetChatAssistantMDFile-->BuildPayload
+        BuildPayload-->SendRequestToOpenrouter
+        SendRequestToOpenrouter-.Success.->ReturnSessionUid
+        SendRequestToOpenrouter-.Failed.->RaiseCreateSessionError
+        ReturnSessionUid-->End
+        RaiseCreateSessionError-->End
+    end
+
+    subgraph ChatValidationGraph
+        GetProject-->IsProjectOngoing{IsProjectOngoing?}
+        IsProjectOngoing-.Not Ongoing.->RaiseProjectNotOngoingError
+        IsProjectOngoing-.Ongoing.->GetAdminSetting
+        RaiseProjectNotOngoingError-->End
+        GetAdminSetting-->isProjectHasOwnSetting{isProjectHasOwnSetting?}
+        isProjectHasOwnSetting-.Project setting.->GetProjectSetting
+        isProjectHasOwnSetting-.Global setting.->GetAdminSetting
+        GetAdminSetting-->GetUserAPIKey
+        GetProjectSetting-->GetUserAPIKey
+        GetUserAPIKey-->isUserHasAPIKey{isUserHasAPIKey?}
+        isUserHasAPIKey-.Not have an API key.->RaiseUserNotAttachedAPIKeyError
+        isUserHasAPIKey-.Attached an API key.->GetAPIKeyUsage
+        RaiseUserNotAttachedAPIKeyError-->End
+        GetAPIKeyUsage-->isAPIUsageReachedLimit{isAPIUsageReachedLimit?}
+        isAPIUsageReachedLimit-.Quota exceeded.->RaiseAPIUsageRaisedLimiitError
+        isAPIUsageReachedLimit-.Quota available.->GetAdminSetting
+        GetAdminSetting-->isPromptGuardrailActive{isPromptGuardrailActive?}
+        isPromptGuardrailActive-.Active.->GetPromptGuardrail
+        GetPromptGuardrail-->isUserPromptRelevant{isUserPromptRelevant?}
+        isUserPromptRelevant-.Not Relevant.->RaiseUserPromptIrrelevantError
+        isUserPromptRelevant-.Relevant.->End
+        isPromptGuardrailActive-.Inactive.->End
+        RaiseUserPromptIrrelevantError-->End
+        RaiseAPIUsageRaisedLimiitError-->End
+    end
+
+    subgraph ContinueSessionGraph
+        Start-->PickChatSession
+        PickChatSession-->UserInputPrompt
+        UserInputPrompt-->InsertToChatAssistantTable
+    end
+    End([End])

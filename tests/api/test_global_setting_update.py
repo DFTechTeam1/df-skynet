@@ -34,14 +34,36 @@ async def test_update_overwrites_instead_of_duplicating(authed_client, db_sessio
 async def test_update_accepts_enabled_available_text_model(authed_client, db_session):
     """200 OK; a type=text, enabled, available model can be saved as enhancer_model.
 
-    The client sends the model UID; it is stored and returned as {"uid", "name"}.
+    The client sends the model UID; it is stored and returned as {"id", "uid", "model_id", "name", "top_provider"}.
     """
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("POST", URL, json={"enhancer_model": model.uid})
     assert resp.status_code == 200
-    assert resp.json()["data"]["enhancer_model"] == {"uid": model.uid, "name": model.name}
+    assert resp.json()["data"]["enhancer_model"] == {
+        "id": model.id,
+        "uid": model.uid,
+        "model_id": model.model_id,
+        "name": model.name,
+        "top_provider": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_saves_the_models_context_window(authed_client, db_session):
+    """200 OK; the model's top_provider (context window) is saved with the reference, for the chat transfer."""
+    await clear_setting_state(db_session)
+    window = {"is_moderated": True, "context_length": 200000, "max_completion_tokens": 64000}
+    model = DfEngineModelOptionsFactory.create(
+        type="text", is_available=True, is_enabled=True, is_main=False, top_provider=window
+    )
+
+    resp = await authed_client.call("POST", URL, json={"assistant_model": model.uid})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["assistant_model"]["top_provider"] == window
+    fetch = await authed_client.call("GET", URL)
+    assert fetch.json()["data"]["assistant_model"]["top_provider"] == window
 
 
 @pytest.mark.asyncio
@@ -244,6 +266,39 @@ async def test_update_rejects_out_of_range_folder_depth_limit(authed_client, db_
     await clear_setting_state(db_session)
 
     resp = await authed_client.call("POST", URL, json={"folder_depth_limit": 0}, raise_for_status=False)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_chat_assistant_settings_round_trips(authed_client, db_session):
+    """200 OK; the chat assistant limits are saved and returned as given."""
+    await clear_setting_state(db_session)
+    payload = {"chat_assistant_settings": {"max_chat_messages": 120, "max_unique_attachments": 8}}
+
+    resp = await authed_client.call("POST", URL, json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["chat_assistant_settings"] == payload["chat_assistant_settings"]
+
+    fetch = await authed_client.call("GET", URL)
+    assert fetch.json()["data"]["chat_assistant_settings"] == payload["chat_assistant_settings"]
+
+
+@pytest.mark.asyncio
+async def test_update_chat_assistant_settings_default_when_omitted(authed_client, db_session):
+    """200 OK; leaving the section out saves the defaults (500 messages, 50 files): the update is a full replace."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("POST", URL, json={})
+    assert resp.json()["data"]["chat_assistant_settings"] == {"max_chat_messages": 500, "max_unique_attachments": 50}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["max_chat_messages", "max_unique_attachments"])
+async def test_update_rejects_chat_assistant_limits_below_one(authed_client, db_session, field):
+    """422 when a chat assistant limit is below 1."""
+    await clear_setting_state(db_session)
+
+    resp = await authed_client.call("POST", URL, json={"chat_assistant_settings": {field: 0}}, raise_for_status=False)
     assert resp.status_code == 422
 
 

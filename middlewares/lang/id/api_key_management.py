@@ -1,9 +1,14 @@
 class ApiKeyManagementMessage:
     def __init__(self) -> None:
         self.message: dict[str, str] = {
+            "project_lead_api_key_not_found": "Project lead, {nickname}, belum memiliki API key. Silakan buat terlebih dahulu di API Key Management.",
+            "project_lead_api_key_multiple": "Project lead, {nickname}, memiliki {total_key} API key utama, padahal hanya boleh satu. Silakan sisakan satu API key utama di API Key Management.",
+            "project_cost_limit_exceeded": "Proyek ini sudah menggunakan {spent} dari batas penggunaan {limit}, sehingga chat assistant belum dapat digunakan. Silakan hubungi admin untuk menaikkan batasnya.",
+            "prompt_guardrail_timeout": "Pengecekan keamanan prompt memakan waktu terlalu lama. Silakan coba beberapa saat lagi.",
+            "prompt_guardrail_provider_error": "Pengecekan keamanan prompt tidak dapat diselesaikan karena penyedia AI mengembalikan error. Silakan coba lagi atau hubungi admin.",
+            "prompt_guardrail_unreachable": "Pengecekan keamanan prompt tidak dapat menghubungi penyedia AI. Silakan coba beberapa saat lagi.",
             "api_key_not_found": "API key tidak ditemukan.",
             "api_key_already_exists": "API key dengan nama yang sama sudah ada.",
-            "employee_not_found": "Kami tidak menemukan employee yang cocok dengan PIC ini.",
             "employee_already_resigned": "Employee ini sudah resign dan tidak dapat ditugaskan sebagai PIC.",
             "employee_position_not_allowed": "Hanya Project Manager atau Assistant Project Manager yang dapat ditugaskan sebagai PIC.",
             "cannot_delete_main_api_key": "Key ini sedang ditandai sebagai main dan tidak dapat dihapus. Ubah statusnya terlebih dahulu.",

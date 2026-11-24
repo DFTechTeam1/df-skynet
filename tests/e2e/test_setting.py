@@ -26,8 +26,14 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 0
 
     # 2. first save — rows inserted; the client sends the model UID, it is stored
-    #    and returned as {"uid", "name"}; not logged (no prior state)
-    model_ref = {"uid": model.uid, "name": model.name}
+    #    and returned as {"id", "uid", "model_id", "name", "top_provider"}; not logged (no prior state)
+    model_ref = {
+        "id": model.id,
+        "uid": model.uid,
+        "model_id": model.model_id,
+        "name": model.name,
+        "top_provider": model.top_provider,
+    }
     first_save = await authed_client.call(
         "POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}, "enhancer_model": model.uid}
     )
@@ -41,7 +47,7 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     )
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 0
 
-    # 4. real change — admin_view flipped; one log records the diff (model as {"uid", "name"})
+    # 4. real change — admin_view flipped; one log records the diff (model as {"id", "uid", "model_id", "name", "top_provider"})
     await authed_client.call(
         "POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}, "enhancer_model": model.uid}
     )

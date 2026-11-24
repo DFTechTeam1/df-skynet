@@ -624,3 +624,128 @@ def as_roles(app, user_id):
 
     yield _set
     app.dependency_overrides.pop(get_user, None)
+
+
+@pytest_asyncio.fixture
+async def chat_ctx(db_session, user_id):
+    """Menu / feature / project a chat session can hang on. The project is one the chat endpoints already worked for
+    (the authenticated user has a finished assistant reply there), so its lead, API key and class are in place;
+    skipped when the DB has no such chat yet."""
+    from services.mysql.model import (
+        DfEngineChatAssistants,
+        DfEngineChatSessions,
+        DfEngineFeatures,
+        DfEngineMenus,
+        Projects,
+    )
+
+    row = (
+        await db_session.execute(
+            select(
+                DfEngineChatSessions.project_id,
+                DfEngineChatSessions.menu_id,
+                DfEngineChatSessions.feature_id,
+                Projects.project_class_id,
+                Projects.uid,
+                DfEngineMenus.uid,
+                DfEngineFeatures.uid,
+            )
+            .join(DfEngineChatAssistants, DfEngineChatAssistants.session_id == DfEngineChatSessions.id)  # type: ignore
+            .join(Projects, Projects.id == DfEngineChatSessions.project_id)  # type: ignore
+            .join(DfEngineMenus, DfEngineMenus.id == DfEngineChatSessions.menu_id)  # type: ignore
+            .join(DfEngineFeatures, DfEngineFeatures.id == DfEngineChatSessions.feature_id)  # type: ignore
+            .where(
+                DfEngineChatSessions.created_by == int(user_id),  # type: ignore
+                DfEngineChatAssistants.role == "assistant",  # type: ignore
+                DfEngineChatAssistants.status_code == 200,  # type: ignore
+                Projects.project_class_id.isnot(None),  # type: ignore
+            )
+            .order_by(DfEngineChatSessions.id.desc())  # type: ignore
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        pytest.skip("no earlier successful chat of this user to borrow a working project/menu/feature from")
+    await db_session.commit()
+    return SimpleNamespace(
+        project_id=row[0],
+        menu_id=row[1],
+        feature_id=row[2],
+        class_id=row[3],
+        project_uid=row[4],
+        menu_uid=row[5],
+        feature_uid=row[6],
+    )
+
+
+@pytest.fixture
+def chat_calls(monkeypatch):
+    """Replaces the RabbitMQ publish and the `chat-insertion` push of the chat controller; records both in order."""
+    calls = SimpleNamespace(events=[], published=[], insertions=[])
+
+    async def publish(message):
+        calls.events.append("publish")
+        calls.published.append(message)
+
+    def insertion(status, session_uid, user_chat_uid=None):
+        calls.events.append("insertion")
+        calls.insertions.append((status, session_uid, user_chat_uid))
+
+    monkeypatch.setattr("apps.controller.chat_assistants.publish_message", publish)
+    monkeypatch.setattr("apps.controller.chat_assistants.send_chat_insertion", insertion)
+    return calls
+
+
+@pytest.fixture
+def fail_chat_insert(monkeypatch):
+    """Makes every `AsyncSession.add_all` fail, which is what saving the chat rows of a message uses first."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    def boom(self, instances):
+        raise RuntimeError("insert failed")
+
+    monkeypatch.setattr(AsyncSession, "add_all", boom)
+
+
+@pytest_asyncio.fixture
+async def chat_settings(authed_client, db_session, chat_ctx):
+    """`await chat_settings(max_chat_messages=...)` saves fresh global settings with an assistant model, a very high
+    spend limit for the chat project's class and the given chat limit. The settings (and their log) the DB had before
+    are put back afterwards, so later tests that rely on them still find them."""
+    from sqlalchemy import insert
+    from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
+    from services.mysql.model import DfEngineProjectSettings, DfEngineSettingLogs, DfEngineSettings
+    from services.redis import client as redis_client, delete_pattern
+    from tests.helpers import SETTING_CACHE_PATTERN, clear_setting_state
+
+    models = (DfEngineSettings, DfEngineProjectSettings, DfEngineSettingLogs)
+    snapshot = {}
+    for model in models:
+        stmt = select(model)
+        if model is DfEngineSettings:  # other codes (e.g. the OpenRouter credits cache) are not touched by the reset
+            stmt = stmt.where(DfEngineSettings.code == "admin_setting")  # type: ignore
+        rows = (await db_session.execute(stmt)).scalars().all()
+        snapshot[model] = [{c.name: getattr(r, c.name) for c in model.__table__.columns} for r in rows]
+    await db_session.commit()
+
+    async def save(max_chat_messages: int = 500):
+        await clear_setting_state(db_session)
+        model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True)
+        payload = {
+            "assistant_model": model.uid,
+            "enhancer_model": model.uid,
+            "project_class_limitations": [{"id": chat_ctx.class_id, "token_usage_limit": 1_000_000}],
+            "chat_assistant_settings": {"max_chat_messages": max_chat_messages, "max_unique_attachments": 50},
+        }
+        resp = await authed_client.call("POST", "/api/setting", json=payload)
+        assert resp.status_code == 200, resp.text
+        return model
+
+    yield save
+
+    await clear_setting_state(db_session)
+    for model in models:
+        if snapshot[model]:
+            await db_session.execute(insert(model.__table__), snapshot[model])
+    await db_session.commit()
+    await delete_pattern(redis_client(), SETTING_CACHE_PATTERN)

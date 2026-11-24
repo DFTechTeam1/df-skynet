@@ -2,7 +2,10 @@ from services.mysql.model.df_engine_api_key_rotation_issues import DfEngineApiKe
 from services.mysql.model.df_engine_api_key_snapshots import DfEngineApiKeySnapshots
 from services.mysql.model.df_engine_api_keys import DfEngineApiKeys
 from services.mysql.model.df_engine_chat_assistants import DfEngineChatAssistants
-from services.mysql.model.df_engine_chat_assistant_image_references import DfEngineChatAssistantImageReferences
+from services.mysql.model.df_engine_attachments import DfEngineAttachments
+from services.mysql.model.df_engine_chat_errors import DfEngineChatErrors
+from services.mysql.model.df_engine_chat_references import DfEngineChatReferences
+from services.mysql.model.df_engine_chat_sessions import DfEngineChatSessions
 from services.mysql.model.df_engine_feature_prompt_mappings import DfEngineFeaturePromptMappings
 from services.mysql.model.df_engine_features import DfEngineFeatures
 from services.mysql.model.df_engine_generation_reconciliation_issues import DfEngineGenerationReconciliationIssues
@@ -11,6 +14,7 @@ from services.mysql.model.df_engine_generation_favourites import DfEngineGenerat
 from services.mysql.model.df_engine_generation_results import DfEngineGenerationResults
 from services.mysql.model.df_engine_generation_uploads import DfEngineGenerationUploads
 from services.mysql.model.df_engine_generations import DfEngineGenerations
+from services.mysql.model.df_engine_guardrail_validations import DfEngineGuardrailValidations
 from services.mysql.model.df_engine_keyframe_details import DfEngineKeyframeDetails
 from services.mysql.model.df_engine_menu_feature_mappings import DfEngineMenuFeatureMappings
 from services.mysql.model.df_engine_menus import DfEngineMenus
@@ -38,7 +42,7 @@ from services.mysql.model.project_person_in_charges import ProjectPersonInCharge
 from services.mysql.model.project_song_lists import ProjectSongLists
 from services.mysql.model.project_task_pics import ProjectTaskPics
 from services.mysql.model.project_tasks import ProjectTasks
-from services.mysql.model.projects import Projects
+from services.mysql.model.projects import PROJECT_STATUS_ONGOING, Projects
 from services.mysql.model.transfer_team_members import TransferTeamMembers
 from services.mysql.model.users import Users
 
@@ -47,7 +51,10 @@ __all__ = [
     "DfEngineApiKeySnapshots",
     "DfEngineApiKeys",
     "DfEngineChatAssistants",
-    "DfEngineChatAssistantImageReferences",
+    "DfEngineAttachments",
+    "DfEngineChatErrors",
+    "DfEngineChatReferences",
+    "DfEngineChatSessions",
     "DfEngineFeaturePromptMappings",
     "DfEngineFeatures",
     "DfEngineGenerationReconciliationIssues",
@@ -56,6 +63,7 @@ __all__ = [
     "DfEngineGenerationResults",
     "DfEngineGenerationUploads",
     "DfEngineGenerations",
+    "DfEngineGuardrailValidations",
     "DfEngineKeyframeDetails",
     "DfEngineMenuFeatureMappings",
     "DfEngineMenus",
@@ -84,6 +92,7 @@ __all__ = [
     "ProjectTaskPics",
     "ProjectTasks",
     "Projects",
+    "PROJECT_STATUS_ONGOING",
     "TransferTeamMembers",
     "Users",
 ]

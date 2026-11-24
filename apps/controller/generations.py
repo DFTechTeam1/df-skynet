@@ -27,6 +27,7 @@ from services.mysql.model import (
     Users,
     DfEngineApiKeys,
 )
+from services.mysql.model.projects import PROJECT_STATUS_ONGOING
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR, GenerationKinds, GenerationStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.redis import get_json, set_json, delete_pattern, invalidate_project_files, CacheKeys
@@ -256,7 +257,6 @@ class GenerationsController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         can_override = has_override(self.user["roles"])
 
-        PROJECT_STATUS_ONGOING = 1
         SONG_STATUS_COMPLETED = 6
         TASK_STATUS_COMPLETED = 4
 
@@ -454,7 +454,6 @@ class GenerationsController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         can_override = has_override(self.user["roles"])
 
-        PROJECT_STATUS_ONGOING = 1
         SONG_STATUS_COMPLETED = 6
         TASK_STATUS_COMPLETED = 4
 
@@ -748,7 +747,6 @@ class GenerationsController(CoreDependencies):
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         can_override = has_override(self.user["roles"])
 
-        PROJECT_STATUS_ONGOING = 1
         SONG_STATUS_COMPLETED = 6
         TASK_STATUS_COMPLETED = 4
 

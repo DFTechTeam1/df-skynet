@@ -4,20 +4,28 @@ from uuid import uuid4
 from sqlalchemy import select
 from middlewares.lang import resolve_message
 from config.variables import OVERRIDE_FILE_ROLES
+from services.mysql.factory.df_engine_attachments import DfEngineAttachmentsFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
+from services.mysql.factory.df_engine_upload_file_references import DfEngineUploadFileReferencesFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
-from services.mysql.model import DfEngineGenerationResults, DfEngineUploadFiles
+from services.mysql.model import (
+    DfEngineAttachments,
+    DfEngineGenerationResults,
+    DfEngineGenerations,
+    DfEngineUploadFileReferences,
+    DfEngineUploadFiles,
+)
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 
 PLAIN = ["staff"]
 
 
 def _root(project_task):
-    return f"storage/DF-Engine/{project_task.project.name}_{project_task.project.uid[:8]}"
+    return f"storage/DF-Engine-DEV/{project_task.project.name}_{project_task.project.uid[:8]}"
 
 
 def _upload(project_task, created_by, path):
@@ -273,6 +281,48 @@ async def test_delete_upload_by_owner(authed_client, project_task, user_id, mock
     assert resp.status_code == 200, resp.text
     assert mock_udin.calls[-1][2] == {"sources": [path]}
     assert await _row(db_session, DfEngineUploadFiles, row.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_attached_upload_removes_its_attachments(
+    authed_client, project_task, user_id, mock_udin, db_session, as_roles
+):
+    """200; the chat attachments of a deleted upload (and their chat links) are deleted with it."""
+    as_roles(PLAIN)
+    path = f"{_root(project_task)}/upload/images/s_{uuid4().hex[:6]}.jpg"
+    row = _upload(project_task, user_id, path)
+    attachment = DfEngineAttachmentsFactory.create(sourceable_id=row.id, sourceable_type="DfEngineUploadFiles")
+    other = DfEngineAttachmentsFactory.create(sourceable_id=row.id + 10**6, sourceable_type="DfEngineUploadFiles")
+    mock_udin.set("delete-files", 200, {"data": [{"path": path}]})
+    resp = await authed_client.call(
+        "DELETE", "/api/files/upload", json={"file_uids": [row.uid]}, raise_for_status=False
+    )
+    assert resp.status_code == 200, resp.text
+    assert await _row(db_session, DfEngineUploadFiles, row.id) is None
+    assert await _row(db_session, DfEngineAttachments, attachment.id) is None
+    assert await _row(db_session, DfEngineAttachments, other.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_upload_used_as_generation_reference(
+    authed_client, project_task, user_id, mock_udin, db_session, as_roles, generation_fks
+):
+    """200; a generation's reference link to the upload goes with it, the generation itself stays."""
+    as_roles(PLAIN)
+    path = f"{_root(project_task)}/upload/images/r_{uuid4().hex[:6]}.jpg"
+    row = _upload(project_task, user_id, path)
+    result = _generated(
+        project_task, user_id, f"{_root(project_task)}/generated/images/g_{uuid4().hex[:5]}.png", generation_fks
+    )
+    link = DfEngineUploadFileReferencesFactory.create(generation_id=result.generation_id, file_id=row.id)
+    mock_udin.set("delete-files", 200, {"data": [{"path": path}]})
+    resp = await authed_client.call(
+        "DELETE", "/api/files/upload", json={"file_uids": [row.uid]}, raise_for_status=False
+    )
+    assert resp.status_code == 200, resp.text
+    assert await _row(db_session, DfEngineUploadFiles, row.id) is None
+    assert await _row(db_session, DfEngineUploadFileReferences, link.id) is None
+    assert await _row(db_session, DfEngineGenerations, result.generation_id) is not None
 
 
 @pytest.mark.asyncio

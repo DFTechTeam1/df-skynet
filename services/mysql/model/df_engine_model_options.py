@@ -91,6 +91,10 @@ class DfEngineModelOptions(SQLModel, table=True):
         default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
     )
 
+    chat_assistants: list["DfEngineChatAssistants"] = Relationship(back_populates="model_option")  # type: ignore
+    guardrail_validations: list["DfEngineGuardrailValidations"] = Relationship(  # type: ignore
+        back_populates="model_option"
+    )
     deleted_by_user: Optional["Users"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineModelOptions.deleted_by]"}
     )

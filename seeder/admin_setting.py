@@ -188,6 +188,7 @@ async def seed() -> None:
     settings = {
         "admin_view": {"see_all_asset": True},
         "folder_depth_limit": 2,
+        "chat_assistant_settings": {"max_chat_messages": 500, "max_unique_attachments": 50},
         "project_class_limitations": project_class_config(project_classes),
         "enhancer_model": None,
         "assistant_model": None,

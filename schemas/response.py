@@ -1,6 +1,6 @@
 from typing import Any, Literal, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from middlewares.lang import current_lang, resolve_message
 
 

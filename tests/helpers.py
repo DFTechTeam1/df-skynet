@@ -134,3 +134,32 @@ def find_by_name(items: list[dict[str, Any]], name: str) -> dict[str, Any]:
 
 def response_names(body: dict[str, Any]) -> list[str]:
     return [t["name"] for t in body["data"]]
+
+
+# ---- chat assistant helpers ----
+from datetime import datetime  # noqa: E402
+from services.mysql.factory.df_engine_chat_assistants import DfEngineChatAssistantsFactory  # noqa: E402
+from services.mysql.factory.df_engine_chat_sessions import DfEngineChatSessionsFactory  # noqa: E402
+
+
+def make_chat_session(ctx, created_by, messages, archieved=False):
+    """A chat session on `ctx` (menu/feature/project) holding `messages`: `(role, content[, extra])` tuples where
+    `extra` may set `has_generation_prompt` / `status_code`. Returns `(session, rows)`."""
+    session = DfEngineChatSessionsFactory.create(
+        menu_id=ctx.menu_id,
+        feature_id=ctx.feature_id,
+        project_id=ctx.project_id,
+        created_by=int(created_by),
+        archieved_at=datetime.now() if archieved else None,
+    )
+    rows = [
+        DfEngineChatAssistantsFactory.create(
+            session_id=session.id,
+            role=role,
+            content=content,
+            sender="openrouter" if role != "user" else "tester",
+            **(extra[0] if extra else {}),
+        )
+        for role, content, *extra in messages
+    ]
+    return session, rows
