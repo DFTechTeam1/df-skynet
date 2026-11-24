@@ -359,6 +359,14 @@ async def handle_chat_assistant(payload: dict[str, Any]) -> None:
             (exc.error or {}).get("upstream_status", exc.status_code) if isinstance(exc, ServiceError) else 502
         )
 
+    has_prompt = bool(reply and reply.has_generation_prompt)
+    will_prompt = bool(reply and reply.will_generate_prompt)
+    if has_prompt and not payload.get("generate_prompt"):
+        logging.warning("prompt written without a yes for chat_id=%s, asking first", payload["chat_id"])
+        content = resolve_message("chat_assistant_confirm_generate_prompt", payload["lang"])
+        has_prompt, will_prompt = False, True
+    will_prompt = will_prompt and not has_prompt
+
     total_tokens, cached_tokens = token_counts(usage)
     async with make_session(DB_ASYNC_URL)() as db:
         chat = assistant_row(
@@ -370,8 +378,8 @@ async def handle_chat_assistant(payload: dict[str, Any]) -> None:
             cached_tokens=cached_tokens,
             cost=Decimal(str(usage.get("cost") or 0)),
             exchange_rate=await db.run_sync(get_usd_rate),
-            has_generation_prompt=bool(reply and reply.has_generation_prompt),
-            will_generate_prompt=bool(reply and reply.will_generate_prompt and not reply.has_generation_prompt),
+            has_generation_prompt=has_prompt,
+            will_generate_prompt=will_prompt,
         )
         db.add(chat)
         await db.flush()
@@ -382,7 +390,7 @@ async def handle_chat_assistant(payload: dict[str, Any]) -> None:
                 .values(status_code=status_code)
             )
 
-        refs = payload.get("all_attachments", []) if reply and reply.has_generation_prompt else []
+        refs = payload.get("all_attachments", []) if has_prompt else []
         refs = refs or payload.get("attachments", [])
         if refs:
             attachments = [

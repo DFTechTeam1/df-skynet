@@ -56,6 +56,7 @@ class GenerationsMessage:
             "chat_assistant_nothing_to_transfer": "Belum ada yang bisa dipindahkan. Chat ini belum memiliki pesan yang sudah dijawab.",
             "chat_assistant_not_resendable": "Pesan ini tidak dapat dikirim ulang. Hanya pesan kamu yang diblokir atau belum dijawab yang dapat dikirim ulang.",
             "chat_assistant_not_generatable": "Prompt belum bisa dibuat karena tidak ada pertanyaan dari asisten yang menunggu jawaban. Lanjutkan chat seperti biasa, atau tunggu asisten menanyakan apakah prompt mau ditulis.",
+            "chat_assistant_confirm_generate_prompt": "Konteks percakapan sudah cukup untuk saya menuliskan prompt. Apakah Anda ingin saya menuliskannya sekarang?",
             "chat_assistant_attachment_limit_reached": "Chat ini hanya dapat merujuk maksimal {max} file berbeda. Mulai chat baru untuk menambah file.",
             "chat_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk asisten chat. Silakan hubungi admin.",
             "chat_assistant_failed": "Asisten chat belum bisa menjawab saat ini. Silakan coba lagi.",
