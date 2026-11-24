@@ -560,7 +560,7 @@ class ChatAssistantsController(CoreDependencies):
                 model_id=assistant_model["id"],
                 apikeyable_id=project_api_key["id"],
                 apikeyable_type=DfEngineApiKeys.__name__,
-                sender=get_user["username"],
+                sender=get_user["username"] or "user",
                 content=schema.content,
             )
             try:
@@ -1246,7 +1246,7 @@ class ChatAssistantsController(CoreDependencies):
                 model_id=assistant_model["id"],
                 apikeyable_id=project_api_key["id"],
                 apikeyable_type=DfEngineApiKeys.__name__,
-                sender=get_user["username"],
+                sender=get_user["username"] or "user",
                 content=schema.content,
             )
             try:
@@ -1768,7 +1768,7 @@ class ChatAssistantsController(CoreDependencies):
                 model_id=assistant_model["id"],
                 apikeyable_id=project_api_key["id"],
                 apikeyable_type=DfEngineApiKeys.__name__,
-                sender=get_user["username"],
+                sender=get_user["username"] or "user",
                 content=target["content"],
             )
             try:
