@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any, Optional
 import traceback
 from uuid import UUID, uuid4
@@ -519,7 +520,10 @@ class ChatAssistantsController(CoreDependencies):
             ]
 
             # Insert New Session
-            content = " ".join(schema.content.split())
+            # The title is plain text: file tags are left out of it (unless nothing else is written)
+            content = " ".join(re.sub(r"<refer to [^>]*>", "", schema.content).split()) or " ".join(
+                schema.content.split()
+            )
             new_session = DfEngineChatSessions(
                 topic=content[:50] + ("..." if len(content) > 50 else ""),
                 menu_id=menu["id"],

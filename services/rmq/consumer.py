@@ -130,6 +130,17 @@ def token_counts(usage: dict[str, Any]) -> tuple[int, int]:
     return usage.get("total_tokens") or 0, cached
 
 
+def with_reference_tags(content: str, refs: list[dict[str, Any]]) -> str:
+    """`content` with a `<refer to {uid}>` tag at the end for every file in `refs` the text does not mention yet.
+
+    A reply that carries files always names them in its text, whatever the model wrote.
+    """
+    missing = [uid for uid in dict.fromkeys(r["uid"] for r in refs) if f"<refer to {uid}>" not in content]
+    if not missing:
+        return content
+    return content + "\n\n" + "\n".join(f"<refer to {uid}>" for uid in missing)
+
+
 def assistant_row(
     payload: dict[str, Any], role: str, content: str, status_code: int, **extra: Any
 ) -> DfEngineChatAssistants:
@@ -367,6 +378,10 @@ async def handle_chat_assistant(payload: dict[str, Any]) -> None:
         has_prompt, will_prompt = False, True
     will_prompt = will_prompt and not has_prompt
 
+    # The files this reply carries (every file of the chat for a written prompt, else the message's own)
+    refs = (payload.get("all_attachments", []) if has_prompt else []) or payload.get("attachments", [])
+    content = with_reference_tags(content, refs)
+
     total_tokens, cached_tokens = token_counts(usage)
     async with make_session(DB_ASYNC_URL)() as db:
         chat = assistant_row(
@@ -390,8 +405,6 @@ async def handle_chat_assistant(payload: dict[str, Any]) -> None:
                 .values(status_code=status_code)
             )
 
-        refs = payload.get("all_attachments", []) if has_prompt else []
-        refs = refs or payload.get("attachments", [])
         if refs:
             attachments = [
                 DfEngineAttachments(sourceable_id=r["id"], sourceable_type=r["sourceable_type"]) for r in refs
