@@ -19,6 +19,5 @@ class DfEngineChatSessionsFactory(SQLAlchemyModelFactory):
     uid = LazyFunction(lambda: str(uuid4()))
     topic = LazyFunction(lambda: f"Topic {uuid4().hex[:8]}")
     menu_id = None
-    feature_id = None
     project_id = None
     created_by = None

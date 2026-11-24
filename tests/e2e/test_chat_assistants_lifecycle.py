@@ -42,3 +42,32 @@ async def test_chat_assistant_journey(authed_client, chat_ctx, chat_settings, us
     new_uid = transfer.json()["data"]
     assert new_uid != str(session.uid) and chat_calls.published[-1]["from_session_uid"] == str(session.uid)
     assert (await authed_client.call("GET", f"{URL}/{new_uid}")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_generate_prompt_journey(
+    authed_client, db_session, chat_ctx, chat_settings, chat_features, user_id, chat_calls
+):
+    """The assistant asks, the FE reads `can_generate_prompt`, the user says yes: the worker gets the guidelines and
+    the question; the button is gone right away and a second yes is refused."""
+    await chat_settings()
+    session, rows = make_chat_session(
+        chat_ctx, user_id, [("user", "make a prompt"), ("assistant", "Write it now?", {"will_generate_prompt": True})]
+    )
+    asked = rows[1]
+
+    message = (await authed_client.call("GET", f"{URL}/{session.uid}/messages/{asked.uid}")).json()["data"]
+    assert message["will_generate_prompt"] is True and message["action"]["can_generate_prompt"] is True
+
+    resp = await authed_client.call("POST", f"{URL}/{session.uid}", json={"content": "Yes", "generate_prompt": True})
+    assert resp.json()["data"] != asked.uid and chat_calls.events == ["insertion", "publish"]
+    assert chat_calls.published[0]["generate_prompt"] is True
+
+    message = (await authed_client.call("GET", f"{URL}/{session.uid}/messages/{asked.uid}")).json()["data"]
+    assert message["action"]["can_generate_prompt"] is False
+    again = await authed_client.call(
+        "POST", f"{URL}/{session.uid}", json={"content": "Yes again", "generate_prompt": True}, raise_for_status=False
+    )
+    assert again.status_code == 422
+    gone = await authed_client.call("POST", f"{URL}/{session.uid}/generate-prompt/{asked.uid}", raise_for_status=False)
+    assert gone.status_code in (404, 405)

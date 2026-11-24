@@ -10,11 +10,12 @@ from error import ServiceError, BaseError, RateLimitedError, DataNotFoundError, 
 from apps.controller.core import CoreDependencies
 from error import AuthorizationError, BaseError, ServiceError
 from log import logging
+from schemas.payload.feature_management import FeatureTypes
 from schemas.payload.chat_assistants import ContinueSessionPayload, CreateNewSessionPayload, UpdateSessionPayload
 from middlewares.lang import current_lang
 from services.pusher import send_chat_insertion
 from services.rmq.publisher import publish_message
-from services.openrouter import GUARDRAIL_INSTRUCTION, CHAT_ASSISTANT_INSTRUCTION
+from services.openrouter import GENERATE_PROMPT_INSTRUCTION, GUARDRAIL_INSTRUCTION, CHAT_ASSISTANT_INSTRUCTION
 from schemas.response import PaginationResponse, Response
 from schemas.format.chat_assistants import ChatAttachment, ChatMessage, ChatSession, build_history
 from schemas.format.openrouter import Attachment, Message
@@ -22,12 +23,12 @@ from services.chat_sample_history import SAMPLE_CONVERSATION
 from services.chat_transcript import build_transcript
 from utils import local_time
 from utils.formatter import format_udin_url
+from services.mysql import query
 from services.mysql.model.df_engine_generations import GenerationKinds
 from services.mysql.model import (
     PROJECT_STATUS_ONGOING,
     Projects,
     DfEngineMenus,
-    DfEngineMenuFeatureMappings,
     DfEngineFeatures,
     DfEngineFeaturePromptMappings,
     DfEnginePromptTemplates,
@@ -146,7 +147,7 @@ class ChatAssistantsController(CoreDependencies):
         "/projects/{project_uid}/chat-assistants/new",
         summary="Create a new chat session.",
         description=(
-            "Starts a chat session from the first user message, for a menu and feature of the project. The project must be ongoing with a lead PIC and an available API key, and still within its cost limit. Optional image attachments (uploaded or generated) are linked to the message, and the message is queued for prompt guardrail checks. Returns the new session `uid`."
+            "Starts a chat session from the first user message, for a menu of the project. The system prompt comes from the `initialize_session` feature. The project must be ongoing with a lead PIC and an available API key, and still within its cost limit. Optional image attachments (uploaded or generated) are linked to the message, and the message is queued for prompt guardrail checks. Returns the new session `uid`."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Chat Assistants"],
@@ -320,36 +321,34 @@ class ChatAssistantsController(CoreDependencies):
                 limit_source = f"global_class_{project['project_class_id']}"
             logging.info(f"{log_prefix} token limit={limit_api_key} source={limit_source}")
 
-            # Get Menu
+            # Get Menu (sessions belong to a menu; the system prompt is static, from the initialize_session feature)
             menu = await self.menu_repo.get_menu(
                 filters=(DfEngineMenus.uid == str(schema.menu_uid),),
                 columns=(DfEngineMenus,),
-                options=(
-                    load_only(DfEngineMenus.id),  # type: ignore
-                    selectinload(
-                        DfEngineMenus.df_engine_menu_feature_mappings.and_(  # type: ignore
-                            DfEngineMenuFeatureMappings.feature_id.in_(  # type: ignore
-                                select(DfEngineFeatures.id).where(  # type: ignore
-                                    DfEngineFeatures.uid == str(schema.feature_uid)  # type: ignore
-                                )
-                            )
-                        )
-                    )
-                    .selectinload(DfEngineMenuFeatureMappings.df_engine_features)  # type: ignore
-                    .load_only(DfEngineFeatures.name)  # type: ignore
-                    .selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings)  # type: ignore
-                    .selectinload(DfEngineFeaturePromptMappings.df_engine_prompt_templates)  # type: ignore
-                    .load_only(DfEnginePromptTemplates.prompt),  # type: ignore
-                ),
+                options=(load_only(DfEngineMenus.id),),  # type: ignore
             )
-
-            # No mapping left means the feature doesn't exist or isn't attached to this menu
-            if not menu["df_engine_menu_feature_mappings"]:
-                logging.warning(f"{log_prefix} feature {schema.feature_uid} not found in menu {schema.menu_uid}")
+            feature = await query(
+                db=self.db,
+                table=DfEngineFeatures,
+                filters=(
+                    DfEngineFeatures.type == FeatureTypes.initialize_session,
+                    DfEngineFeatures.is_active.is_(True),
+                ),  # type: ignore
+                options=(
+                    selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings).selectinload(  # type: ignore
+                        DfEngineFeaturePromptMappings.df_engine_prompt_templates  # type: ignore
+                    ),
+                ),
+                fetch_one=True,
+            )
+            if feature is None:
+                logging.warning(f"{log_prefix} no active feature of type initialize_session")
                 raise DataNotFoundError(message="feature_not_found")
-
-            feature = menu["df_engine_menu_feature_mappings"][0]["df_engine_features"]
-            prompts = [m["df_engine_prompt_templates"] for m in feature["df_engine_feature_prompt_mappings"]]
+            prompts = [
+                mapping.df_engine_prompt_templates.prompt
+                for mapping in sorted(feature.df_engine_feature_prompt_mappings, key=lambda m: m.id)
+                if mapping.df_engine_prompt_templates.is_active
+            ]
 
             # Load the current user with their employee
             get_user = await self.user_repo.get_user(
@@ -524,7 +523,6 @@ class ChatAssistantsController(CoreDependencies):
             new_session = DfEngineChatSessions(
                 topic=content[:50] + ("..." if len(content) > 50 else ""),
                 menu_id=menu["id"],
-                feature_id=menu["df_engine_menu_feature_mappings"][0]["feature_id"],
                 project_id=project["id"],
                 created_by=self.user["user_id"],
             )
@@ -535,7 +533,7 @@ class ChatAssistantsController(CoreDependencies):
 
             # Insert Chat Messages
             # One ordered list of system prompts: stored in DB (for replay) and sent to the model.
-            system_texts = [CHAT_ASSISTANT_INSTRUCTION.strip(), *(p["prompt"] for p in prompts)]
+            system_texts = [CHAT_ASSISTANT_INSTRUCTION.strip(), *prompts]
             if schema.params:
                 system_texts.append(
                     PARAMS_PROMPT.format(params=json.dumps(schema.params, ensure_ascii=False, indent=2)).strip()
@@ -622,7 +620,6 @@ class ChatAssistantsController(CoreDependencies):
                 "model": assistant_model,
                 "project_id": project["id"],
                 "menu_id": menu["id"],
-                "feature_id": menu["df_engine_menu_feature_mappings"][0]["feature_id"],
                 "session_id": new_session.id,
                 "session_uid": session_uid,
                 "chat_id": user_chat.id,
@@ -679,6 +676,7 @@ class ChatAssistantsController(CoreDependencies):
                             DfEngineChatAssistants.sender,  # type: ignore
                             DfEngineChatAssistants.content,  # type: ignore
                             DfEngineChatAssistants.has_generation_prompt,  # type: ignore
+                            DfEngineChatAssistants.will_generate_prompt,  # type: ignore
                             DfEngineChatAssistants.status_code,  # type: ignore
                         ),
                         selectinload(DfEngineChatAssistants.chat_references)  # type: ignore
@@ -738,6 +736,7 @@ class ChatAssistantsController(CoreDependencies):
                         DfEngineChatAssistants.sender,  # type: ignore
                         DfEngineChatAssistants.content,  # type: ignore
                         DfEngineChatAssistants.has_generation_prompt,  # type: ignore
+                        DfEngineChatAssistants.will_generate_prompt,  # type: ignore
                         DfEngineChatAssistants.status_code,  # type: ignore
                     ),
                     selectinload(DfEngineChatAssistants.chat_references)  # type: ignore
@@ -813,7 +812,7 @@ class ChatAssistantsController(CoreDependencies):
         "/chat-assistants/{session_uid}",
         summary="Continue a chat session.",
         description=(
-            "Sends a new message into an existing chat session. The assistant sees the whole conversation so far (earlier replies and images included), so the user can ask for a prompt based on the earlier context. The message is queued like in a new session: prompt guardrails run first when they are active, then the assistant answers, and a `chat-response` push announces the reply. Only the session's creator can do this; an archived session, or one that already holds the maximum number of messages, is rejected. Returns the uid of the message that was stored."
+            "Sends a new message into an existing chat session. The assistant sees the whole conversation so far (earlier replies and images included), so the user can build on the earlier context. When the assistant has asked whether to write the prompt now and the user says yes, send that answer with `generate_prompt` set to true: the assistant then writes the final prompt from the whole chat, including the attached images. This only works while such a question is waiting; otherwise the request is refused. The message is queued like in a new session: prompt guardrails run first when they are active, then the assistant answers, and a `chat-response` push announces the reply. Only the session's creator can do this; an archived session, or one that already holds the maximum number of messages, is rejected. Returns the uid of the message that was stored."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Chat Assistants"],
@@ -846,7 +845,6 @@ class ChatAssistantsController(CoreDependencies):
                         DfEngineChatSessions.archieved_at,  # type: ignore
                         DfEngineChatSessions.project_id,  # type: ignore
                         DfEngineChatSessions.menu_id,  # type: ignore
-                        DfEngineChatSessions.feature_id,  # type: ignore
                     ),
                     selectinload(DfEngineChatSessions.chat_assistants).options(  # type: ignore
                         load_only(
@@ -854,6 +852,8 @@ class ChatAssistantsController(CoreDependencies):
                             DfEngineChatAssistants.role,  # type: ignore
                             DfEngineChatAssistants.content,  # type: ignore
                             DfEngineChatAssistants.status_code,  # type: ignore
+                            DfEngineChatAssistants.sender,  # type: ignore
+                            DfEngineChatAssistants.will_generate_prompt,  # type: ignore
                         ),
                         selectinload(DfEngineChatAssistants.chat_references)  # type: ignore
                         .selectinload(DfEngineChatReferences.attachment)  # type: ignore
@@ -873,6 +873,18 @@ class ChatAssistantsController(CoreDependencies):
                 raise DataValidationError(message="chat_assistant_archived")
 
             history_rows = session["chat_assistants"]
+
+            # "Yes, write the prompt" only answers a question the assistant asked and nobody answered yet
+            if schema.generate_prompt and not any(
+                row["role"] == "assistant"
+                and row["sender"] == "openrouter"
+                and (row["status_code"] or 200) == 200
+                and row["will_generate_prompt"]
+                for row in history_rows
+            ):
+                logging.warning(f"{log_prefix} generate_prompt without a waiting question")
+                raise DataValidationError(message="chat_assistant_not_generatable")
+
             # Same project / key / cost checks as a new session, on every message
             # Load admin settings (assistant model, guardrails, global class limits, chat limits)
             admin_settings = await self.admin_repo.get_setting(
@@ -1228,6 +1240,32 @@ class ChatAssistantsController(CoreDependencies):
                 if schema.params
                 else []
             )
+            # Guidelines for the prompt: the enhance_prompt templates, kept as system messages of this chat
+            guidelines = []
+            if schema.generate_prompt:
+                feature = await query(
+                    db=self.db,
+                    table=DfEngineFeatures,
+                    filters=(
+                        DfEngineFeatures.type == FeatureTypes.enhance_prompt,
+                        DfEngineFeatures.is_active.is_(True),
+                    ),  # type: ignore
+                    options=(
+                        selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings).selectinload(  # type: ignore
+                            DfEngineFeaturePromptMappings.df_engine_prompt_templates  # type: ignore
+                        ),
+                    ),
+                    fetch_one=True,
+                )
+                if feature is None:
+                    logging.warning(f"{log_prefix} no active feature of type enhance_prompt")
+                    raise DataNotFoundError(message="feature_not_found")
+                guidelines = [
+                    mapping.df_engine_prompt_templates.prompt
+                    for mapping in sorted(feature.df_engine_feature_prompt_mappings, key=lambda m: m.id)
+                    if mapping.df_engine_prompt_templates.is_active
+                ]
+
             new_system_chats = [
                 DfEngineChatAssistants(
                     session_id=session["id"],
@@ -1238,7 +1276,7 @@ class ChatAssistantsController(CoreDependencies):
                     sender="openrouter",
                     content=text,
                 )
-                for text in new_system_texts
+                for text in [*new_system_texts, *guidelines]
             ]
             user_chat = DfEngineChatAssistants(
                 session_id=session["id"],
@@ -1274,6 +1312,16 @@ class ChatAssistantsController(CoreDependencies):
                 .values(updated_at=local_time())
             )
             await self.db.flush()
+            if schema.generate_prompt:
+                # The yes is accepted: no "write it now?" question of this chat is waiting any more
+                await self.db.execute(
+                    update(DfEngineChatAssistants)
+                    .where(
+                        DfEngineChatAssistants.session_id == session["id"],  # type: ignore
+                        DfEngineChatAssistants.will_generate_prompt.is_(True),  # type: ignore
+                    )
+                    .values(will_generate_prompt=False)
+                )
 
             logging.info(
                 f"{log_prefix} message saved: chat_id={user_chat.id} history_rows={len(history_rows)} "
@@ -1296,10 +1344,17 @@ class ChatAssistantsController(CoreDependencies):
             # A new params block goes with the other system messages, in front of the conversation
             content_messages = [
                 *[m for m in history if m["role"] == "system"],
-                *[Message.build("system", text).to_payload() for text in new_system_texts],
+                *[Message.build("system", text).to_payload() for text in [*new_system_texts, *guidelines]],
                 *[m for m in history if m["role"] != "system"],
                 *SAMPLE_CONVERSATION,  # TEMP: 500 static sample bubbles for testing a long history, remove after testing
                 user_message,
+                # The user's yes goes last and as a user turn: providers move system messages to the top, which would
+                # leave the assistant's own question as the last turn and make it ask again.
+                *(
+                    [Message.build("user", GENERATE_PROMPT_INSTRUCTION.strip()).to_payload()]
+                    if schema.generate_prompt
+                    else []
+                ),
             ]
 
             # Every distinct file used in the chat so far plus the new ones, so a generation prompt can mention any
@@ -1334,10 +1389,10 @@ class ChatAssistantsController(CoreDependencies):
                 "model": assistant_model,
                 "project_id": project["id"],
                 "menu_id": session["menu_id"],
-                "feature_id": session["feature_id"],
                 "session_id": session["id"],
                 "session_uid": str(session_uid),
                 "chat_id": user_chat.id,
+                "generate_prompt": schema.generate_prompt,
                 "attachments": [
                     {"uid": a["uid"], "id": a["id"], "sourceable_type": sourceable_types[a["type"]]}
                     for a in user_attachments
@@ -1435,7 +1490,6 @@ class ChatAssistantsController(CoreDependencies):
                         DfEngineChatSessions.archieved_at,  # type: ignore
                         DfEngineChatSessions.project_id,  # type: ignore
                         DfEngineChatSessions.menu_id,  # type: ignore
-                        DfEngineChatSessions.feature_id,  # type: ignore
                     ),
                     selectinload(DfEngineChatSessions.chat_assistants).options(  # type: ignore
                         load_only(
@@ -1846,7 +1900,6 @@ class ChatAssistantsController(CoreDependencies):
                 "model": assistant_model,
                 "project_id": project["id"],
                 "menu_id": session["menu_id"],
-                "feature_id": session["feature_id"],
                 "session_id": session["id"],
                 "session_uid": str(session_uid),
                 "chat_id": user_chat.id,
@@ -1900,7 +1953,6 @@ class ChatAssistantsController(CoreDependencies):
                         DfEngineChatSessions.created_by,  # type: ignore
                         DfEngineChatSessions.project_id,  # type: ignore
                         DfEngineChatSessions.menu_id,  # type: ignore
-                        DfEngineChatSessions.feature_id,  # type: ignore
                     ),
                     selectinload(DfEngineChatSessions.chat_assistants).options(  # type: ignore
                         load_only(
@@ -2187,7 +2239,6 @@ class ChatAssistantsController(CoreDependencies):
             new_session = DfEngineChatSessions(
                 topic=session["topic"],
                 menu_id=session["menu_id"],
-                feature_id=session["feature_id"],
                 project_id=session["project_id"],
                 created_by=self.user["user_id"],
             )
@@ -2221,7 +2272,6 @@ class ChatAssistantsController(CoreDependencies):
                 "model": assistant_model,
                 "project_id": project["id"],
                 "menu_id": session["menu_id"],
-                "feature_id": session["feature_id"],
                 "session_id": new_session.id,
                 "session_uid": new_session_uid,
                 "from_session_uid": str(session_uid),

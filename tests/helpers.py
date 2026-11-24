@@ -143,11 +143,10 @@ from services.mysql.factory.df_engine_chat_sessions import DfEngineChatSessionsF
 
 
 def make_chat_session(ctx, created_by, messages, archieved=False):
-    """A chat session on `ctx` (menu/feature/project) holding `messages`: `(role, content[, extra])` tuples where
-    `extra` may set `has_generation_prompt` / `status_code`. Returns `(session, rows)`."""
+    """A chat session on `ctx` (menu/project) holding `messages`: `(role, content[, extra])` tuples where
+    `extra` may set `has_generation_prompt` / `will_generate_prompt` / `status_code`. Returns `(session, rows)`."""
     session = DfEngineChatSessionsFactory.create(
         menu_id=ctx.menu_id,
-        feature_id=ctx.feature_id,
         project_id=ctx.project_id,
         created_by=int(created_by),
         archieved_at=datetime.now() if archieved else None,
@@ -163,3 +162,34 @@ def make_chat_session(ctx, created_by, messages, archieved=False):
         for role, content, *extra in messages
     ]
     return session, rows
+
+
+def attach_upload(row, user_id, project_id):
+    """Links a new uploaded image to the chat row `row`; returns the upload file."""
+    from services.mysql.factory.df_engine_attachments import DfEngineAttachmentsFactory
+    from services.mysql.factory.df_engine_chat_references import DfEngineChatReferencesFactory
+    from services.mysql.factory.df_engine_upload_files import DfEngineUploadFilesFactory
+
+    file = DfEngineUploadFilesFactory.create(created_by=int(user_id), project_id=project_id)
+    attachment = DfEngineAttachmentsFactory.create(sourceable_id=file.id, sourceable_type="DfEngineUploadFiles")
+    DfEngineChatReferencesFactory.create(chat_id=row.id, attachment_id=attachment.id)
+    return file
+
+
+async def feature_prompts(db, feature_type):
+    """Prompts of the active templates linked to the active feature of `feature_type`, in link order."""
+    from sqlalchemy import select
+    from services.mysql.model import DfEngineFeaturePromptMappings, DfEngineFeatures, DfEnginePromptTemplates
+
+    rows = await db.execute(
+        select(DfEnginePromptTemplates.prompt)  # type: ignore
+        .join(DfEngineFeaturePromptMappings, DfEngineFeaturePromptMappings.template_id == DfEnginePromptTemplates.id)  # type: ignore
+        .join(DfEngineFeatures, DfEngineFeatures.id == DfEngineFeaturePromptMappings.feature_id)  # type: ignore
+        .where(
+            DfEngineFeatures.type == feature_type,
+            DfEngineFeatures.is_active.is_(True),
+            DfEnginePromptTemplates.is_active.is_(True),
+        )  # type: ignore
+        .order_by(DfEngineFeaturePromptMappings.id)  # type: ignore
+    )
+    return list(rows.scalars().all())

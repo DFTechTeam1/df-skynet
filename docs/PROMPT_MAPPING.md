@@ -12,6 +12,12 @@ Applied everywhere in the app.
 | `image-edit.md` | Editing an image |
 | `nfsw.md` | Global (NSFW) content rules |
 
+## Chat session
+
+| File | Used when |
+|---|---|
+| `chat-session-init.md` | System prompt of every new chat assistant session (feature `initialize_session`, not attached to a menu) |
+
 ## Element page
 
 | File | Asset type |

@@ -21,6 +21,8 @@ class DfEngineGuardrailValidations(SQLModel, table=True):
     sourceable_type: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     apikeyable_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), nullable=True))
     apikeyable_type: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
+    # id of the queue message that wrote this row; unique so a redelivered message cannot write it twice
+    message_id: Optional[str] = Field(default=None, sa_column=Column(CHAR(36), nullable=True, unique=True))
     model_id: Optional[int] = Field(
         default=None,
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_model_options.id"), nullable=True),

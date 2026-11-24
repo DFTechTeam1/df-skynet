@@ -628,13 +628,12 @@ def as_roles(app, user_id):
 
 @pytest_asyncio.fixture
 async def chat_ctx(db_session, user_id):
-    """Menu / feature / project a chat session can hang on. The project is one the chat endpoints already worked for
+    """Menu / project a chat session can hang on. The project is one the chat endpoints already worked for
     (the authenticated user has a finished assistant reply there), so its lead, API key and class are in place;
     skipped when the DB has no such chat yet."""
     from services.mysql.model import (
         DfEngineChatAssistants,
         DfEngineChatSessions,
-        DfEngineFeatures,
         DfEngineMenus,
         Projects,
     )
@@ -644,16 +643,13 @@ async def chat_ctx(db_session, user_id):
             select(
                 DfEngineChatSessions.project_id,
                 DfEngineChatSessions.menu_id,
-                DfEngineChatSessions.feature_id,
                 Projects.project_class_id,
                 Projects.uid,
                 DfEngineMenus.uid,
-                DfEngineFeatures.uid,
             )
             .join(DfEngineChatAssistants, DfEngineChatAssistants.session_id == DfEngineChatSessions.id)  # type: ignore
             .join(Projects, Projects.id == DfEngineChatSessions.project_id)  # type: ignore
             .join(DfEngineMenus, DfEngineMenus.id == DfEngineChatSessions.menu_id)  # type: ignore
-            .join(DfEngineFeatures, DfEngineFeatures.id == DfEngineChatSessions.feature_id)  # type: ignore
             .where(
                 DfEngineChatSessions.created_by == int(user_id),  # type: ignore
                 DfEngineChatAssistants.role == "assistant",  # type: ignore
@@ -670,12 +666,56 @@ async def chat_ctx(db_session, user_id):
     return SimpleNamespace(
         project_id=row[0],
         menu_id=row[1],
-        feature_id=row[2],
-        class_id=row[3],
-        project_uid=row[4],
-        menu_uid=row[5],
-        feature_uid=row[6],
+        class_id=row[2],
+        project_uid=row[3],
+        menu_uid=row[4],
     )
+
+
+@pytest_asyncio.fixture
+async def chat_features(db_session):
+    """Makes sure an active `initialize_session` and `enhance_prompt` feature (each with one template) exist, as the
+    seeder leaves them. Only the ones this fixture had to create are removed afterwards."""
+    from sqlalchemy import delete
+    from schemas.payload.feature_management import FeatureTypes
+    from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+    from services.mysql.model import DfEngineFeaturePromptMappings, DfEngineFeatures, DfEnginePromptTemplates
+
+    created = []
+    for feature_type in (FeatureTypes.initialize_session, FeatureTypes.enhance_prompt):
+        found = (
+            await db_session.execute(
+                select(DfEngineFeatures.id).where(  # type: ignore
+                    DfEngineFeatures.type == feature_type,
+                    DfEngineFeatures.is_active.is_(True),  # type: ignore
+                )
+            )
+        ).first()
+        if found is None:
+            created.append(DfEngineFeaturesFactory.create(type=feature_type).id)
+    await db_session.commit()
+    yield
+    for feature_id in created:
+        template_ids = (
+            (
+                await db_session.execute(
+                    select(DfEngineFeaturePromptMappings.template_id).where(  # type: ignore
+                        DfEngineFeaturePromptMappings.feature_id == feature_id  # type: ignore
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        await db_session.execute(
+            delete(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.feature_id == feature_id)  # type: ignore
+        )
+        await db_session.execute(delete(DfEngineFeatures).where(DfEngineFeatures.id == feature_id))  # type: ignore
+        if template_ids:
+            await db_session.execute(
+                delete(DfEnginePromptTemplates).where(DfEnginePromptTemplates.id.in_(template_ids))  # type: ignore
+            )
+    await db_session.commit()
 
 
 @pytest.fixture

@@ -55,6 +55,7 @@ class GenerationsMessage:
             "chat_assistant_transfer_failed": "The earlier chat is too long to summarise right now. Please start a new chat.",
             "chat_assistant_nothing_to_transfer": "There is nothing to transfer yet. This chat has no answered messages.",
             "chat_assistant_not_resendable": "This message can't be resent. Only your own message that was blocked or got no answer can be resent.",
+            "chat_assistant_not_generatable": "The prompt can't be written yet because the assistant has no question waiting for your answer. Keep chatting as usual, or wait until the assistant asks whether to write the prompt.",
             "chat_assistant_attachment_limit_reached": "This chat can reference at most {max} different files. Start a new chat to add more.",
             "chat_model_not_configured": "No text model is configured for the chat assistant. Please contact an administrator.",
             "chat_assistant_failed": "The chat assistant couldn't answer right now. Please try again.",
