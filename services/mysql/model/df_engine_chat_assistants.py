@@ -36,9 +36,12 @@ class DfEngineChatAssistants(SQLModel, table=True):
     has_generation_prompt: bool = Field(
         default=False, sa_column=Column(Boolean, nullable=False, server_default=false())
     )
+    will_generate_prompt: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
     sender: str = Field(sa_column=Column(String(255), nullable=False))  # <username> or openrouter
     apikeyable_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), nullable=True))
     apikeyable_type: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
+    # id of the queue message that wrote this row; unique so a redelivered message cannot write it twice
+    message_id: Optional[str] = Field(default=None, sa_column=Column(CHAR(36), nullable=True, unique=True))
 
     chat_references: list["DfEngineChatReferences"] = Relationship()  # type: ignore
     model_option: Optional["DfEngineModelOptions"] = Relationship(back_populates="chat_assistants")  # type: ignore

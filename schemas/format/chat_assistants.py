@@ -7,6 +7,7 @@ from utils.formatter import format_udin_url
 
 class MessageAction(BaseModel):
     can_resend: bool = False
+    can_generate_prompt: bool = False
 
 
 class ChatSession(TimezoneMeta):
@@ -44,12 +45,14 @@ class ChatMessage(BaseModel):
     sender: str = Field(...)
     status_code: int = Field(...)
     has_generation_prompt: bool = Field(default=False)
+    will_generate_prompt: bool = Field(default=False)
     chat_attachments: list[ChatAttachment] = Field(default_factory=list)
     action: MessageAction
 
     @classmethod
     def format(cls, result: dict[str, Any]) -> "ChatMessage":
         has_prompt = bool(result.get("has_generation_prompt"))
+        will_prompt = bool(result.get("will_generate_prompt"))
         attachments = [ChatAttachment.format(ref["attachment"]) for ref in result.get("chat_references", [])]
 
         status_code = result.get("status_code") or 200
@@ -58,8 +61,12 @@ class ChatMessage(BaseModel):
             content=result["content"],
             sender=result["sender"],
             status_code=status_code,
-            action=MessageAction(can_resend=status_code != 200 and result["sender"] != "openrouter"),
+            action=MessageAction(
+                can_resend=status_code != 200 and result["sender"] != "openrouter",
+                can_generate_prompt=will_prompt and result["sender"] == "openrouter" and status_code == 200,
+            ),
             has_generation_prompt=has_prompt,
+            will_generate_prompt=will_prompt,
             chat_attachments=attachments,
         )
 

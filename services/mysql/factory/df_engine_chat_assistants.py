@@ -26,6 +26,7 @@ class DfEngineChatAssistantsFactory(SQLAlchemyModelFactory):
     cost = 0
     exchange_rate = 0
     has_generation_prompt = False
+    will_generate_prompt = False
     sender = "tester"
     apikeyable_id = None
     apikeyable_type = None

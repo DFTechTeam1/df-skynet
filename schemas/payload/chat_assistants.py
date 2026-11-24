@@ -34,11 +34,12 @@ class ChatMessagePayload(BaseModel):
 
 class CreateNewSessionPayload(ChatMessagePayload):
     menu_uid: UUID = Field(...)
-    feature_uid: UUID = Field(...)
 
 
 class ContinueSessionPayload(ChatMessagePayload):
-    pass
+    generate_prompt: bool = Field(
+        default=False, description="Set to true when the user says yes to writing the prompt now."
+    )
 
 
 class UpdateSessionPayload(BaseModel):

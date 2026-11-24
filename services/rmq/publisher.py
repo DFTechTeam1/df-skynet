@@ -1,6 +1,7 @@
 import json
 from asyncio import Lock
 from typing import Any, Optional
+from uuid import uuid4
 from aio_pika import DeliveryMode, Message, connect_robust
 from aio_pika.abc import AbstractChannel, AbstractRobustConnection
 from fastapi import status
@@ -39,6 +40,7 @@ async def get_channel() -> AbstractChannel:
 
 async def publish_message(payload: dict[str, Any]) -> None:
     try:
+        payload.setdefault("message_id", str(uuid4()))
         channel = await get_channel()
         await channel.default_exchange.publish(build_message(payload), routing_key=QUEUE_NAME)
     except Exception as exc:
