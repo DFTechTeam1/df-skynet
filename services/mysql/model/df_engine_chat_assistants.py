@@ -40,7 +40,6 @@ class DfEngineChatAssistants(SQLModel, table=True):
     sender: str = Field(sa_column=Column(String(255), nullable=False))  # <username> or openrouter
     apikeyable_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), nullable=True))
     apikeyable_type: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
-    # id of the queue message that wrote this row; unique so a redelivered message cannot write it twice
     message_id: Optional[str] = Field(default=None, sa_column=Column(CHAR(36), nullable=True, unique=True))
 
     chat_references: list["DfEngineChatReferences"] = Relationship()  # type: ignore

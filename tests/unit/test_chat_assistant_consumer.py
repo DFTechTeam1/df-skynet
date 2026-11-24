@@ -108,8 +108,21 @@ async def test_a_reply_that_asks_is_stored_as_waiting(run):
 
 @pytest.mark.asyncio
 async def test_a_written_prompt_is_never_also_waiting(run):
-    out = await run(_reply(will_generate_prompt=True, has_generation_prompt=True))
+    out = await run(_reply(will_generate_prompt=True, has_generation_prompt=True), generate_prompt=True)
     assert out.reply.will_generate_prompt is False and out.reply.has_generation_prompt is True
+    assert out.reply.content == "answer"
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_written_without_a_yes_becomes_the_question(run):
+    """The model wrote the prompt in a normal turn: the text is dropped, the reply asks first, no files are attached."""
+    files = [{"id": 7, "sourceable_type": "DfEngineUploadFiles"}]
+    out = await run(_reply(has_generation_prompt=True, content="SCENE: ..."), all_attachments=files)
+    assert out.reply.has_generation_prompt is False and out.reply.will_generate_prompt is True
+    assert "SCENE" not in out.reply.content and out.reply.content == consumer.resolve_message(
+        "chat_assistant_confirm_generate_prompt", "en"
+    )
+    assert [type(r) for r in out.db.added].count(DfEngineChatReferences) == 0
 
 
 @pytest.mark.asyncio
