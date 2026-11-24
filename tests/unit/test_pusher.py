@@ -81,3 +81,21 @@ def test_send_chat_assistant_swallows_errors(monkeypatch):
     monkeypatch.setattr(pusher, "get_pusher", boom)
     monkeypatch.setattr(pusher, "broadcast_token", lambda: None)
     pusher.send_chat_assistant("failed", "sess-uid", "chat-uid")  # must not raise
+
+
+def test_chat_insertion_sends_its_own_event_with_only_the_user_chat_uid(monkeypatch):
+    calls = _stub(monkeypatch)
+    pusher.send_chat_insertion("success", "sess-uid", "user-chat-uid")
+    pusher.send_chat_insertion("failed", "sess-uid")
+    assert calls == [
+        ("chat-sessions-sess-uid", "chat-insertion", {"s": "success", "cid": "user-chat-uid"}),
+        ("chat-sessions-sess-uid", "chat-insertion", {"s": "failed", "cid": None}),
+    ]  # no token update: nothing was spent yet
+
+
+def test_chat_insertion_swallows_errors(monkeypatch):
+    def boom():
+        raise RuntimeError("pusher down")
+
+    monkeypatch.setattr(pusher, "get_pusher", boom)
+    pusher.send_chat_insertion("failed", "sess-uid")  # must not raise

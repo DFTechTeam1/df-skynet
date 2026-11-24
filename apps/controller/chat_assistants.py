@@ -12,11 +12,13 @@ from error import AuthorizationError, BaseError, ServiceError
 from log import logging
 from schemas.payload.chat_assistants import ContinueSessionPayload, CreateNewSessionPayload, UpdateSessionPayload
 from middlewares.lang import current_lang
+from services.pusher import send_chat_insertion
 from services.rmq.publisher import publish_message
 from services.openrouter import GUARDRAIL_INSTRUCTION, CHAT_ASSISTANT_INSTRUCTION
 from schemas.response import PaginationResponse, Response
 from schemas.format.chat_assistants import ChatAttachment, ChatMessage, ChatSession, build_history
 from schemas.format.openrouter import Attachment, Message
+from services.chat_sample_history import SAMPLE_CONVERSATION
 from services.chat_transcript import build_transcript
 from utils import local_time
 from utils.formatter import format_udin_url
@@ -48,15 +50,11 @@ from services.mysql.model import (
 
 
 CHAT_GUARDRAIL_TYPES = ["prompt_injection", "nfsw", "chat_assistant"]
-# ponytail: static limits for transfer-knowledge; move them to df_engine_settings (chat_assistant_settings) when they must be editable.
-TRANSFER_KNOWLEDGE_MIN_PERCENT = 80  # opens at this % of max_chat_messages
-TRANSFER_KNOWLEDGE_SINGLE_CALL_MAX_TOKENS = (
-    300_000  # one summary call never carries more than this, however big the model window is
-)
-TRANSFER_KNOWLEDGE_CHUNK_TOKENS = 25_000  # size of one chunk when the chat is summarised in several calls
-TRANSFER_KNOWLEDGE_MAX_CHUNKS = 15  # most summary calls for one transfer (the cost cap)
-TRANSFER_KNOWLEDGE_MAX_MESSAGE_CHARS = 6_000  # a longer message is cut before it goes into the transcript
-TRANSFER_KNOWLEDGE_TIMEOUT_SECONDS = 240  # a 250,000-token input needs more than the 100 s default
+TRANSFER_KNOWLEDGE_SINGLE_CALL_MAX_TOKENS = 300_000
+TRANSFER_KNOWLEDGE_CHUNK_TOKENS = 25_000
+TRANSFER_KNOWLEDGE_MAX_CHUNKS = 15
+TRANSFER_KNOWLEDGE_MAX_MESSAGE_CHARS = 6_000
+TRANSFER_KNOWLEDGE_TIMEOUT_SECONDS = 240
 PARAMS_PROMPT = """
 The user supplied the following parameters as JSON.
 Apply them as settings for this conversation and for any prompt you write (for example aspect ratio, resolution, style or duration).
@@ -565,8 +563,13 @@ class ChatAssistantsController(CoreDependencies):
                 sender=get_user["username"],
                 content=schema.content,
             )
-            self.db.add_all([*system_chats, user_chat])
-            await self.db.flush()
+            try:
+                self.db.add_all([*system_chats, user_chat])
+                await self.db.flush()
+            except Exception:
+                logging.error(f"{log_prefix} could not insert chat rows\n{traceback.format_exc()}")
+                send_chat_insertion("failed", str(new_session.uid))
+                raise ServiceError()
 
             # Insert User Attachments
             if user_attachments:
@@ -635,6 +638,7 @@ class ChatAssistantsController(CoreDependencies):
                 ],
             }
             await self.db.commit()
+            send_chat_insertion("success", str(new_session.uid), user_chat.uid)
             await publish_message(rmq_message)
             response.data = new_session.uid
         except BaseError:
@@ -1245,8 +1249,13 @@ class ChatAssistantsController(CoreDependencies):
                 sender=get_user["username"],
                 content=schema.content,
             )
-            self.db.add_all([*new_system_chats, user_chat])
-            await self.db.flush()
+            try:
+                self.db.add_all([*new_system_chats, user_chat])
+                await self.db.flush()
+            except Exception:
+                logging.error(f"{log_prefix} could not insert chat rows\n{traceback.format_exc()}")
+                send_chat_insertion("failed", str(session_uid))
+                raise ServiceError()
             user_chat_uid = user_chat.uid
 
             if user_attachments:
@@ -1289,6 +1298,7 @@ class ChatAssistantsController(CoreDependencies):
                 *[m for m in history if m["role"] == "system"],
                 *[Message.build("system", text).to_payload() for text in new_system_texts],
                 *[m for m in history if m["role"] != "system"],
+                *SAMPLE_CONVERSATION,  # TEMP: 500 static sample bubbles for testing a long history, remove after testing
                 user_message,
             ]
 
@@ -1335,6 +1345,7 @@ class ChatAssistantsController(CoreDependencies):
                 "all_attachments": list(all_attachments.values()),
             }
             await self.db.commit()
+            send_chat_insertion("success", str(session_uid), user_chat_uid)
             await publish_message(rmq_message)
             response.data = user_chat_uid
         except BaseError:
@@ -1760,8 +1771,13 @@ class ChatAssistantsController(CoreDependencies):
                 sender=get_user["username"],
                 content=target["content"],
             )
-            self.db.add(user_chat)
-            await self.db.flush()
+            try:
+                self.db.add_all([user_chat])
+                await self.db.flush()
+            except Exception:
+                logging.error(f"{log_prefix} could not insert chat rows\n{traceback.format_exc()}")
+                send_chat_insertion("failed", str(session_uid))
+                raise ServiceError()
             user_chat_uid = user_chat.uid
 
             if target["chat_references"]:
@@ -1845,6 +1861,7 @@ class ChatAssistantsController(CoreDependencies):
                 "all_attachments": list(all_attachments.values()),
             }
             await self.db.commit()
+            send_chat_insertion("success", str(session_uid), user_chat_uid)
             await publish_message(rmq_message)
             response.data = user_chat_uid
         except BaseError:
@@ -1869,7 +1886,6 @@ class ChatAssistantsController(CoreDependencies):
         limit_api_key = None
         assistant_model = None
         global_project_settings = None
-        chat_assistant_settings = None
         project_setting = None
         project_api_key = None
         log_prefix = f"[chat-assistant:transfer] user={self.user['user_id']} session={session_uid}"
@@ -1906,11 +1922,11 @@ class ChatAssistantsController(CoreDependencies):
             history_rows = session["chat_assistants"]
 
             # Same project / key / cost checks as continue (no guardrail: a transfer never runs one)
-            # Load admin settings (assistant model, global class limits, chat limits)
+            # Load admin settings (assistant model, global class limits)
             admin_settings = await self.admin_repo.get_setting(
                 filters=(
                     DfEngineSettings.key.in_(  # type: ignore
-                        ["assistant_model", "project_class_limitations", "chat_assistant_settings"]
+                        ["assistant_model", "project_class_limitations"]
                     ),
                 ),
                 fetch_one=False,
@@ -1920,40 +1936,11 @@ class ChatAssistantsController(CoreDependencies):
                     assistant_model = setting["value"]
                 if setting["key"] == "project_class_limitations":
                     global_project_settings = setting["value"]
-                if setting["key"] == "chat_assistant_settings":
-                    chat_assistant_settings = setting["value"]
 
             # Assistant model must be configured
             if not assistant_model:
                 logging.warning(f"{log_prefix} assistant_model is not configured in admin settings")
                 raise DataValidationError(message="default_model_not_configured", context={"model": "assistant"})
-
-            # Chat limits must be configured (admin settings: max messages and max distinct files per chat)
-            if not chat_assistant_settings:
-                logging.warning(f"{log_prefix} chat_assistant_settings is not configured in admin settings")
-                raise DataValidationError(message="chat_assistant_settings_not_configured")
-
-            # Transfer is for a chat that is (nearly) full: it opens at TRANSFER_KNOWLEDGE_MIN_PERCENT of the message limit
-            max_chat_messages = chat_assistant_settings["max_chat_messages"]
-            total_messages = sum(1 for row in history_rows if row["role"] in ("user", "assistant"))
-            minimum_allowed_total_message = -(-max_chat_messages * TRANSFER_KNOWLEDGE_MIN_PERCENT // 100)
-            if total_messages < minimum_allowed_total_message:
-                logging.warning(
-                    f"{log_prefix} too early to transfer: {total_messages} < {minimum_allowed_total_message}/{max_chat_messages}"
-                )
-                raise DataValidationError(
-                    message="chat_assistant_transfer_not_allowed_yet",
-                    error={
-                        "current_total_message": [str(total_messages)],
-                        "minimum_allowed_total_message": [str(minimum_allowed_total_message)],
-                        "max_total_message": [str(max_chat_messages)],
-                    },
-                    context={
-                        "current_total_message": total_messages,
-                        "minimum_allowed_total_message": minimum_allowed_total_message,
-                        "max_total_message": max_chat_messages,
-                    },
-                )
 
             # Load project with its PICs, their main API keys, and approved transfers
             project = await self.project_repo.get_project(

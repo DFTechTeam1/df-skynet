@@ -14,7 +14,9 @@ class DfEngineChatReferences(SQLModel, table=True):
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_chat_assistants.id"), nullable=False)
     )
     attachment_id: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_attachments.id"), nullable=False)
+        sa_column=Column(
+            BIGINT(unsigned=True), ForeignKey("df_engine_attachments.id", ondelete="CASCADE"), nullable=False
+        )
     )
 
     attachment: Optional["DfEngineAttachments"] = Relationship()  # type: ignore

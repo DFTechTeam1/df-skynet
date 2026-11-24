@@ -8,7 +8,7 @@ from schemas.format.openrouter import ChatAssistantResponse, PromptGuardrailResp
 from log import logging
 
 
-caller = APICaller(base_url=OPENROUTER_BASE_URL, timeout=100)
+caller = APICaller(base_url=OPENROUTER_BASE_URL, timeout=120)
 
 GUARDRAIL_INSTRUCTION = """
     You are a prompt guardrail. Classify the user message against each rule below.

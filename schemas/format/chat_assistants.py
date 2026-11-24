@@ -1,12 +1,8 @@
-import re
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 from schemas.format.base import ActionMeta, TimezoneMeta
 from schemas.format.openrouter import Attachment, Message
 from utils.formatter import format_udin_url
-
-
-FENCE = re.compile(r"```[^\n]*\n(.*?)\n?```", re.DOTALL)
 
 
 class MessageAction(BaseModel):
@@ -48,9 +44,6 @@ class ChatMessage(BaseModel):
     sender: str = Field(...)
     status_code: int = Field(...)
     has_generation_prompt: bool = Field(default=False)
-    generation_prompt: Optional[str] = Field(
-        default=None, description="Copy-paste ready prompt, only when has_generation_prompt."
-    )
     chat_attachments: list[ChatAttachment] = Field(default_factory=list)
     action: MessageAction
 
@@ -58,12 +51,6 @@ class ChatMessage(BaseModel):
     def format(cls, result: dict[str, Any]) -> "ChatMessage":
         has_prompt = bool(result.get("has_generation_prompt"))
         attachments = [ChatAttachment.format(ref["attachment"]) for ref in result.get("chat_references", [])]
-        fence = FENCE.search(result["content"]) if has_prompt else None
-        prompt = fence.group(1).strip() if fence else None
-        if prompt:
-            missing = [a.uid for a in attachments if a.uid not in prompt]
-            if missing:
-                prompt += "\n\n" + " ".join(f"<refer to {uid}>" for uid in missing)
 
         status_code = result.get("status_code") or 200
         return cls(
@@ -73,7 +60,6 @@ class ChatMessage(BaseModel):
             status_code=status_code,
             action=MessageAction(can_resend=status_code != 200 and result["sender"] != "openrouter"),
             has_generation_prompt=has_prompt,
-            generation_prompt=prompt,
             chat_attachments=attachments,
         )
 

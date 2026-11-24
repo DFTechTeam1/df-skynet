@@ -99,7 +99,16 @@ async def seed(force_sync: bool = False) -> None:
                 default_text = enabled_text[0] if enabled_text else None
 
         if default_text:
-            ref = json.dumps({"uid": default_text.uid, "name": default_text.name})
+            # same shape as POST /setting stores (apps/controller/setting.py resolved_model)
+            ref = json.dumps(
+                {
+                    "id": default_text.id,
+                    "uid": default_text.uid,
+                    "model_id": default_text.model_id,
+                    "name": default_text.name,
+                    "top_provider": default_text.top_provider,
+                }
+            )
             for key in ("enhancer_model", "assistant_model"):
                 row = await query(
                     db=db,
@@ -109,7 +118,8 @@ async def seed(force_sync: bool = False) -> None:
                 )
                 if row is None:
                     db.add(DfEngineSettings(key=key, value=ref, code=SETTING_CODE))
-                elif not row.value or json.loads(row.value) is None:
+                elif not row.value or (current := json.loads(row.value)) is None or "model_id" not in current:
+                    # empty, or seeded earlier in the short {uid, name} shape
                     row.value, row.updated_at = ref, local_time()
         await db.commit()
 

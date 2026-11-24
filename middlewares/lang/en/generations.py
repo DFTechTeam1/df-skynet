@@ -54,7 +54,6 @@ class GenerationsMessage:
             "chat_assistant_settings_not_configured": "The chat assistant limits are not configured. Please contact an administrator.",
             "chat_assistant_transfer_failed": "The earlier chat is too long to summarise right now. Please start a new chat.",
             "chat_assistant_nothing_to_transfer": "There is nothing to transfer yet. This chat has no answered messages.",
-            "chat_assistant_transfer_not_allowed_yet": "You can transfer this chat once it has at least {minimum_allowed_total_message} messages. It has {current_total_message} of {max_total_message} so far.",
             "chat_assistant_not_resendable": "This message can't be resent. Only your own message that was blocked or got no answer can be resent.",
             "chat_assistant_attachment_limit_reached": "This chat can reference at most {max} different files. Start a new chat to add more.",
             "chat_model_not_configured": "No text model is configured for the chat assistant. Please contact an administrator.",

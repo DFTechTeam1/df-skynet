@@ -64,3 +64,13 @@ def send_chat_assistant(status: Literal["success", "failed"], session_uid: str, 
         logging.exception(f"pusher chat broadcast failed session_uid={session_uid} chat_uid={chat_uid}")
     if status in ("success", "failed"):
         broadcast_token()
+
+
+def send_chat_insertion(
+    status: Literal["success", "failed"], session_uid: str, user_chat_uid: Optional[str] = None
+) -> None:
+    """Tells the FE whether the user's message was saved to the DB (not the model's answer: that is `chat-response`)."""
+    try:
+        get_pusher().trigger(f"chat-sessions-{session_uid}", "chat-insertion", {"s": status, "cid": user_chat_uid})
+    except Exception:
+        logging.exception(f"pusher chat insertion failed session_uid={session_uid} chat_uid={user_chat_uid}")

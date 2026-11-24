@@ -271,7 +271,7 @@ async def test_update_rejects_out_of_range_folder_depth_limit(authed_client, db_
 
 @pytest.mark.asyncio
 async def test_update_chat_assistant_settings_round_trips(authed_client, db_session):
-    """200 OK; max_chat_messages and max_unique_attachments are saved and returned as given."""
+    """200 OK; the chat assistant limits are saved and returned as given."""
     await clear_setting_state(db_session)
     payload = {"chat_assistant_settings": {"max_chat_messages": 120, "max_unique_attachments": 8}}
 

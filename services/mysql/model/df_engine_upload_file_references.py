@@ -20,7 +20,9 @@ class DfEngineUploadFileReferences(SQLModel, table=True):
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_generations.id"), nullable=False)
     )
     file_id: int = Field(
-        sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_upload_files.id"), nullable=False)
+        sa_column=Column(
+            BIGINT(unsigned=True), ForeignKey("df_engine_upload_files.id", ondelete="CASCADE"), nullable=False
+        )
     )
 
     generation: Optional["DfEngineGenerations"] = Relationship(  # type: ignore

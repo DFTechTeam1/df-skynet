@@ -140,7 +140,7 @@ class ChatAssistantSettings(BaseModel):
         description=(
             "Most messages (the user's and the assistant's together, system prompts not counted) "
             "one chat may hold. Once reached, the user can't add to it and starts a new chat with "
-            "'transfer knowledge'. Transfer only opens at 80% of this number."
+            "'transfer knowledge'."
         ),
     )
     max_unique_attachments: int = Field(

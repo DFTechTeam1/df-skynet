@@ -54,7 +54,6 @@ class GenerationsMessage:
             "chat_assistant_settings_not_configured": "Batas chat assistant belum dikonfigurasi. Silakan hubungi admin.",
             "chat_assistant_transfer_failed": "Chat sebelumnya terlalu panjang untuk diringkas saat ini. Silakan mulai chat baru.",
             "chat_assistant_nothing_to_transfer": "Belum ada yang bisa dipindahkan. Chat ini belum memiliki pesan yang sudah dijawab.",
-            "chat_assistant_transfer_not_allowed_yet": "Chat ini dapat dipindahkan setelah memiliki minimal {minimum_allowed_total_message} pesan. Saat ini baru {current_total_message} dari {max_total_message} pesan.",
             "chat_assistant_not_resendable": "Pesan ini tidak dapat dikirim ulang. Hanya pesan kamu yang diblokir atau belum dijawab yang dapat dikirim ulang.",
             "chat_assistant_attachment_limit_reached": "Chat ini hanya dapat merujuk maksimal {max} file berbeda. Mulai chat baru untuk menambah file.",
             "chat_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk asisten chat. Silakan hubungi admin.",
