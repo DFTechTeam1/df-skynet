@@ -116,7 +116,7 @@ async def test_a_written_prompt_is_never_also_waiting(run):
 @pytest.mark.asyncio
 async def test_a_prompt_written_without_a_yes_becomes_the_question(run):
     """The model wrote the prompt in a normal turn: the text is dropped, the reply asks first, no files are attached."""
-    files = [{"id": 7, "sourceable_type": "DfEngineUploadFiles"}]
+    files = [{"uid": "u7", "id": 7, "sourceable_type": "DfEngineUploadFiles"}]
     out = await run(_reply(has_generation_prompt=True, content="SCENE: ..."), all_attachments=files)
     assert out.reply.has_generation_prompt is False and out.reply.will_generate_prompt is True
     assert "SCENE" not in out.reply.content and out.reply.content == consumer.resolve_message(
@@ -127,7 +127,10 @@ async def test_a_prompt_written_without_a_yes_becomes_the_question(run):
 
 @pytest.mark.asyncio
 async def test_a_written_prompt_keeps_every_file(run):
-    files = [{"id": 7, "sourceable_type": "DfEngineUploadFiles"}, {"id": 8, "sourceable_type": "DfEngineUploadFiles"}]
+    files = [
+        {"uid": "u7", "id": 7, "sourceable_type": "DfEngineUploadFiles"},
+        {"uid": "u8", "id": 8, "sourceable_type": "DfEngineUploadFiles"},
+    ]
     out = await run(_reply(has_generation_prompt=True), generate_prompt=True, all_attachments=files)
     assert out.db.statements == []
     assert [type(r) for r in out.db.added].count(DfEngineChatReferences) == 2
@@ -136,7 +139,7 @@ async def test_a_written_prompt_keeps_every_file(run):
 
 @pytest.mark.asyncio
 async def test_a_failed_normal_message_is_marked_failed(run):
-    out = await run("not json at all", attachments=[{"id": 1, "sourceable_type": "DfEngineUploadFiles"}])
+    out = await run("not json at all", attachments=[{"uid": "u1", "id": 1, "sourceable_type": "DfEngineUploadFiles"}])
     assert out.pushes[0][0] == "failed" and out.db.statements[0]["status_code"] == 502
     assert [type(r) for r in out.db.added].count(DfEngineChatReferences) == 1
 
@@ -158,3 +161,47 @@ async def test_a_failed_yes_marks_the_user_bubble_failed_and_stores_the_error_re
     assert out.reply.status_code == 500 and out.reply.will_generate_prompt is False
     assert len(out.db.statements) == 1
     assert out.db.statements[0]["status_code"] == 500 and out.db.statements[0]["id_1"] == 5
+
+
+@pytest.mark.asyncio
+async def test_a_reply_with_files_always_names_them_in_its_text(run):
+    """The model forgot the tags: they are appended, once per file, for a written prompt (every chat file)."""
+    files = [
+        {"uid": "u7", "id": 7, "sourceable_type": "DfEngineUploadFiles"},
+        {"uid": "u8", "id": 8, "sourceable_type": "DfEngineUploadFiles"},
+        {"uid": "u7", "id": 7, "sourceable_type": "DfEngineUploadFiles"},
+    ]
+    out = await run(
+        _reply(has_generation_prompt=True, content="```\nSCENE\n```"), generate_prompt=True, all_attachments=files
+    )
+    assert out.reply.content == "```\nSCENE\n```\n\n<refer to u7>\n<refer to u8>"
+
+
+FILES = [
+    {"uid": "u7", "id": 7, "sourceable_type": "DfEngineUploadFiles"},
+    {"uid": "u8", "id": 8, "sourceable_type": "DfEngineUploadFiles"},
+]
+
+
+@pytest.mark.asyncio
+async def test_only_the_missing_tags_are_added(run):
+    out = await run(_reply(content="see <refer to u7> here"), attachments=FILES)
+    assert out.reply.content == "see <refer to u7> here\n\n<refer to u8>"
+
+
+@pytest.mark.asyncio
+async def test_a_text_that_names_every_file_is_not_changed(run):
+    out = await run(_reply(content="<refer to u7> and <refer to u8>"), attachments=FILES)
+    assert out.reply.content == "<refer to u7> and <refer to u8>"
+
+
+@pytest.mark.asyncio
+async def test_the_error_reply_names_the_failed_messages_files_too(run):
+    out = await run(consumer.ServiceError(), attachments=FILES)
+    assert out.reply.content.endswith("\n\n<refer to u7>\n<refer to u8>")
+
+
+@pytest.mark.asyncio
+async def test_a_reply_without_files_is_left_alone(run):
+    out = await run(_reply(content="plain"))
+    assert out.reply.content == "plain"

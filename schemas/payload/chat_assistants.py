@@ -1,3 +1,4 @@
+import re
 from pydantic import BaseModel, Field, field_validator, model_validator
 from schemas.payload.base import Attachment
 from uuid import UUID
@@ -29,6 +30,16 @@ class ChatMessagePayload(BaseModel):
         }
         if errors:
             raise DataValidationError(message="reference_not_in_prompt", error=errors)
+        return self
+
+    @model_validator(mode="after")
+    def tag_attachments(self):
+        """Every attached file named in the text becomes `<refer to {uid}>`, so the stored text always has one pattern."""
+        for a in self.attachments:
+            uid = str(a.file_uid)
+            self.content = re.sub(
+                rf"(?<!<refer to ){re.escape(uid)}(?!>)", f"<refer to {uid}>", self.content, flags=re.IGNORECASE
+            )
         return self
 
 
