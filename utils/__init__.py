@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from pytz import timezone
+from config.variables import OVERRIDE_FILE_ROLES
 
 
 def get_project_root() -> Path:
@@ -28,3 +29,7 @@ def epoch_to_wib(value: Optional[int]) -> Optional[datetime]:
     if value is None:
         return None
     return datetime.fromtimestamp(value, tz=timezone("UTC")).astimezone(timezone("Asia/Jakarta")).replace(tzinfo=None)
+
+
+def is_overrider(roles: list[str]) -> bool:
+    return any(role in OVERRIDE_FILE_ROLES for role in roles)

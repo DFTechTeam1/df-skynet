@@ -39,7 +39,7 @@ def test_upsert_maps_id_and_skips_empty(provider):
     provider.writer.save_objects.assert_not_called()
     provider.upsert("i", [{"id": "1", "a": 1}, {"objectID": "2", "id": "x"}])
     objects = provider.writer.save_objects.call_args.kwargs["objects"]
-    assert objects == [{"a": 1, "objectID": "1"}, {"objectID": "2"}]
+    assert objects == [{"id": "1", "a": 1, "objectID": "1"}, {"id": "x", "objectID": "2"}]
 
 
 def test_delete_skips_empty(provider):

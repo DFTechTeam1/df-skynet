@@ -10,7 +10,7 @@ from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsF
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
-from services.mysql.model.df_engine_generations import GenerationKinds
+from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 
 URL = "/api/references-picker"
 
@@ -50,6 +50,7 @@ def _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.ima
         created_by=int(user_id),
         sourceable_id=1,
         kind=kind,
+        status=GenerationStatuses.success,  # the picker lists successful generations only
         **generation_fks,
     )
     return DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), **overrides)
@@ -95,15 +96,12 @@ async def test_search_is_scoped_to_the_project_and_served_from_the_index(authed_
     async def fake_search(requests):
         seen.extend(requests)
         creator = {"user_id": 1}
-        upload = {"file_uid": "u1", "name": "banner-hero.png", "path": "p/u.png", "kind": "image", "creator": creator}
-        generation = {
-            "file_uid": "g1",
-            "name": "banner-gen.png",
-            "path": "p/g.png",
-            "kind": "image",
-            "is_main": True,
-            "creator": creator,
-        }
+        # shaped like indexed records: already formatted, and without the fields that were null
+        shared = {"kind": "image", "icon": "mdi-image", "color": "blue", "creator": creator}
+        upload = {**shared, "id": 1, "file_uid": "u1", "type": "uploaded", "name": "banner-hero.png", "path": "p/u.png"}
+        upload["url"] = "https://files/p/u.png"
+        generation = {**shared, "id": 2, "file_uid": "g1", "type": "generated", "name": "banner-gen.png"}
+        generation.update(path="https://files/p/g.png", generation_uid="gen1", is_main=True)
         return [[upload], [generation]]
 
     monkeypatch.setattr("services.search.query._search", fake_search)
@@ -113,6 +111,7 @@ async def test_search_is_scoped_to_the_project_and_served_from_the_index(authed_
     body = resp.json()
     assert [f["file_uid"] for f in _section(body, "Image Uploads")["files"]] == ["u1"]
     assert [f["file_uid"] for f in _section(body, "Image Generations")["files"]] == ["g1"]
+    assert _section(body, "Image Generations")["files"][0]["archieved_at"] is None  # filled in by the model
     assert {r.query for r in seen} == {"banner"}
     assert all(project_task.project.uid in repr(r.filter) for r in seen)
 
@@ -216,7 +215,7 @@ async def test_project_picker_passes_domain_errors_through_and_masks_unexpected_
     async def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("apps.controller.generations.get_user_uploaded_files_refactored", boom)
+    monkeypatch.setattr("services.repository.uploaded_files.UploadedFileRepository.get_picker_files", boom)
     url, params = _url(project_task.project.uid)
     resp = await authed_client.call("GET", url, params=params, raise_for_status=False)
     assert resp.status_code == 500

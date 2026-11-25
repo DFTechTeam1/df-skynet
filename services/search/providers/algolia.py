@@ -11,7 +11,7 @@ class AlgoliaProvider:
     reach anything that only reads.
 
     Mapping between the neutral contract and Algolia:
-        document "objectID"/"id" ->  Algolia `objectID` on upsert; hits come back with `objectID` as stored
+        document "objectID"/"id" ->  Algolia `objectID` on upsert (`id` is kept); hits come back as stored
         Equal / And / Or tree    ->  `filters` string, e.g. (user_id=1 AND (type:"pdf" OR type:"docx"))
         SearchRequest.limit      ->  `hitsPerPage` (None = Algolia default, 20)
         SearchRequest.page       ->  `page` (0-based)
@@ -106,7 +106,7 @@ class AlgoliaProvider:
     def upsert(self, index: str, docs: list[dict[str, Any]]) -> None:
         """Insert or replace documents in one batched call (the SDK splits large
         lists itself). Each doc must contain "objectID" or "id"; "objectID" wins
-        if both are given, and "id" is stored as `objectID`.
+        if both are given. "id" is also kept as a field, and is used as `objectID` when none is given.
         Blocks until Algolia has finished indexing, so a search right after sees the new data.
         An empty list is a no-op.
 
@@ -115,9 +115,7 @@ class AlgoliaProvider:
         """
         if not docs:
             return
-        objects = [
-            {**{k: v for k, v in d.items() if k != "id"}, "objectID": d.get("objectID") or d["id"]} for d in docs
-        ]
+        objects = [{**d, "objectID": d.get("objectID") or d["id"]} for d in docs]
         self.writer.save_objects(index_name=index, objects=objects, wait_for_tasks=True)
 
     def delete(self, index: str, ids: list[str]) -> None:

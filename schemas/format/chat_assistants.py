@@ -10,10 +10,18 @@ class MessageAction(BaseModel):
     can_generate_prompt: bool = False
 
 
+class ChatSessionAction(ActionMeta):
+    # Excluded actions
+    can_delete: bool = Field(default=True, exclude=True)
+
+
 class ChatSession(TimezoneMeta):
     uid: str = Field(...)
     topic: str = Field(...)
-    action: ActionMeta = Field(default_factory=ActionMeta)
+    action: ChatSessionAction = Field(default_factory=ChatSessionAction)
+
+    # Excluded key
+    favourited_at: Optional[str] = Field(default=None, exclude=True)
 
     @classmethod
     def format(cls, result: dict[str, Any]):

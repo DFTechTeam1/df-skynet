@@ -14,6 +14,7 @@ from services.mysql.factory.df_engine_generation_results import DfEngineGenerati
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
 from services.mysql.factory.df_engine_menus import DfEngineMenusFactory
 from services.mysql.factory.df_engine_features import DfEngineFeaturesFactory
+from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.redis import CacheKeys, client as redis_client
 
 URL = "/api/references-picker"
@@ -38,7 +39,7 @@ def _make_result(project_task, owner_id, generation_fks, **overrides):
         task_id=project_task.id,
         created_by=int(owner_id),
         sourceable_id=1,
-        **generation_fks,
+        **{"status": GenerationStatuses.processing, **generation_fks},
     )
     return DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(owner_id), **overrides)
 
@@ -129,12 +130,13 @@ async def test_references_picker_flags_my_favourite_only(
     authed_client, project_task, user_id, other_user_id, generation_fks
 ):
     """200 OK; the picker's per-file favourited_at reflects the viewer's own favourite, on first and cached reads."""
-    mine = _make_result(project_task, user_id, generation_fks)
-    theirs = _make_result(project_task, user_id, generation_fks)
+    listed = {**generation_fks, "status": GenerationStatuses.success}  # the picker lists successful ones only
+    mine = _make_result(project_task, user_id, listed)
+    theirs = _make_result(project_task, user_id, listed)
     DfEngineGenerationFavouritesFactory.create(user_id=int(user_id), result_id=mine.id)
     DfEngineGenerationFavouritesFactory.create(user_id=int(other_user_id), result_id=theirs.id)
 
-    for _ in range(2):  # db, then cache
+    for _ in range(2):  # repeated reads agree
         resp = await authed_client.call("GET", f"{URL}/{project_task.project.uid}")
         files = next(s for s in resp.json()["data"] if s["type"] == "Image Generations")["files"]
         by_uid = {f["file_uid"]: f for f in files}

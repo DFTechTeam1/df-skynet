@@ -1,8 +1,6 @@
 from decimal import Decimal
 
-USD_TO_IDR_RATE = Decimal("16000")
-
-# Roles that may rename / move / delete / image-edit files they did not create (backup when the creator is unavailable).
+USD_TO_IDR_RATE = Decimal("18000")
 OVERRIDE_FILE_ROLES = [
     "root",
     "director",
