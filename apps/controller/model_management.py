@@ -1,6 +1,4 @@
 import json
-import time
-import traceback
 from datetime import timedelta
 from sqlalchemy.orm import load_only
 from schemas.format.model_options import ModelAction, ModelRecord
@@ -14,20 +12,16 @@ from apps.dependency.rate_limitter import rate_limit
 from schemas.payload.model_management import SetModelEnabledPayload
 from schemas.response import PaginationResponse, Response
 from services.mysql.model import DfEngineModelOptions
-from services.redis import get_json, set_json, delete_pattern, CacheKeys
+from services.redis import get_json, set_json, delete_pattern
 from log import logging
 from apps.secret import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
-from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
+from error import ServiceError, BaseError, DataValidationError
 from utils import local_time
-from utils.serializer import serialize
 from services.mysql import query
 from services.api_caller import APICaller
-from services.model_management import ModelManagement
 from services.mysql.model import (
-    DfEngineExternalApiCalls,
     DfEngineSettingLogs,
     DfEngineSettings,
-    Employees,
     Users,
     DfEngineGuardrailValidations,
     DfEngineGenerations,
@@ -204,10 +198,10 @@ class ModelManagementController(CoreDependencies):
                 filters += (DfEngineModelOptions.is_enabled.is_(is_enabled),)  # type: ignore
             if is_deleted:
                 filters += (
-                    DfEngineModelOptions.deleted_at.is_not(None)
+                    DfEngineModelOptions.deleted_at.is_not(None)  # type: ignore
                     if is_deleted
                     else DfEngineModelOptions.deleted_at.is_(None),
-                )  # type: ignore
+                )
 
             total_data = await self.model_option_repo.get_model(
                 columns=(func.count(DfEngineModelOptions.id),),  # type: ignore
