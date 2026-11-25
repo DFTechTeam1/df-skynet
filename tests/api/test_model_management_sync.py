@@ -1,6 +1,7 @@
 import json
 import pytest
 from uuid import uuid4
+from middlewares.lang import resolve_message
 from sqlalchemy import select
 from services.mysql.model import DfEngineModelOptions, DfEngineSettings, DfEngineSettingLogs
 from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
@@ -116,29 +117,15 @@ async def test_sync_refreshes_present_model_and_flags_missing_one_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_sync_leaves_a_soft_deleted_model_frozen_when_still_on_openrouter(
-    authed_client, db_session, mock_model_sync
-):
-    """200 OK; a soft-deleted model that OpenRouter still lists is skipped entirely by
-    sync — its is_available and metadata are left exactly as they were."""
+async def test_sync_refreshes_a_soft_deleted_model_but_keeps_it_deleted(authed_client, db_session, mock_model_sync):
+    """200 OK; a soft-deleted model OpenRouter still lists gets fresh metadata and stays deleted."""
     from utils import local_time
 
     deleted = DfEngineModelOptionsFactory.create(
-        type="text",
-        name="Frozen Original",
-        is_available=True,
-        is_enabled=False,
-        is_main=False,
-        deleted_at=local_time(),
-        deleted_by=1,
+        type="text", is_available=False, is_enabled=False, is_main=False, deleted_at=local_time(), deleted_by=1
     )
-
     rows = await _available_text_rows(db_session)
-    items = [
-        {**_item_from_row(r), "name": "Should Not Be Applied"} if r.model_id == deleted.model_id else _item_from_row(r)
-        for r in rows
-    ]
-    mock_model_sync.set(TEXT_PATH, items)
+    mock_model_sync.set(TEXT_PATH, [_item_from_row(r) for r in rows] + [{"id": deleted.model_id, "name": "Refreshed"}])
 
     resp = await authed_client.call("POST", URL)
     assert resp.status_code == 200
@@ -147,40 +134,81 @@ async def test_sync_leaves_a_soft_deleted_model_frozen_when_still_on_openrouter(
     after = (
         await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == deleted.id))
     ).scalar_one()
-    assert after.is_available is True  # not touched
-    assert after.name == "Frozen Original"  # metadata not refreshed
+    assert (after.name, after.is_available, after.uid) == ("Refreshed", True, deleted.uid)
+    assert after.deleted_at is not None
+    assert after.deleted_by == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_flags_a_soft_deleted_model_unavailable_when_gone_from_openrouter(
+    authed_client, db_session, mock_model_sync
+):
+    """200 OK; a soft-deleted model absent from the response is flagged unavailable and stays deleted."""
+    from utils import local_time
+
+    deleted = DfEngineModelOptionsFactory.create(
+        type="text", is_available=True, is_enabled=False, is_main=False, deleted_at=local_time(), deleted_by=1
+    )
+    rows = await _available_text_rows(db_session)
+    mock_model_sync.set(TEXT_PATH, [_item_from_row(r) for r in rows if r.model_id != deleted.model_id])
+
+    resp = await authed_client.call("POST", URL)
+    assert resp.status_code == 200
+
+    await db_session.rollback()
+    after = (
+        await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == deleted.id))
+    ).scalar_one()
+    assert after.is_available is False
     assert after.deleted_at is not None
 
 
 @pytest.mark.asyncio
-async def test_sync_does_not_flag_a_soft_deleted_model_unavailable_when_gone_from_openrouter(
-    authed_client, db_session, mock_model_sync
-):
-    """200 OK; a soft-deleted model absent from OpenRouter's response is NOT flagged
-    is_available=False — deleted models keep their availability frozen."""
-    from utils import local_time
-
-    deleted = DfEngineModelOptionsFactory.create(
-        type="text",
-        is_available=True,
-        is_enabled=False,
-        is_main=False,
-        deleted_at=local_time(),
-        deleted_by=1,
-    )
-
+async def test_sync_keeps_enabled_and_main_flags(authed_client, db_session, mock_model_sync):
+    """200 OK; sync never changes `is_enabled` / `is_main`, whether the model is still listed or not."""
+    listed = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=True)
+    dropped = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
     rows = await _available_text_rows(db_session)
-    items = [_item_from_row(r) for r in rows if r.model_id != deleted.model_id]
-    mock_model_sync.set(TEXT_PATH, items)
+    mock_model_sync.set(TEXT_PATH, [_item_from_row(r) for r in rows if r.model_id != dropped.model_id])
+
+    await authed_client.call("POST", URL)
+
+    await db_session.rollback()
+    after = {
+        r.id: r
+        for r in (
+            await db_session.execute(
+                select(DfEngineModelOptions).where(DfEngineModelOptions.id.in_([listed.id, dropped.id]))  # type: ignore
+            )
+        ).scalars()
+    }
+    assert (after[listed.id].is_enabled, after[listed.id].is_main, after[listed.id].is_available) == (True, True, True)
+    assert (after[dropped.id].is_enabled, after[dropped.id].is_available) == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_sync_skips_a_type_with_an_empty_model_list(authed_client, db_session, mock_model_sync):
+    """200 OK; an empty list is treated as a bad response, so nothing is flagged unavailable."""
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False)
+    mock_model_sync.set(TEXT_PATH, [])
 
     resp = await authed_client.call("POST", URL)
     assert resp.status_code == 200
 
     await db_session.rollback()
-    after = (
-        await db_session.execute(select(DfEngineModelOptions).where(DfEngineModelOptions.id == deleted.id))
-    ).scalar_one()
-    assert after.is_available is True
+    assert (
+        await db_session.execute(select(DfEngineModelOptions.is_available).where(DfEngineModelOptions.id == row.id))
+    ).scalar_one() is True
+
+
+@pytest.mark.asyncio
+async def test_sync_is_limited_to_once_a_minute(authed_client, mock_model_sync):
+    """429 with a readable message on a second sync inside the same minute."""
+    assert (await authed_client.call("POST", URL)).status_code == 200
+
+    resp = await authed_client.call("POST", URL, raise_for_status=False)
+    assert resp.status_code == 429
+    assert resp.json()["message"] == resolve_message("model_sync_rate_limit_exceeded", "en").format(times=1, seconds=60)
 
 
 @pytest.mark.asyncio
@@ -264,12 +292,72 @@ async def test_sync_nulls_engine_setting_when_main_model_goes_unavailable(authed
 
 
 @pytest.mark.asyncio
-async def test_sync_invalidates_the_list_cache(authed_client, mock_model_sync):
-    """200 OK; even a no-op sync still clears every cached list page — sync
-    always ends by flushing the model-option cache namespace."""
+async def test_sync_nulls_only_the_setting_whose_model_is_unavailable(authed_client, db_session, mock_model_sync):
+    """200 OK; a non-main model counts too, a legacy name-only value is understood,
+    and the setting that still points at an available model is kept."""
+    await clear_setting_state(db_session)
+    kept = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
+    gone = DfEngineModelOptionsFactory.create(
+        name=f"Gone{uuid4().hex[:8]}", type="text", is_available=True, is_enabled=True, is_main=False
+    )
+    kept_ref = {"uid": kept.uid, "name": kept.name}
+    db_session.add_all(
+        [
+            DfEngineSettings(code="admin_setting", key="enhancer_model", value=json.dumps(kept_ref)),
+            DfEngineSettings(code="admin_setting", key="assistant_model", value=json.dumps(gone.name)),
+        ]
+    )
+    await db_session.commit()
+    rows = await _available_text_rows(db_session)
+    mock_model_sync.set(TEXT_PATH, [_item_from_row(r) for r in rows if r.model_id != gone.model_id])
+
+    await authed_client.call("POST", URL)
+
+    await db_session.rollback()
+    values = dict(
+        (
+            await db_session.execute(
+                select(DfEngineSettings.key, DfEngineSettings.value).where(DfEngineSettings.code == "admin_setting")  # type: ignore
+            )
+        ).all()
+    )
+    assert json.loads(values["enhancer_model"]) == kept_ref
+    assert json.loads(values["assistant_model"]) is None
+    log = (await db_session.execute(select(DfEngineSettingLogs))).scalar_one()
+    assert log.incoming_data == {"enhancer_model": kept_ref, "assistant_model": None}
+    await clear_setting_state(db_session)
+
+
+@pytest.mark.asyncio
+async def test_sync_leaves_valid_and_empty_settings_alone(authed_client, db_session, mock_model_sync):
+    """200 OK; nothing dangling means no setting change and no log entry."""
+    await clear_setting_state(db_session)
+    kept = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
+    db_session.add_all(
+        [
+            DfEngineSettings(code="admin_setting", key="enhancer_model", value=json.dumps({"uid": kept.uid})),
+            DfEngineSettings(code="admin_setting", key="assistant_model", value=json.dumps(None)),
+        ]
+    )
+    await db_session.commit()
+    rows = await _available_text_rows(db_session)
+    mock_model_sync.set(TEXT_PATH, [_item_from_row(r) for r in rows])
+
+    await authed_client.call("POST", URL)
+
+    await db_session.rollback()
+    assert (await db_session.execute(select(DfEngineSettingLogs))).scalars().all() == []
+    await clear_setting_state(db_session)
+
+
+@pytest.mark.asyncio
+async def test_sync_invalidates_the_list_cache(authed_client, db_session, mock_model_sync):
+    """200 OK; syncing a type clears every cached list page."""
     redis = redis_client()
+    rows = await _available_text_rows(db_session)
+    mock_model_sync.set(TEXT_PATH, [_item_from_row(r) for r in rows])
     await authed_client.call("GET", URL)
-    key = CacheKeys().model_pagination(1, 500, None, None, None)
+    key = CacheKeys().model_pagination_refactored(page=1, itemsPerPage=500)
     assert await redis.exists(key)
 
     resp = await authed_client.call("POST", URL)

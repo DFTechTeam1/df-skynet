@@ -35,6 +35,7 @@ class ModelRecord(BaseModel):
     type: str = Field(...)
     is_main: bool = Field(...)
     is_enabled: bool = Field(...)
+    is_available: bool = Field(...)
     supported_parameters: Optional[list[Any] | dict[str, Any]] = Field(None)
     default_parameters: Optional[dict[str, Any]] = Field(None)
     supports_streaming: Optional[bool] = Field(None)

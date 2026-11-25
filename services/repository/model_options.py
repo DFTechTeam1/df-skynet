@@ -22,6 +22,8 @@ class ModelOptionRepository(BaseRepository):
         limit: Optional[int] = None,
         group_by: Optional[tuple[Any, ...]] = None,
         having: Optional[tuple[Any, ...]] = None,
+        order_by: Optional[tuple[Any, ...]] = None,
+        offset: Optional[int] = None,
     ) -> Any:
         return await self._get(
             DfEngineModelOptions,
@@ -37,15 +39,12 @@ class ModelOptionRepository(BaseRepository):
             limit,
             group_by,
             having,
+            order_by,
+            offset,
         )
 
+    async def upsert(self, rows: list[dict[str, Any]], keep_columns: tuple[str, ...]) -> None:
+        await self._upsert(DfEngineModelOptions, rows, keep_columns)
 
-class ModelAction(BaseModel):
-    can_enable_disable: bool = Field(True)
-    can_set_as_main: bool = Field(True)
-    can_delete: bool = Field(True)
-    can_recover: bool = Field(True)
-
-
-class ModelRecord(BaseModel):
-    pass
+    async def update(self, filters: tuple[Any, ...], values: dict[str, Any]) -> None:
+        await self._update(DfEngineModelOptions, filters, values)

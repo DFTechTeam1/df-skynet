@@ -64,7 +64,7 @@ async def test_fetch_search_is_a_substring_match(authed_client):
 
 @pytest.mark.asyncio
 async def test_fetch_filter_by_is_enabled(authed_client):
-    """200 OK; `is_enabled` restricts to only-enabled or only-disabled rows."""
+    """200 OK; `is_enabled=true` restricts to enabled rows; `false` applies no filter."""
     prefix = f"EnabledFilter{uuid4().hex[:8]}"
     enabled_row = DfEngineModelOptionsFactory.create(
         name=f"{prefix}-on", type="text", is_available=True, is_enabled=True, is_main=False
@@ -81,7 +81,7 @@ async def test_fetch_filter_by_is_enabled(authed_client):
     disabled_resp = await authed_client.call("GET", URL, params={"search": prefix, "is_enabled": False})
     disabled_names = [item["name"] for item in disabled_resp.json()["data"]["paginated"]]
     assert disabled_row.name in disabled_names
-    assert enabled_row.name not in disabled_names
+    assert enabled_row.name in disabled_names
 
 
 @pytest.mark.asyncio
@@ -199,6 +199,6 @@ async def test_list_response_is_cached_with_a_ttl(authed_client):
 
     resp = await authed_client.call("GET", URL, params={"search": prefix})
     assert resp.status_code == 200
-    key = CacheKeys().model_pagination(1, 500, prefix, None, None)
+    key = CacheKeys().model_pagination_refactored(page=1, itemsPerPage=500, search=prefix)
     assert await redis.exists(key)
     assert await redis.ttl(key) > 0

@@ -26,5 +26,8 @@ class ModelManagementMessage:
             "model_option_unavailable_cannot_be_deleted": (
                 "Model yang sudah tidak tersedia dari OpenRouter tidak dapat dihapus."
             ),
+            "model_sync_rate_limit_exceeded": (
+                "Sinkronisasi model dibatasi {times} permintaan setiap {seconds} detik. Silakan tunggu sebentar sebelum sinkronisasi lagi."
+            ),
             "openrouter_model_fetch_failed": ("Gagal mengambil daftar model dari OpenRouter. Silakan coba lagi nanti."),
         }

@@ -53,7 +53,7 @@ async def test_main_model_cannot_be_disabled_then_sync_drop_blocks_actions_journ
         update(DfEngineModelOptions).where(DfEngineModelOptions.id == row.id).values(is_available=False)  # type: ignore
     )
     await db_session.commit()
-    await delete_pattern(redis_client(), "model_option:*")
+    await delete_pattern(redis_client(), "models:*")
 
     # 4. gone from the default fetch view entirely
     resp = await authed_client.call("GET", URL, params={"search": row.name})
@@ -70,7 +70,7 @@ async def test_main_model_cannot_be_disabled_then_sync_drop_blocks_actions_journ
 @pytest.mark.asyncio
 async def test_delete_then_recover_model_journey(authed_client, db_session):
     """A disabled, available, non-main model can be soft-deleted (disappears from
-    the default list, shows in the is_deleted view), then recovered back."""
+    (shows as deleted, listed in the is_deleted view), then recovered back."""
     row = DfEngineModelOptionsFactory.create(type="image", is_available=True, is_enabled=False, is_main=False)
 
     # 1. live and flagged deletable
@@ -83,9 +83,8 @@ async def test_delete_then_recover_model_journey(authed_client, db_session):
     assert deleted.status_code == 200
     assert deleted.json()["data"]["deleted_at"] is not None
 
-    # 3. gone from the default view, present in the recovery view
-    default_view = await authed_client.call("GET", URL, params={"search": row.name})
-    assert default_view.json()["data"]["paginated"] == []
+    # 3. marked deleted in the unfiltered view, present in the recovery view
+    assert (await _fetch_item(authed_client, row.name))["action"]["can_recover"] is True
 
     deleted_view = await authed_client.call("GET", URL, params={"search": row.name, "is_deleted": True})
     d_item = deleted_view.json()["data"]["paginated"][0]
@@ -97,7 +96,7 @@ async def test_delete_then_recover_model_journey(authed_client, db_session):
     assert again.status_code == 422
     assert again.json()["message"] == resolve_message("model_option_already_deleted", "en")
 
-    # 5. recover — back in the default list, gone from the recovery view
+    # 5. recover — no longer marked deleted, gone from the recovery view
     recovered = await authed_client.call("PATCH", f"{URL}/{row.uid}/recover")
     assert recovered.status_code == 200
     assert recovered.json()["data"]["deleted_at"] is None

@@ -33,8 +33,6 @@ CHAT_ASSISTANT_INSTRUCTION = """
 """
 
 
-# Sent as the last USER turn (not a system message): providers move system messages to the top, which leaves the
-# assistant's own question as the last turn and makes it ask again instead of answering.
 GENERATE_PROMPT_INSTRUCTION = """
     Yes, write the generation prompt now. Use our whole conversation, the attached images and the prompt guidelines you were given, and answer in my language.
     The user has confirmed: set has_generation_prompt to true and will_generate_prompt to false, write the final prompt in a fenced block as the guidelines describe, and list any assumptions before the block. Do not ask me anything first.

@@ -1,4 +1,6 @@
 from typing import Any, Optional
+from sqlalchemy import update
+from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 from error import DataNotFoundError
@@ -90,3 +92,22 @@ class BaseRepository:
         if (row is None or (not fetch_one and not row)) and raise_if_null:
             raise DataNotFoundError(message=not_found_message, context=context)
         return serialize(row)
+
+    async def _update(self, table: type[SQLModel], filters: tuple[Any, ...], values: dict[str, Any]) -> None:
+        """Set `values` on every row of `table` that matches `filters`. Doesn't commit.
+
+        `filters` is required, so a whole table can't be updated by leaving it out.
+        """
+        await self.db.execute(update(table).where(*filters).values(**values))
+
+    async def _upsert(self, table: type[SQLModel], rows: list[dict[str, Any]], keep_columns: tuple[str, ...]) -> None:
+        """Insert `rows` into `table`. A row that hits a primary or unique key is updated instead. Doesn't commit.
+
+        MySQL only. Every row must have the same keys, including all required columns.
+        `keep_columns` are written on insert but left unchanged on existing rows; columns
+        absent from `rows` are left unchanged too.
+        """
+        stmt = insert(table).values(rows)
+        await self.db.execute(
+            stmt.on_duplicate_key_update({key: stmt.inserted[key] for key in rows[0] if key not in keep_columns})
+        )

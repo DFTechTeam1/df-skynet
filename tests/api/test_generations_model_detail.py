@@ -13,7 +13,7 @@ def _url(model_uid):
 @pytest.mark.asyncio
 async def test_returns_formatted_model_detail(authed_client):
     """200 OK; cache-miss builds the response from the DB row via ModelManagement().format()."""
-    model = DfEngineModelOptionsFactory.create(name="Detail Model", is_enabled=True, is_main=False)
+    model = DfEngineModelOptionsFactory.create(name="Detail Model", is_available=True, is_enabled=True, is_main=False)
 
     resp = await authed_client.call("GET", _url(model.uid))
     assert resp.status_code == 200
@@ -22,7 +22,7 @@ async def test_returns_formatted_model_detail(authed_client):
     assert body["name"] == "Detail Model"
     assert body["is_enabled"] is True
     assert body["id"] == model.id
-    assert "is_available" not in body
+    assert body["is_available"] is True
     assert body["action"] == {
         "can_enable_disable": True,
         "can_set_as_main": False,
@@ -34,7 +34,7 @@ async def test_returns_formatted_model_detail(authed_client):
 @pytest.mark.asyncio
 async def test_response_is_cached_on_second_call(authed_client):
     """200 OK; a second identical call returns the same data, exercising the cache-hit branch."""
-    model = DfEngineModelOptionsFactory.create()
+    model = DfEngineModelOptionsFactory.create(is_available=True)
 
     first = await authed_client.call("GET", _url(model.uid))
     second = await authed_client.call("GET", _url(model.uid))
@@ -55,3 +55,13 @@ async def test_requires_auth(client):
     """401 when the request carries no bearer token."""
     resp = await client.call("GET", _url(uuid4()), raise_for_status=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_unavailable_model_is_404(authed_client):
+    """404 model_option_not_found; a model the provider no longer offers can't be viewed."""
+    model = DfEngineModelOptionsFactory.create(is_available=False, is_enabled=False, is_main=False)
+
+    resp = await authed_client.call("GET", _url(model.uid), raise_for_status=False)
+    assert resp.status_code == 404
+    assert resp.json()["message"] == resolve_message("model_option_not_found", "en")

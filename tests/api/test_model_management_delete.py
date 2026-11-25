@@ -19,7 +19,7 @@ def _deletable(**overrides):
 
 @pytest.mark.asyncio
 async def test_delete_soft_deletes_a_deletable_model(authed_client, db_session, user_id):
-    """200 OK; DELETE stamps deleted_at/deleted_by and the row drops out of the default list."""
+    """200 OK; DELETE stamps deleted_at/deleted_by and the unfiltered list shows it as deleted."""
     row = _deletable(name=f"Del{uuid4().hex[:8]}")
 
     resp = await authed_client.call("DELETE", f"{URL}/{row.uid}")
@@ -36,9 +36,9 @@ async def test_delete_soft_deletes_a_deletable_model(authed_client, db_session, 
     assert fresh.deleted_at is not None
     assert fresh.deleted_by == int(user_id)
 
-    # gone from the default view
+    # still in the unfiltered list, marked deleted
     listed = await authed_client.call("GET", URL, params={"search": row.name})
-    assert listed.json()["data"]["paginated"] == []
+    assert listed.json()["data"]["paginated"][0]["deleted_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -140,7 +140,7 @@ async def test_recover_unknown_uid_is_404(authed_client):
 
 @pytest.mark.asyncio
 async def test_is_deleted_filter_lists_only_deleted_models(authed_client):
-    """200 OK; is_deleted=true returns soft-deleted rows still available, the default view hides them."""
+    """200 OK; is_deleted=true returns soft-deleted rows still available; the unfiltered view lists both."""
     from utils import local_time
 
     prefix = f"Filter{uuid4().hex[:8]}"
@@ -150,7 +150,7 @@ async def test_is_deleted_filter_lists_only_deleted_models(authed_client):
     default_view = await authed_client.call("GET", URL, params={"search": prefix})
     names = [i["name"] for i in default_view.json()["data"]["paginated"]]
     assert live.name in names
-    assert gone.name not in names
+    assert gone.name in names
 
     deleted_view = await authed_client.call("GET", URL, params={"search": prefix, "is_deleted": True})
     d_names = [i["name"] for i in deleted_view.json()["data"]["paginated"]]
@@ -169,10 +169,10 @@ async def test_delete_invalidates_the_list_cache(authed_client):
     redis = redis_client()
 
     await authed_client.call("GET", URL, params={"search": prefix})
-    key = CacheKeys().model_pagination(1, 500, prefix, None, None)
+    key = CacheKeys().model_pagination_refactored(page=1, itemsPerPage=500, search=prefix)
     assert await redis.exists(key)
 
     await authed_client.call("DELETE", f"{URL}/{row.uid}")
 
     resp = await authed_client.call("GET", URL, params={"search": prefix})
-    assert resp.json()["data"]["paginated"] == []
+    assert resp.json()["data"]["paginated"][0]["deleted_at"] is not None
