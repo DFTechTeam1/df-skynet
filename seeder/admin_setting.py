@@ -128,14 +128,16 @@ YANG BOLEH:
 - Storyboard versi gambar diam maupun video.
 - Ide cerita singkat yang punya alur. Contoh: "kisah robot kecil mencari rumah".""",
     "chat_assistant": """\
-Pesan BUKAN pertanyaan atau percakapan dengan asisten.
+Pesan TIDAK berhubungan dengan karya kreatif atau pemakaian platform ini. Asisten ini membantu pengguna berdiskusi dan menyusun prompt generasi, jadi permintaan seperti itu BUKAN pelanggaran.
 
 YANG DIANGGAP PELANGGARAN:
-- Perintah langsung membuat atau mengedit gambar, video, storyboard, atau aset. Contoh: "buatkan gambar naga api".
-- Deskripsi visual murni tanpa pertanyaan.
-- Topik di luar platform: tugas sekolah, kode program, atau pengetahuan umum yang tidak berhubungan dengan karya kreatif.
+- Topik di luar platform: tugas sekolah, kode program, perhitungan, berita, atau pengetahuan umum yang tidak berhubungan dengan karya kreatif. Contoh: "kerjakan PR matematika saya", "buatkan script Python".
+- Pesan acak tanpa makna. Contoh: "asdfghjkl".
 
 YANG BOLEH:
+- Meminta dibuatkan, ditulis, diperbaiki, atau dikembangkan prompt untuk gambar, video, storyboard, atau aset, dengan topik dan mood apa pun. Contoh: "bikinin prompt tentang anjing dan kucing sedang berantem, moodnya amarah".
+- Ide, deskripsi visual, atau perintah membuat maupun mengedit visual, walaupun tanpa kata "prompt" dan tanpa pertanyaan. Contoh: "buatkan gambar naga api", "kucing cyberpunk di kota neon".
+- Lanjutan percakapan, termasuk balasan singkat yang baru bermakna dengan konteks sebelumnya. Contoh: "ya", "boleh", "buat lebih dramatis", "ganti warnanya jadi biru".
 - Pertanyaan tentang cara memakai fitur, model, batas pemakaian, atau hasil generasi. Contoh: "kenapa hasil gambar saya terpotong?".
 - Meminta saran kreatif, ide, atau penjelasan istilah. Contoh: "apa bedanya rasio 16:9 dan 21:9 untuk layar LED?".
 - Sapaan dan obrolan ringan terkait pekerjaan kreatif.""",
