@@ -2,16 +2,14 @@ import asyncio
 import re
 import traceback
 from datetime import timedelta
-from decimal import Decimal
 from typing import Any, Literal, Optional
 from uuid import UUID
 from fastapi import status, Path, Query, Depends, Request
 from fastapi import Response as FastAPIResponse
 from fastapi_controller import controller
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload, load_only
+from sqlalchemy.orm import selectinload
 from apps.controller.core import CoreDependencies
-from config.variables import USD_TO_IDR_RATE
 from schemas.response import PaginationResponse, PromptEnhancerResult, Response
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
@@ -26,6 +24,8 @@ from services.mysql.model import (
     Employees,
     Users,
     DfEngineApiKeys,
+    DfEngineChatAssistants,
+    DfEngineGuardrailValidations,
 )
 from services.mysql.model.projects import PROJECT_STATUS_ONGOING
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR, GenerationKinds, GenerationStatuses
@@ -114,10 +114,10 @@ class GenerationsController(CoreDependencies):
 
     @controller.get(
         "/models-price/{model_uid}",
-        summary="Get model pricing.",
+        summary="Get models price.",
         description=(
-            "Shows one AI model's average real cost per generation over the trailing 3 months, "
-            "in USD and IDR, based on successful generations only."
+            "Shows one AI model's average real cost per call over the trailing 3 months, in USD and IDR. "
+            "Covers generations, chat assistant replies, and guardrail checks that had a cost."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
@@ -127,41 +127,44 @@ class GenerationsController(CoreDependencies):
         self, model_uid: UUID = Path(description="Model UID.")
     ) -> Response:
         response = Response()
+        context = f"[get-model-price] user={self.user['user_id']} model_uid={model_uid}"
         try:
-            model = await query(
-                db=self.db,
-                table=DfEngineModelOptions,
-                options=(load_only(DfEngineModelOptions.id),),  # type: ignore
-                filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
-                fetch_one=True,
-            )
-            if not model:
-                raise DataNotFoundError(message="model_option_not_found")
+            cached = await get_json(self.redis, self.cache_key.model_detail(model_uid))
+            if cached:
+                model_id = cached["id"]
+            else:
+                model_id = await self.model_option_repo.get_model(
+                    columns=(DfEngineModelOptions.id,),
+                    filters=(DfEngineModelOptions.uid == str(model_uid),),
+                )
 
-            avg_cost = await query(
-                db=self.db,
-                table=DfEngineGenerations,
-                columns=(func.avg(DfEngineGenerations.cost),),  # type: ignore
-                filters=(
-                    DfEngineGenerations.model_id == model.id,  # type: ignore
-                    DfEngineGenerations.status == GenerationStatuses.success,  # type: ignore
-                    DfEngineGenerations.created_at >= local_time() - timedelta(days=90),  # type: ignore
-                ),
-                fetch_one=True,
-            )
-            avg_cost = Decimal(str(avg_cost)) if avg_cost is not None else Decimal(0)
-            usd_rate = await self.db.run_sync(get_usd_rate)
-            idr_cost = avg_cost / usd_rate if usd_rate > 0 else avg_cost * USD_TO_IDR_RATE
+            since = local_time() - timedelta(days=90)
+            total_cost = 0.0
+            total_calls = 0
+            for table, fetch in (
+                (DfEngineGenerations, self.generation_repo.get_generation),
+                (DfEngineChatAssistants, self.chat_assistant_repo.get_chat_assistant),
+                (DfEngineGuardrailValidations, self.guardrail_validation_repo.get_guardrail_validation),
+            ):
+                usage = await fetch(
+                    columns=(func.coalesce(func.sum(table.cost), 0).label("cost"), func.count().label("calls")),
+                    filters=(table.model_id == model_id, table.cost > 0, table.created_at >= since),  # type: ignore
+                )
+                total_cost += float(usage["cost"])
+                total_calls += usage["calls"]
 
-            logging.info(f"user={self.user['user_id']} fetched avg price model uid={model_uid}")
+            usd_cost = total_cost / total_calls if total_calls else 0
+            idr_cost = usd_cost / await self.currency_repo.get_usd_rate()
             response.data = {
-                "usd": "USD 0" if avg_cost == 0 else f"USD {avg_cost:.2f}",
+                "usd": f"USD {usd_cost:.4f}" if usd_cost else "USD 0",
                 "idr": f"IDR {idr_cost:,.0f}".replace(",", "."),
             }
-        except BaseError:
+            logging.info(f"{context} succeeded calls={total_calls}")
+        except BaseError as e:
+            logging.warning(f"{context} rejected status={e.status_code} reason={e.message}")
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.exception(f"{context} failed")
             raise ServiceError()
         return response
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 from services.repository.chat_assistants import ChatAssistantRepository
 from services.repository.chat_sessions import ChatSessionRepository
+from services.repository.currencies import CurrencyRepository
 from services.repository.generation_results import GenerationResultRepository
 from services.repository.generations import GenerationRepository
 from services.repository.guardrail_validations import GuardrailValidationRepository
@@ -74,6 +75,10 @@ class CoreDependencies(ApiController):
     @cached_property
     def model_option_repo(self) -> ModelOptionRepository:
         return ModelOptionRepository(self.db)
+
+    @cached_property
+    def currency_repo(self) -> CurrencyRepository:
+        return CurrencyRepository(self.db)
 
 
 class PlainDependencies(Controller):
