@@ -29,7 +29,7 @@ async def test_detail_of_another_users_session_is_403(authed_client, chat_ctx, o
 
 
 @pytest.mark.asyncio
-async def test_detail_of_unknown_session_is_422(authed_client):
-    """422 chat_session_not_found: the session repository reports a missing session as a validation error."""
+async def test_detail_of_unknown_session_is_404(authed_client):
+    """404 chat_session_not_found: the session repository reports a missing session as not found."""
     resp = await authed_client.call("GET", f"/api/chat-assistants/{uuid4()}", raise_for_status=False)
-    assert resp.status_code == 422
+    assert resp.status_code == 404

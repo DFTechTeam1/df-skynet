@@ -8,7 +8,7 @@ from jose import jwt, JWTError
 from log import logging
 from utils import get_project_root
 from apps.secret import JWT_PUBLIC_KEY, JWT_ISSUER, JWT_AUDIENCE
-from utils import local_time
+from utils import local_time, is_overrider
 from datetime import timedelta
 from error import (
     AuthenticationError,
@@ -111,10 +111,13 @@ async def get_user(
             logging.warning(f"auth: valid token with no 'sub' claim on {route} from {client_ip}")
             raise AuthenticationError()
 
+        roles = claims.get("roles", [])
+        permissions = claims.get("permissions", [])
         user = {
             "user_id": user_id,
-            "roles": claims.get("roles", []),
-            "permissions": claims.get("permissions", []),
+            "roles": roles,
+            "permissions": permissions,
+            "is_overrider": is_overrider(roles),
         }
         request.state.user = user
         logging.info(f"auth: user={user_id} authenticated on {route} from {client_ip}")

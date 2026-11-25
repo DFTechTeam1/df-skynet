@@ -1,7 +1,9 @@
-from sqlalchemy.orm import load_only
 import json
 import time
 import traceback
+from datetime import timedelta
+from sqlalchemy.orm import load_only
+from schemas.format.model_options import ModelRecord
 from typing import Optional, Literal
 from uuid import UUID
 from fastapi import status, Path, Query, Request
@@ -20,7 +22,16 @@ from utils.serializer import serialize
 from services.mysql import query
 from services.api_caller import APICaller
 from services.model_management import ModelManagement
-from services.mysql.model import DfEngineExternalApiCalls, DfEngineSettingLogs, DfEngineSettings, Employees, Users
+from services.mysql.model import (
+    DfEngineExternalApiCalls,
+    DfEngineSettingLogs,
+    DfEngineSettings,
+    Employees,
+    Users,
+    DfEngineGuardrailValidations,
+    DfEngineGenerations,
+    DfEngineChatAssistants,
+)
 from utils.formatter import format_date
 
 
@@ -29,8 +40,98 @@ model_management_service = ModelManagement()
 
 class ModelManagementController(CoreDependencies):
     @controller.get(
+        "/models/{model_uid}",
+        summary="Get models detail.",
+        description="Shows details about one AI model, like its name, provider, and price.",
+        status_code=status.HTTP_200_OK,
+        tags=["Model Management"],
+        response_model=Response,
+    )
+    async def model_management_with_model_uid_to_fetch_model_detail(
+        self, model_uid: UUID = Path(description="Model UID.")
+    ) -> Response:
+        response = Response()
+        context = f"[get-models-detail] user={self.user['user_id']} model_uid={model_uid}"
+        try:
+            key = self.cache_key.model_detail(model_uid)
+            cached = await get_json(self.redis, key)
+            if cached:
+                logging.info(f"{context} succeeded source=cache")
+                response.data = cached
+                return response
+
+            model = await self.model_option_repo.get_model(filters=(DfEngineModelOptions.uid == str(model_uid),))
+            record = ModelRecord.format(model).model_dump()
+            await set_json(self.redis, key, record)
+            logging.info(f"{context} succeeded source=db")
+            response.data = record
+        except BaseError as e:
+            logging.warning(f"{context} rejected status={e.status_code} reason={e.message}")
+            raise
+        except Exception:
+            logging.exception(f"{context} failed")
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/models-price/{model_uid}",
+        summary="Get models price.",
+        description=(
+            "Shows one AI model's average real cost per call over the trailing 3 months, in USD and IDR. "
+            "Covers generations, chat assistant replies, and guardrail checks that had a cost."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Model Management"],
+        response_model=Response,
+    )
+    async def model_management_with_model_uid_to_fetch_model_price(
+        self, model_uid: UUID = Path(description="Model UID.")
+    ) -> Response:
+        response = Response()
+        context = f"[get-models-price] user={self.user['user_id']} model_uid={model_uid}"
+        try:
+            cached = await get_json(self.redis, self.cache_key.model_detail(model_uid))
+            if cached:
+                model_id = cached["id"]
+            else:
+                model_id = await self.model_option_repo.get_model(
+                    columns=(DfEngineModelOptions.id,),
+                    filters=(DfEngineModelOptions.uid == str(model_uid),),
+                )
+
+            since = local_time() - timedelta(days=90)
+            total_cost = 0.0
+            total_calls = 0
+            for table, fetch in (
+                (DfEngineGenerations, self.generation_repo.get_generation),
+                (DfEngineChatAssistants, self.chat_assistant_repo.get_chat_assistant),
+                (DfEngineGuardrailValidations, self.guardrail_validation_repo.get_guardrail_validation),
+            ):
+                usage = await fetch(
+                    columns=(func.coalesce(func.sum(table.cost), 0).label("cost"), func.count().label("calls")),
+                    filters=(table.model_id == model_id, table.cost > 0, table.created_at >= since),  # type: ignore
+                )
+                total_cost += float(usage["cost"])
+                total_calls += usage["calls"]
+
+            usd_cost = total_cost / total_calls if total_calls else 0
+            idr_cost = usd_cost / await self.currency_repo.get_usd_rate()
+            response.data = {
+                "usd": f"USD {usd_cost:.4f}" if usd_cost else "USD 0",
+                "idr": f"IDR {idr_cost:,.0f}".replace(",", "."),
+            }
+            logging.info(f"{context} succeeded calls={total_calls}")
+        except BaseError as e:
+            logging.warning(f"{context} rejected status={e.status_code} reason={e.message}")
+            raise
+        except Exception:
+            logging.exception(f"{context} failed")
+            raise ServiceError()
+        return response
+
+    @controller.get(
         "/models",
-        summary="List models synced from OpenRouter.",
+        summary="Get models.",
         description=(
             "Returns the AI models still available from the provider, paginated. Pass "
             "`type` to restrict to one kind of model, `search` to filter by name, and/or "
@@ -121,7 +222,7 @@ class ModelManagementController(CoreDependencies):
 
     @controller.patch(
         "/models/{uid}",
-        summary="Enable or disable a model.",
+        summary="Set enable disable model.",
         description=(
             "Turns a model on or off for selection. Only works on a model the provider "
             "still offers. Disabling the current main model also clears its main status, "
@@ -178,7 +279,7 @@ class ModelManagementController(CoreDependencies):
 
     @controller.delete(
         "/models/{uid}",
-        summary="Soft-delete a model.",
+        summary="Delete model.",
         description=(
             "Removes a model from the default list without permanently erasing it — it "
             "can be restored later. Only works on a model that's currently disabled and "
@@ -227,7 +328,7 @@ class ModelManagementController(CoreDependencies):
 
     @controller.patch(
         "/models/{uid}/recover",
-        summary="Recover a soft-deleted model.",
+        summary="Recover model.",
         description=(
             "Restores a previously removed model back to the normal list. Only works on "
             "a model that's currently removed. Its availability reflects the last time "
@@ -268,7 +369,7 @@ class ModelManagementController(CoreDependencies):
 
     @controller.post(
         "/models",
-        summary="Sync models from OpenRouter.",
+        summary="Sync openrouter models.",
         description=(
             "Pulls the latest text, image, and video model list from the provider and "
             "updates our records to match: new models are added, existing ones are "

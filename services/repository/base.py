@@ -1,7 +1,7 @@
 from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
-from error import DataValidationError
+from error import DataNotFoundError
 from services.mysql import query
 from utils.serializer import serialize
 
@@ -70,7 +70,7 @@ class BaseRepository:
             `None` (`[]` when `fetch_one=False`) when nothing matches and `raise_if_null=False`.
 
         Raises:
-            DataValidationError: `not_found_message` (HTTP 422) when no row matches
+            DataNotFoundError: `not_found_message` (HTTP 404) when no row matches
                 and `raise_if_null=True`.
         """
         row = await query(
@@ -88,5 +88,5 @@ class BaseRepository:
             offset=offset,
         )
         if (row is None or (not fetch_one and not row)) and raise_if_null:
-            raise DataValidationError(message=not_found_message, context=context)
+            raise DataNotFoundError(message=not_found_message, context=context)
         return serialize(row)

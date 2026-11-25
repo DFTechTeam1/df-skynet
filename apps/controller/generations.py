@@ -1,16 +1,16 @@
 import asyncio
 import re
 import traceback
-from datetime import timedelta
 from typing import Any, Literal, Optional
 from uuid import UUID
 from fastapi import status, Path, Query, Depends, Request
 from fastapi import Response as FastAPIResponse
 from fastapi_controller import controller
-from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, func, select
+from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from schemas.response import PaginationResponse, PromptEnhancerResult, Response
+from schemas.format.reference_pickers import GeneratedFile, ReferencePicker, UploadedFile
 from services.dto import ConnectionContext
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
 from services.mysql import get_usd_rate, query
@@ -26,6 +26,7 @@ from services.mysql.model import (
     DfEngineApiKeys,
     DfEngineChatAssistants,
     DfEngineGuardrailValidations,
+    Projects,
 )
 from services.mysql.model.projects import PROJECT_STATUS_ONGOING
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR, GenerationKinds, GenerationStatuses
@@ -54,8 +55,7 @@ from schemas.payload.generations import ImageVideoGenerationPayload, PromptEnhan
 from services.files import has_override
 from error import ServiceError, BaseError, RateLimitedError, DataNotFoundError, DataValidationError
 from services.generations import dispatch_generation, global_reference_sections, reference_sections, validation_record
-from services.search.query import group_reference_picker, search_project_files, search_task_generations
-from schemas.format.model_options import ModelRecord
+from services.search.query import search_project_files, search_task_generations
 from utils import local_time
 from utils.serializer import serialize
 from validations.prompt import enhance_prompt, validate_prompt
@@ -79,98 +79,8 @@ cache_key = CacheKeys()
 
 class GenerationsController(CoreDependencies):
     @controller.get(
-        "/models/{model_uid}",
-        summary="Get models detail.",
-        description="Shows details about one AI model, like its name, provider, and price.",
-        status_code=status.HTTP_200_OK,
-        tags=["Generations"],
-        response_model=Response,
-    )
-    async def generations_with_uid_to_fetch_model_detail(
-        self, model_uid: UUID = Path(description="Model UID.")
-    ) -> Response:
-        response = Response()
-        context = f"[get-model-detail] user={self.user['user_id']} model_uid={model_uid}"
-        try:
-            key = self.cache_key.model_detail(model_uid)
-            cached = await get_json(self.redis, key)
-            if cached:
-                logging.info(f"{context} succeeded source=cache")
-                response.data = cached
-                return response
-
-            model = await self.model_option_repo.get_model(filters=(DfEngineModelOptions.uid == str(model_uid),))
-            record = ModelRecord.format(model).model_dump()
-            await set_json(self.redis, key, record)
-            logging.info(f"{context} succeeded source=db")
-            response.data = record
-        except BaseError as e:
-            logging.warning(f"{context} rejected status={e.status_code} reason={e.message}")
-            raise
-        except Exception:
-            logging.exception(f"{context} failed")
-            raise ServiceError()
-        return response
-
-    @controller.get(
-        "/models-price/{model_uid}",
-        summary="Get models price.",
-        description=(
-            "Shows one AI model's average real cost per call over the trailing 3 months, in USD and IDR. "
-            "Covers generations, chat assistant replies, and guardrail checks that had a cost."
-        ),
-        status_code=status.HTTP_200_OK,
-        tags=["Generations"],
-        response_model=Response,
-    )
-    async def generations_with_uid_to_fetch_model_price(
-        self, model_uid: UUID = Path(description="Model UID.")
-    ) -> Response:
-        response = Response()
-        context = f"[get-model-price] user={self.user['user_id']} model_uid={model_uid}"
-        try:
-            cached = await get_json(self.redis, self.cache_key.model_detail(model_uid))
-            if cached:
-                model_id = cached["id"]
-            else:
-                model_id = await self.model_option_repo.get_model(
-                    columns=(DfEngineModelOptions.id,),
-                    filters=(DfEngineModelOptions.uid == str(model_uid),),
-                )
-
-            since = local_time() - timedelta(days=90)
-            total_cost = 0.0
-            total_calls = 0
-            for table, fetch in (
-                (DfEngineGenerations, self.generation_repo.get_generation),
-                (DfEngineChatAssistants, self.chat_assistant_repo.get_chat_assistant),
-                (DfEngineGuardrailValidations, self.guardrail_validation_repo.get_guardrail_validation),
-            ):
-                usage = await fetch(
-                    columns=(func.coalesce(func.sum(table.cost), 0).label("cost"), func.count().label("calls")),
-                    filters=(table.model_id == model_id, table.cost > 0, table.created_at >= since),  # type: ignore
-                )
-                total_cost += float(usage["cost"])
-                total_calls += usage["calls"]
-
-            usd_cost = total_cost / total_calls if total_calls else 0
-            idr_cost = usd_cost / await self.currency_repo.get_usd_rate()
-            response.data = {
-                "usd": f"USD {usd_cost:.4f}" if usd_cost else "USD 0",
-                "idr": f"IDR {idr_cost:,.0f}".replace(",", "."),
-            }
-            logging.info(f"{context} succeeded calls={total_calls}")
-        except BaseError as e:
-            logging.warning(f"{context} rejected status={e.status_code} reason={e.message}")
-            raise
-        except Exception:
-            logging.exception(f"{context} failed")
-            raise ServiceError()
-        return response
-
-    @controller.get(
         "/references-picker/{project_uid}",
-        summary="Browse a project's files for picking references.",
+        summary="Get reference pickers",
         description=(
             "Shows your uploaded and generated files for one project, sorted into image uploads, image generations, "
             "and elements, so you can pick one to reuse. You can search by file name."
@@ -191,33 +101,39 @@ class GenerationsController(CoreDependencies):
     ) -> Response:
         response = Response()
         user_id = int(self.user["user_id"])
+        is_overrider = self.user["is_overrider"]
         ctx = ConnectionContext(self.db, self.redis, cache_key)
         try:
-            project = await get_project(ctx, project_uid=project_uid)
-            project_id = project["id"]
+            project_id = await self.project_repo.get_project(
+                columns=(Projects.id,),
+                filters=(Projects.uid == str(project_uid),),
+            )
 
             if search:
-                uploaded_files, main_generations = await search_project_files(
+                uploaded_docs, generated_docs = await search_project_files(
                     str(project_uid),
                     search,
                     ("image", "image_edit"),
                     user_id,
-                    has_override(self.user["roles"]),
+                    is_overrider,
                     my_task,
                 )
-                await overlay_favourites(ctx, main_generations, user_id)
+                await overlay_favourites(ctx, generated_docs, user_id)
+                generated_files = [GeneratedFile(**doc) for doc in generated_docs]
+                uploaded_files = [UploadedFile(**doc) for doc in uploaded_docs if doc["kind"] == "image"]
             else:
-                main_generations = await get_generation_main_refactored(
-                    ctx=ctx, viewer_id=user_id, project_id=project_id, personal_file=my_task
-                )
-                uploaded_files = await get_user_uploaded_files_refactored(
-                    ctx=ctx, viewer_id=user_id, project_id=project_id, personal_file=my_task
-                )
+                generations = await self.generation_result_repo.get_picker_files(project_id, user_id, my_task)
+                uploads = await self.uploaded_file_repo.get_picker_files(project_id, user_id, my_task)
+                generated_files = [GeneratedFile.from_result(file, user_id, is_overrider) for file in generations]
+                uploaded_files = [UploadedFile.from_result(file, user_id, is_overrider) for file in uploads]
 
-            response.data = group_reference_picker(main_generations, uploaded_files)
+            response.data = [
+                ReferencePicker(type="Image Generations", files=generated_files),
+                ReferencePicker(type="Image Uploads", files=uploaded_files),
+                ReferencePicker(type="Elements", files=[]),
+            ]
             logging.info(
-                f"user={user_id} listed reference picker project_id={project_id} my_task={my_task} search={search} "
-                f"generations={len(main_generations)} uploads={len(uploaded_files)} (videos excluded from the payload)"
+                f"user={user_id} listed reference picker project_id={project_id} my_task={my_task} search={search}"
             )
         except BaseError:
             raise

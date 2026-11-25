@@ -5,6 +5,7 @@ from services.mysql import make_session
 from services.mysql.factory.df_engine_generations import DfEngineGenerationsFactory
 from services.mysql.factory.df_engine_generation_results import DfEngineGenerationResultsFactory
 from services.mysql.model import DfEngineFeatures, DfEngineGenerationResults, DfEngineMenus, DfEngineModelOptions
+from services.mysql.model.df_engine_generations import GenerationStatuses
 
 
 async def _fetch_result(uid: str) -> DfEngineGenerationResults:
@@ -43,6 +44,7 @@ async def test_archive_is_refused_for_main_result_then_favorite_shows_in_picker(
         model_id=model_option.id,
         menu_id=menu.id,
         feature_id=feature.id,
+        status=GenerationStatuses.success,  # the picker lists successful generations only
     )
     result = DfEngineGenerationResultsFactory.create(generation_id=generation.id, created_by=int(user_id), is_main=True)
 
