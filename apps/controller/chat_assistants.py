@@ -5,10 +5,11 @@ import traceback
 from uuid import UUID, uuid4
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import load_only, selectinload
-from fastapi import Form, Path, Query, Request, status
+from fastapi import Depends, Form, Path, Query, Request, status
 from fastapi_controller import controller
-from error import ServiceError, BaseError, RateLimitedError, DataNotFoundError, DataValidationError
+from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from apps.controller.core import CoreDependencies
+from apps.dependency.rate_limitter import rate_limit
 from error import AuthorizationError, BaseError, ServiceError
 from log import logging
 from schemas.payload.feature_management import FeatureTypes
@@ -148,11 +149,18 @@ class ChatAssistantsController(CoreDependencies):
         "/projects/{project_uid}/chat-assistants/new",
         summary="Create a new chat session.",
         description=(
-            "Starts a chat session from the first user message, for a menu of the project. The system prompt comes from the `initialize_session` feature. The project must be ongoing with a lead PIC and an available API key, and still within its cost limit. Optional image attachments (uploaded or generated) are linked to the message, and the message is queued for prompt guardrail checks. Returns the new session `uid`."
+            "Starts a chat session from the first user message, for a menu of the project. The system prompt comes from the `initialize_session` feature. The project must be ongoing with a lead PIC and an available API key, and still within its cost limit. Optional image attachments (uploaded or generated) are linked to the message, and the message is queued for prompt guardrail checks. Returns the new session `uid`. Rate limited per user and IP; beyond the limit it answers 429."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Chat Assistants"],
         response_model=Response,
+        dependencies=[
+            Depends(
+                rate_limit(
+                    times=5, seconds=60, message="chat_session_rate_limit_exceeded", context={"times": 1, "seconds": 60}
+                )
+            )
+        ],
     )
     async def chat_assistants_with_project_uid_and_menu_uid_to_create_new_session(
         self,
@@ -333,8 +341,8 @@ class ChatAssistantsController(CoreDependencies):
                 table=DfEngineFeatures,
                 filters=(
                     DfEngineFeatures.type == FeatureTypes.initialize_session,
-                    DfEngineFeatures.is_active.is_(True),
-                ),  # type: ignore
+                    DfEngineFeatures.is_active.is_(True),  # type: ignore
+                ),
                 options=(
                     selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings).selectinload(  # type: ignore
                         DfEngineFeaturePromptMappings.df_engine_prompt_templates  # type: ignore
@@ -1252,8 +1260,8 @@ class ChatAssistantsController(CoreDependencies):
                     table=DfEngineFeatures,
                     filters=(
                         DfEngineFeatures.type == FeatureTypes.enhance_prompt,
-                        DfEngineFeatures.is_active.is_(True),
-                    ),  # type: ignore
+                        DfEngineFeatures.is_active.is_(True),  # type: ignore
+                    ),
                     options=(
                         selectinload(DfEngineFeatures.df_engine_feature_prompt_mappings).selectinload(  # type: ignore
                             DfEngineFeaturePromptMappings.df_engine_prompt_templates  # type: ignore
@@ -1317,7 +1325,6 @@ class ChatAssistantsController(CoreDependencies):
             )
             await self.db.flush()
             if schema.generate_prompt:
-                # The yes is accepted: no "write it now?" question of this chat is waiting any more
                 await self.db.execute(
                     update(DfEngineChatAssistants)
                     .where(

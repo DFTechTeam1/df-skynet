@@ -1,4 +1,5 @@
 from fastapi import Request, Response
+from typing import Any, Optional
 from apps.dependency.auth import bearer_scheme, get_user
 from error import AuthenticationError, RateLimitedError
 from pyrate_limiter import (
@@ -39,13 +40,15 @@ async def _get_user(request: Request) -> dict | None:
         try:
             user = await get_user(request, await bearer_scheme(request))
         except AuthenticationError:
-            return None  # unauthenticated: the caller falls back to the IP
+            return None
     return user
 
 
 class RateLimiter:
-    def __init__(self, limiter: Limiter):
+    def __init__(self, limiter: Limiter, message: str = "too_many_requests", context: Optional[dict[str, Any]] = None):
         self.limiter = limiter
+        self.message = message
+        self.context = context
 
     async def __call__(self, request: Request, _: Response):
         ip = request.headers.get("X-Forwarded-For", "").split(",")[0] or (
@@ -54,11 +57,14 @@ class RateLimiter:
         user = await _get_user(request)
         key = f"user_id:{user['user_id']}:ip:{ip}" if user else f"ip:{ip}"
         if not await self.limiter.try_acquire_async(key, blocking=False):
-            raise RateLimitedError()
+            raise RateLimitedError(message=self.message, context=self.context)
 
 
-def rate_limit(times: int = 30, seconds: int = 1):
-    return RateLimiter(limiter=Limiter(KeyedBucketFactory([Rate(times, Duration.SECOND * seconds)])))
+def rate_limit(
+    times: int = 30, seconds: int = 1, message: str = "too_many_requests", context: Optional[dict[str, Any]] = None
+):
+    limiter = Limiter(KeyedBucketFactory([Rate(times, Duration.SECOND * seconds)]))
+    return RateLimiter(limiter=limiter, message=message, context=context)
 
 
 generation_limiter = rate_limit(10, 60)  # 10 Generation per 1 Minute!

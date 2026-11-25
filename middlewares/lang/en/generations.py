@@ -46,6 +46,7 @@ class GenerationsMessage:
             "main_generation_file_not_found": "The main version of this generated file could not be found.",
             "chat_assistant_not_found": "This chat could not be found.",
             "chat_assistant_not_owner": "Only the person who started this chat can access it.",
+            "chat_session_rate_limit_exceeded": "You're creating chat sessions too fast. You can create up to {times} session's every {seconds} second's, so please wait a moment before trying again.",
             "chat_session_not_found": "This chat session could not be found.",
             "chat_session_archieve_not_owner": "You cannot archieve another person's chat session.",
             "chat_session_update_not_owner": "You cannot update another person's chat session.",

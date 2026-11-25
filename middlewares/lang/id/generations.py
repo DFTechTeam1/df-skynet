@@ -46,6 +46,7 @@ class GenerationsMessage:
             "main_generation_file_not_found": "Versi utama dari file hasil generate ini tidak ditemukan.",
             "chat_assistant_not_found": "Chat ini tidak ditemukan.",
             "chat_assistant_not_owner": "Hanya pembuat chat ini yang dapat mengaksesnya.",
+            "chat_session_rate_limit_exceeded": "Kamu terlalu cepat membuat sesi chat. Maksimal {times} sesi setiap {seconds} detik, silakan tunggu sebentar sebelum mencoba lagi.",
             "chat_session_not_found": "Sesi chat tidak ditemukan.",
             "chat_session_archieve_not_owner": "Anda tidak dapat mengarsipkan sesi chat milik orang lain.",
             "chat_session_update_not_owner": "Anda tidak dapat mengubah sesi chat milik orang lain.",
