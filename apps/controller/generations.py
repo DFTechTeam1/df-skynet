@@ -55,7 +55,7 @@ from services.files import has_override
 from error import ServiceError, BaseError, RateLimitedError, DataNotFoundError, DataValidationError
 from services.generations import dispatch_generation, global_reference_sections, reference_sections, validation_record
 from services.search.query import group_reference_picker, search_project_files, search_task_generations
-from services.model_management import ModelManagement
+from schemas.format.model_options import ModelRecord
 from utils import local_time
 from utils.serializer import serialize
 from validations.prompt import enhance_prompt, validate_prompt
@@ -80,7 +80,7 @@ cache_key = CacheKeys()
 class GenerationsController(CoreDependencies):
     @controller.get(
         "/models/{model_uid}",
-        summary="Get model details.",
+        summary="Get models detail.",
         description="Shows details about one AI model, like its name, provider, and price.",
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
@@ -90,35 +90,25 @@ class GenerationsController(CoreDependencies):
         self, model_uid: UUID = Path(description="Model UID.")
     ) -> Response:
         response = Response()
-        cache_key = CacheKeys()
-        model_management_service = ModelManagement()
+        context = f"[get-model-detail] user={self.user['user_id']} model_uid={model_uid}"
         try:
-            model_option_details_cache_key = cache_key.model_option_details(model_uid)
-            cached_model_option_details = await get_json(self.redis, model_option_details_cache_key)
-            if cached_model_option_details:
-                logging.info(f"user={self.user['user_id']} fetched detail model source=cache uid={model_uid}")
-                response.data = cached_model_option_details
+            key = self.cache_key.model_detail(model_uid)
+            cached = await get_json(self.redis, key)
+            if cached:
+                logging.info(f"{context} succeeded source=cache")
+                response.data = cached
                 return response
 
-            result = await query(
-                db=self.db,
-                table=DfEngineModelOptions,
-                filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
-                fetch_one=True,
-            )
-            if not result:
-                raise DataNotFoundError(message="model_option_not_found")
-
-            result = serialize(result)
-            result = model_management_service.format(result)
-            await set_json(self.redis, model_option_details_cache_key, result)
-
-            logging.info(f"user={self.user['user_id']} fetched detail model source=db uid={model_uid}")
-            response.data = result
-        except BaseError:
+            model = await self.model_option_repo.get_model(filters=(DfEngineModelOptions.uid == str(model_uid),))
+            record = ModelRecord.format(model).model_dump()
+            await set_json(self.redis, key, record)
+            logging.info(f"{context} succeeded source=db")
+            response.data = record
+        except BaseError as e:
+            logging.warning(f"{context} rejected status={e.status_code} reason={e.message}")
             raise
         except Exception:
-            logging.error(traceback.format_exc())
+            logging.exception(f"{context} failed")
             raise ServiceError()
         return response
 

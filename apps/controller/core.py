@@ -5,7 +5,7 @@ from apps.controller import Controller, ApiController
 from apps.dependency.rate_limitter import rate_limit
 from apps.dependency.auth import get_user
 from services.mysql import get_db
-from services.redis import get_redis
+from services.redis import CacheKeys, get_redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 from services.repository.chat_assistants import ChatAssistantRepository
@@ -15,6 +15,7 @@ from services.repository.generations import GenerationRepository
 from services.repository.guardrail_validations import GuardrailValidationRepository
 from services.repository.uploaded_files import UploadedFileRepository
 from services.repository.menus import MenuRepository
+from services.repository.model_options import ModelOptionRepository
 from services.repository.projects import ProjectRepository
 from services.repository.settings import AdminSettingRepository
 from services.repository.users import UserRepository
@@ -25,6 +26,10 @@ class CoreDependencies(ApiController):
     user: dict[str, Any] = Depends(get_user)
     db: AsyncSession = Depends(get_db)
     redis: Redis = Depends(get_redis)
+
+    @cached_property
+    def cache_key(self) -> CacheKeys:
+        return CacheKeys()
 
     @cached_property
     def project_repo(self) -> ProjectRepository:
@@ -65,6 +70,10 @@ class CoreDependencies(ApiController):
     @cached_property
     def uploaded_file_repo(self) -> UploadedFileRepository:
         return UploadedFileRepository(self.db)
+
+    @cached_property
+    def model_option_repo(self) -> ModelOptionRepository:
+        return ModelOptionRepository(self.db)
 
 
 class PlainDependencies(Controller):

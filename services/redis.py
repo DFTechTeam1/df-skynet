@@ -241,6 +241,11 @@ class CacheKeys:
     def model_option_details(self, uid: UUID) -> str:
         return f"model_option:detail:uid={uid}"
 
+    def model_option_view(self, uid: UUID) -> str:
+        """Unfiltered `GET /models/{uid}` response. Never share it with `model_option_details`,
+        which only holds models that passed the usable-for-generation filters."""
+        return f"model_option:view:uid={uid}"
+
     def model_pagination(
         self,
         page: int,
@@ -488,3 +493,7 @@ class CacheKeys:
 
     def generation_files_variants_detail(self, file_uid: UUID) -> str:
         return f"generation_files:variants:detail:file_uid={file_uid}"
+
+    # Start refactoring here
+    def model_detail(self, uid: UUID) -> str:
+        return f"models:detail:uid={uid}"
