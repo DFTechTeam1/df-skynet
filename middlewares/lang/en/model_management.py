@@ -24,6 +24,9 @@ class ModelManagementMessage:
             "model_option_unavailable_cannot_be_deleted": (
                 "A model that is no longer available from OpenRouter cannot be deleted."
             ),
+            "model_sync_rate_limit_exceeded": (
+                "Model sync is limited to {times} request every {seconds} seconds. Please wait a moment before syncing again."
+            ),
             "openrouter_model_fetch_failed": (
                 "Failed to fetch the model list from OpenRouter. Please try again later."
             ),

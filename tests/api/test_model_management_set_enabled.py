@@ -87,7 +87,7 @@ async def test_set_enabled_invalidates_the_list_cache(authed_client):
     redis = redis_client()
 
     await authed_client.call("GET", "/api/models", params={"search": prefix})
-    key = CacheKeys().model_pagination(1, 500, prefix, None, None)
+    key = CacheKeys().model_pagination_refactored(page=1, itemsPerPage=500, search=prefix)
     assert await redis.exists(key)
 
     await authed_client.call("PATCH", f"{URL}/{row.uid}", json={"is_enabled": True})
@@ -95,3 +95,27 @@ async def test_set_enabled_invalidates_the_list_cache(authed_client):
     resp = await authed_client.call("GET", "/api/models", params={"search": prefix})
     item = next(i for i in resp.json()["data"]["paginated"] if i["name"] == prefix)
     assert item["is_enabled"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["set_enabled", "delete", "recover"])
+async def test_actions_use_the_cached_detail(authed_client, db_session, action):
+    """200 OK; with the detail already cached, the action builds its response from the cache."""
+    from utils import local_time
+
+    deleted = {"deleted_at": local_time(), "deleted_by": 1} if action == "recover" else {}
+    row = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=False, is_main=False, **deleted)
+    await authed_client.call("GET", f"{URL}/{row.uid}")
+    assert await redis_client().exists(CacheKeys().model_detail(row.uid))
+
+    method, url, kwargs = {
+        "set_enabled": ("PATCH", f"{URL}/{row.uid}", {"json": {"is_enabled": True}}),
+        "delete": ("DELETE", f"{URL}/{row.uid}", {}),
+        "recover": ("PATCH", f"{URL}/{row.uid}/recover", {}),
+    }[action]
+    resp = await authed_client.call(method, url, **kwargs)
+
+    data = resp.json()["data"]
+    assert data["is_enabled"] is (action == "set_enabled")
+    assert (data["deleted_at"] is None) is (action != "delete")
+    assert not await redis_client().exists(CacheKeys().model_detail(row.uid))

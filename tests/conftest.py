@@ -117,6 +117,7 @@ async def _clear_all_redis_caches():
         "prompt_template:list:*",
         "prompt_template:detail:*",
         "model_option:*",
+        "models:*",
         "api_key_management:*",
         "setting:*",
         "user_preference:*",
@@ -600,6 +601,9 @@ class _FakeModelSyncCaller:
         if path in self.responses:
             return _FakeModelSyncResponse(200, {"data": self.responses[path]}, path)
         return _FakeModelSyncResponse(502, {"error": {"message": "not configured for this test"}}, path)
+
+    async def openrouter(self, method: str, url: str, user_id: int, **kwargs: Any) -> _FakeModelSyncResponse:
+        return await self.call(method, url)
 
 
 @pytest.fixture

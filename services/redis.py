@@ -495,5 +495,19 @@ class CacheKeys:
         return f"generation_files:variants:detail:file_uid={file_uid}"
 
     # Start refactoring here
+    def models_pattern(self) -> str:
+        return "models:*"
+
     def model_detail(self, uid: UUID) -> str:
         return f"models:detail:uid={uid}"
+
+    def model_pagination_refactored(
+        self,
+        page: int,
+        itemsPerPage: int,
+        search: Optional[str] = None,
+        type: Optional[Literal["text", "video", "image"]] = None,
+        is_enabled: Optional[bool] = None,
+        is_deleted: Optional[bool] = None,
+    ) -> str:
+        return f"models:pagination:page={page}:itemsPerPage={itemsPerPage}:search={search}:type={type}:is_enabled={is_enabled}:is_deleted={is_deleted}"

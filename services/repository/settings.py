@@ -41,3 +41,6 @@ class AdminSettingRepository(BaseRepository):
             if isinstance(row, dict) and "value" in row:
                 row["value"] = json.loads(row["value"]) if row["value"] else None
         return result
+
+    async def update(self, filters: tuple[Any, ...], values: dict[str, Any]) -> None:
+        await self._update(DfEngineSettings, filters, values)
