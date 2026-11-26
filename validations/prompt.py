@@ -5,7 +5,7 @@ from typing import Any
 from apps.secret import OPENROUTER_BASE_URL
 from error import DataValidationError
 from log import logging
-from schemas.payload.setting import PromptValidationType
+from schemas.payload.admin_settings import PromptValidationType
 from schemas.format.openrouter import Message, PromptGuardrailResponse
 from services.api_caller import APICaller
 from services.openrouter import GUARDRAIL_INSTRUCTION, call_prompt_guardrail

@@ -95,12 +95,12 @@ async def test_fetch_response_is_cached_with_a_ttl(authed_client, db_session):
     await clear_setting_state(db_session)
     redis = redis_client()
     await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": True}})
-    await redis.delete(cache_key.setting_global())
+    await redis.delete(cache_key.setting_global_refactored())
 
     resp = await authed_client.call("GET", URL)
     assert resp.status_code == 200
-    assert await redis.exists(cache_key.setting_global())
-    assert await redis.ttl(cache_key.setting_global()) > 0
+    assert await redis.exists(cache_key.setting_global_refactored())
+    assert await redis.ttl(cache_key.setting_global_refactored()) > 0
 
 
 @pytest.mark.asyncio
@@ -111,10 +111,10 @@ async def test_update_invalidates_the_cache(authed_client, db_session):
 
     await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": True}})
     await authed_client.call("GET", URL)
-    assert await redis.exists(cache_key.setting_global())
+    assert await redis.exists(cache_key.setting_global_refactored())
 
     await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": False}})
-    assert not await redis.exists(cache_key.setting_global())
+    assert not await redis.exists(cache_key.setting_global_refactored())
 
     body = (await authed_client.call("GET", URL)).json()["data"]
     assert body["admin_view"] == {"see_all_asset": False}

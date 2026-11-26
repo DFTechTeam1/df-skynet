@@ -18,7 +18,8 @@ from services.repository.uploaded_files import UploadedFileRepository
 from services.repository.menus import MenuRepository
 from services.repository.model_options import ModelOptionRepository
 from services.repository.projects import ProjectRepository
-from services.repository.settings import AdminSettingRepository
+from services.repository.project_settings import ProjectSettingRepository
+from services.repository.admin_settings import AdminSettingRepository
 from services.repository.users import UserRepository
 
 
@@ -43,6 +44,10 @@ class CoreDependencies(ApiController):
     @cached_property
     def admin_repo(self) -> AdminSettingRepository:
         return AdminSettingRepository(self.db)
+
+    @cached_property
+    def project_setting_repo(self) -> ProjectSettingRepository:
+        return ProjectSettingRepository(self.db)
 
     @cached_property
     def user_repo(self) -> UserRepository:

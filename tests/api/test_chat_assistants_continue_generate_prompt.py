@@ -247,7 +247,7 @@ async def test_continue_generate_prompt_refuses_when_a_shared_guard_fails(
 ):
     """422 and nothing published for each guard `message` names."""
     from services.repository.projects import ProjectRepository
-    from services.repository.settings import AdminSettingRepository
+    from services.repository.admin_settings import AdminSettingRepository
 
     await chat_settings()
     if kind == "settings":

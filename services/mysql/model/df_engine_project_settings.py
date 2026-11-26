@@ -1,13 +1,14 @@
 from datetime import datetime
 from typing import Optional
 from sqlmodel import Column, Field, Relationship, SQLModel
-from sqlalchemy import DateTime, Float, ForeignKey, Integer
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.dialects.mysql import BIGINT
 from utils import local_time
 
 
 class DfEngineProjectSettings(SQLModel, table=True):
     __tablename__ = "df_engine_project_settings"  # type: ignore
+    __table_args__ = (UniqueConstraint("project_id", name="uq_df_engine_project_settings_project_id"),)
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))

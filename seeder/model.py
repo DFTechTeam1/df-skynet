@@ -94,12 +94,12 @@ async def seed(force_sync: bool = False) -> None:
                     row.is_enabled = True
                     enabled += 1
             if model_type == ModelUsageTypes.text:
-                # enhancer/assistant must be an enabled, available text model; prefer a seeded match
+                # the assistant must be an enabled, available text model; prefer a seeded match
                 enabled_text = matched or [r for r in rows if r.is_enabled]
                 default_text = enabled_text[0] if enabled_text else None
 
         if default_text:
-            # same shape as POST /setting stores (apps/controller/setting.py resolved_model)
+            # same shape as POST /setting stores (apps/controller/admin_settings.py)
             ref = json.dumps(
                 {
                     "id": default_text.id,
@@ -109,18 +109,17 @@ async def seed(force_sync: bool = False) -> None:
                     "top_provider": default_text.top_provider,
                 }
             )
-            for key in ("enhancer_model", "assistant_model"):
-                row = await query(
-                    db=db,
-                    table=DfEngineSettings,
-                    filters=(DfEngineSettings.code == SETTING_CODE, DfEngineSettings.key == key),
-                    fetch_one=True,
-                )
-                if row is None:
-                    db.add(DfEngineSettings(key=key, value=ref, code=SETTING_CODE))
-                elif not row.value or (current := json.loads(row.value)) is None or "model_id" not in current:
-                    # empty, or seeded earlier in the short {uid, name} shape
-                    row.value, row.updated_at = ref, local_time()
+            row = await query(
+                db=db,
+                table=DfEngineSettings,
+                filters=(DfEngineSettings.code == SETTING_CODE, DfEngineSettings.key == "assistant_model"),
+                fetch_one=True,
+            )
+            if row is None:
+                db.add(DfEngineSettings(key="assistant_model", value=ref, code=SETTING_CODE))
+            elif not row.value or (current := json.loads(row.value)) is None or "model_id" not in current:
+                # empty, or seeded earlier in the short {uid, name} shape
+                row.value, row.updated_at = ref, local_time()
         await db.commit()
 
     redis, keys = redis_client(), CacheKeys()
@@ -129,7 +128,7 @@ async def seed(force_sync: bool = False) -> None:
         keys.setting_global(),
         keys.setting_detail_pattern(),
         keys.setting_project_pattern(),
-        keys.setting_logs_pattern(),
+        keys.setting_pattern(),
     ):
         await delete_pattern(redis, pattern)
     logging.info(f"seeder=model done, enabled={enabled} default_text={default_text.name if default_text else None}")

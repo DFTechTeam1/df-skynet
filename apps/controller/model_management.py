@@ -546,7 +546,7 @@ class ModelManagementController(CoreDependencies):
                     if dangling:
                         for pattern in (
                             self.cache_key.setting_global(),
-                            self.cache_key.setting_logs_pattern(),
+                            self.cache_key.setting_pattern(),
                             self.cache_key.setting_project_pattern(),
                         ):
                             await delete_pattern(self.redis, pattern)

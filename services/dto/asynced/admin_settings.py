@@ -3,7 +3,7 @@ from typing import Any, Optional, Union
 from uuid import UUID
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload, load_only
-from schemas.payload.setting import AdminGlobalSettingPayload
+from schemas.payload.admin_settings import AdminGlobalSettingPayload
 from services.mysql import query
 from services.mysql.model import (
     DfEngineMenus,

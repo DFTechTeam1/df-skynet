@@ -3,19 +3,6 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-class AdminView(BaseModel):
-    """Library visibility rules."""
-
-    see_all_asset: bool = Field(
-        default=True,
-        description=(
-            "When on, every user can see other users' generated assets in the Library. "
-            "When off, a user sees only their own assets plus anything shared with them "
-            "(Global / Role)."
-        ),
-    )
-
-
 class ProjectClassLimitations(BaseModel):
     """Usage limits for one project class (e.g. class A, A+, B). Every project in
     that class inherits these limits."""
@@ -105,7 +92,6 @@ class ProjectSettingPayload(BaseModel):
 
 
 PromptValidationType = Literal[
-    "prompt_enhancement",
     "prompt_injection",
     "nfsw",
     "image_generation",
@@ -126,8 +112,6 @@ class PromptValidation(BaseModel):
 
 
 class ChatAssistantSettings(BaseModel):
-    """Limits for one chat assistant session."""
-
     max_chat_messages: int = Field(
         default=500,
         ge=1,
@@ -148,14 +132,6 @@ class ChatAssistantSettings(BaseModel):
 
 
 class AdminGlobalSettingPayload(BaseModel):
-    """Workspace-wide DF Engine settings. This is a full replace — send the whole
-    document, not just the fields you changed. Every field has a default so the
-    settings page can always submit a complete payload."""
-
-    admin_view: AdminView = Field(
-        default_factory=AdminView,
-        description="Library visibility rules for admins.",
-    )
     folder_depth_limit: int = Field(
         default=4,
         description=(
@@ -175,15 +151,6 @@ class AdminGlobalSettingPayload(BaseModel):
             "set; if the same class ID appears twice, the last one wins. Classes you "
             "leave out keep their current limits."
         ),
-    )
-
-    enhancer_model: Optional[UUID] = Field(
-        default=None,
-        description=(
-            "ID of the text model that rewrites/improves user prompts before generation. "
-            "Must be a model that is currently enabled. Leave empty to use the engine default."
-        ),
-        examples=[None],
     )
     assistant_model: Optional[UUID] = Field(
         default=None,

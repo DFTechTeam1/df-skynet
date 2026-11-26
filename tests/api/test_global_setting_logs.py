@@ -96,7 +96,7 @@ async def test_logs_response_is_cached(authed_client, db_session):
     await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}})
     await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}})
 
-    key = cache_key.setting_logs_pagination(page=1, items_per_page=50)
+    key = cache_key.setting_log_refactored(page=1, itemsPerPage=50)
     assert not await redis_client().exists(key)
 
     first = await authed_client.call("GET", LOGS_URL)
