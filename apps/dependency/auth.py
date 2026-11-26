@@ -114,7 +114,7 @@ async def get_user(
         roles = claims.get("roles", [])
         permissions = claims.get("permissions", [])
         user = {
-            "user_id": user_id,
+            "user_id": int(user_id),
             "roles": roles,
             "permissions": permissions,
             "is_overrider": is_overrider(roles),

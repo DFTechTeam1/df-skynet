@@ -192,6 +192,8 @@ class ModelManagementController(CoreDependencies):
 
             if type:
                 filters += (DfEngineModelOptions.type == type,)  # type: ignore
+            if type == "image":
+                filters += (func.json_length(DfEngineModelOptions.supported_parameters) >= 1,)
             if search:
                 filters += (DfEngineModelOptions.name.ilike(f"%{search}%"),)  # type: ignore
             if is_enabled:

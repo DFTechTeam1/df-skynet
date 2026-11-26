@@ -15,7 +15,7 @@ from services.mysql.model.df_engine_project_settings import DfEngineProjectSetti
 from services.mysql.model.employees import Employees
 from services.mysql.model.entertainment_task_songs import (
     EntertainmentTaskSongs,
-    SONG_STATUS_ACTIVE,
+    SONG_STATUS_ON_PROGRESS,
     SONG_STATUS_COMPLETED,
 )
 from services.mysql.model.project_person_in_charges import ProjectPersonInCharges
@@ -279,7 +279,7 @@ async def test_generating_against_a_song_task_sets_song_id_not_task_id(
     fake_generation_backends,
     db_session,
 ):
-    song = await make_song(SONG_STATUS_ACTIVE)
+    song = await make_song(SONG_STATUS_ON_PROGRESS)
     menu, feature = generation_menu_feature
     resp = await authed_client.call("POST", f"{URL}/{song.uid}", json=_payload(menu, feature, image_model))
     assert resp.status_code == 200

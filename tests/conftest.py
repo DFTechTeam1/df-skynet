@@ -343,7 +343,7 @@ async def project_task(db_session) -> ProjectTasks:
             await db_session.execute(
                 select(ProjectTasks)
                 .join(Projects, Projects.id == ProjectTasks.project_id)  # type: ignore
-                .where(Projects.status == 1, ProjectTasks.status != 4)  # ongoing project, task not completed
+                .where(Projects.status == 1, ProjectTasks.status == 1)  # ongoing project, ongoing task
                 .options(selectinload(ProjectTasks.project))  # type: ignore
                 .limit(1)
             )

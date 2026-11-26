@@ -112,7 +112,7 @@ async def test_seed_updates_a_changed_row_and_prunes_what_is_not_seeded(fake):
 
 
 @pytest.mark.asyncio
-async def test_a_stale_row_that_history_still_uses_is_deactivated_not_deleted(fake):
+async def test_history_keeps_a_stale_menu_deactivated_but_not_a_stale_feature(fake):
     await seeder.seed()
     fake.referenced = True
     stale = DfEngineFeatures(name="old", type="old", is_active=True)
@@ -120,7 +120,7 @@ async def test_a_stale_row_that_history_still_uses_is_deactivated_not_deleted(fa
     fake.add(stale)
     fake.add(stale_menu)
     await seeder.seed()
-    assert stale in fake.rows(DfEngineFeatures) and stale.is_active is False
+    assert stale not in fake.rows(DfEngineFeatures)  # features are always deleted; generations only lose the link
     assert stale_menu in fake.rows(DfEngineMenus)  # a chat session still sits in it
 
 
@@ -175,3 +175,12 @@ async def test_a_stale_template_and_a_moved_link_are_fixed_on_the_next_run(fake)
     fake.add(stale)
     await seeder.seed()
     assert link.menu_id == right_menu and stale not in fake.rows(DfEnginePromptTemplates)
+
+
+@pytest.mark.asyncio
+async def test_an_extra_feature_sharing_a_seeded_type_is_deleted_even_when_it_comes_first(fake):
+    extra = DfEngineFeatures(name="Feature 8461e45d", type="generate_video", is_active=True)
+    fake.add(extra)  # inserted before seeding, so a lookup by type would pick this row
+    await seeder.seed()
+    assert sorted(f.name for f in fake.rows(DfEngineFeatures)) == sorted(ftype for _, ftype, _ in seeder.SEED)
+    assert extra.name == "Feature 8461e45d"  # it was deleted, not renamed into the seeded one

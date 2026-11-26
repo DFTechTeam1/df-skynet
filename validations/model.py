@@ -81,6 +81,28 @@ def check_supported_params(value: Any, spec: dict[str, Any]) -> str | None:
             return None
 
 
+def validate_image_generation_parameter(parameter: dict[str, Any], supported_parameters: dict[str, Any]) -> None:
+    """Image generation and edit rules: nothing unsupported, nothing missing, every value allowed.
+    `n` is a whole number of at least 1 within the model's own limit; a model that declares no `n` only allows 1.
+    Raises on the first problem, with a message only (no `error` fields)."""
+    specs = {name: spec for name, spec in supported_parameters.items() if name != "input_references"}
+
+    for name, value in parameter.items():
+        if name == "n":
+            if type(value) is not int or value < 1 or (name not in specs and value != 1):
+                raise DataValidationError(message="parameter_invalid", context={"parameter": name})
+            if name not in specs:
+                continue
+        if name not in specs:
+            raise DataValidationError(message="parameter_unsupported", context={"parameter": name})
+        if check_supported_params(value, specs[name]):
+            raise DataValidationError(message="parameter_invalid", context={"parameter": name})
+
+    for name in specs:
+        if name not in parameter:
+            raise DataValidationError(message="parameter_required", context={"parameter": name})
+
+
 def validate_image_model_parameter(parameter: dict[str, Any], model: dict[str, Any]) -> None:
     supported_parameter = dict(model.get("supported_parameters") or {})
     supported_parameter.pop("input_references", None)

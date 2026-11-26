@@ -44,10 +44,10 @@ MENU_ICONS = {
 }
 
 
-async def prune(db, menu_names: set, template_names: set, feature_types: set) -> dict:
+async def prune(db, menu_names: set, template_names: set, feature_ids: set) -> dict:
     """Make SEED the only source of menus/features/templates: delete everything else together with its mappings.
-    A feature or template still referenced by history keeps it and is deactivated instead. A menu is only kept (deactivated)
-    while a chat session sits in it; generations only lose their menu link (`menu_id` is nullable, their feature stays)."""
+    Features are matched by id, so an extra row sharing a seeded `type` is deleted too. A menu is only kept (deactivated)
+    while a chat session sits in it. Generations survive but lose their menu/feature link (both columns are nullable)."""
     out = {"deleted": [], "deactivated": []}
 
     async def referenced(model_cols) -> bool:
@@ -70,10 +70,13 @@ async def prune(db, menu_names: set, template_names: set, feature_types: set) ->
 
     _id = None
     features = await query(db=db, table=DfEngineFeatures)
-    for f in [f for f in features if f.type not in feature_types]:
+    for f in [f for f in features if f.id not in feature_ids]:
         await db.execute(delete(DfEngineMenuFeatureMappings).where(DfEngineMenuFeatureMappings.feature_id == f.id))
         await db.execute(delete(DfEngineFeaturePromptMappings).where(DfEngineFeaturePromptMappings.feature_id == f.id))
-        await drop(DfEngineFeatures, "feature", f, (DfEngineGenerations.feature_id,))
+        await db.execute(
+            update(DfEngineGenerations).where(DfEngineGenerations.feature_id == f.id).values(feature_id=None)
+        )
+        await drop(DfEngineFeatures, "feature", f)
     await db.flush()
 
     for m in [m for m in await query(db=db, table=DfEngineMenus) if m.name not in menu_names]:
@@ -115,7 +118,7 @@ async def seed() -> None:
                     stats["updated"] += 1
             return row
 
-        menus, templates = {}, {}
+        menus, templates, feature_ids = {}, {}, set()
         for menu_name, ftype, tpl in SEED:
             if menu_name and menu_name not in menus:
                 menus[menu_name] = await upsert(
@@ -132,9 +135,10 @@ async def seed() -> None:
 
             feature = await upsert(
                 DfEngineFeatures,
-                (DfEngineFeatures.type == ftype,),
+                (DfEngineFeatures.name == ftype,),
                 {"name": ftype, "type": ftype, "is_active": True},
             )
+            feature_ids.add(feature.id)
 
             if menu_name:
                 link = await query(
@@ -144,11 +148,18 @@ async def seed() -> None:
                     filters=(DfEngineMenuFeatureMappings.feature_id == feature.id,),
                     fetch_one=True,
                 )
-                await upsert(
+                menu_link = await upsert(
                     DfEngineMenuFeatureMappings,
                     (DfEngineMenuFeatureMappings.id == link.id,) if link else (DfEngineMenuFeatureMappings.id == -1,),
                     {"feature_id": feature.id, "menu_id": menus[menu_name].id},
                 )
+            # A seeded feature keeps exactly the link SEED gives it (none for a menu-less one)
+            await db.execute(
+                delete(DfEngineMenuFeatureMappings).where(
+                    DfEngineMenuFeatureMappings.feature_id == feature.id,
+                    DfEngineMenuFeatureMappings.id != (menu_link.id if menu_name else -1),
+                )
+            )
             link = await query(
                 db=db,
                 table=DfEngineFeaturePromptMappings,
@@ -156,13 +167,19 @@ async def seed() -> None:
                 filters=(DfEngineFeaturePromptMappings.feature_id == feature.id,),
                 fetch_one=True,
             )
-            await upsert(
+            prompt_link = await upsert(
                 DfEngineFeaturePromptMappings,
                 (DfEngineFeaturePromptMappings.id == link.id,) if link else (DfEngineFeaturePromptMappings.id == -1,),
                 {"feature_id": feature.id, "template_id": templates[tpl].id},
             )
+            await db.execute(
+                delete(DfEngineFeaturePromptMappings).where(
+                    DfEngineFeaturePromptMappings.feature_id == feature.id,
+                    DfEngineFeaturePromptMappings.id != prompt_link.id,
+                )
+            )
 
-        removed = await prune(db, set(menus), set(templates), {ftype for _, ftype, _ in SEED})
+        removed = await prune(db, set(menus), set(templates), feature_ids)
         await db.commit()
 
         redis = redis_client()

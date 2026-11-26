@@ -6,6 +6,10 @@ from sqlalchemy import CHAR, DateTime, Date, Enum, ForeignKey, Integer, SmallInt
 from sqlalchemy.dialects.mysql import BIGINT
 
 
+TASK_STATUS_ONGOING = 1
+TASK_STATUS_COMPLETED = 4
+
+
 class ProjectTaskTypes(StrEnum):
     asset3d = auto()
     compositing = auto()

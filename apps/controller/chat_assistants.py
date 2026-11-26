@@ -465,7 +465,11 @@ class ChatAssistantsController(CoreDependencies):
                 )
                 raise DataValidationError(
                     message="project_cost_limit_exceeded",
-                    context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
+                    context={
+                        "action": "chat assistant",
+                        "spent": f"${total_spent:.2f}",
+                        "limit": f"${limit_api_key:.2f}",
+                    },
                 )
 
             # Keep only the guardrail types this chat should validate against
@@ -1167,7 +1171,11 @@ class ChatAssistantsController(CoreDependencies):
                 )
                 raise DataValidationError(
                     message="project_cost_limit_exceeded",
-                    context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
+                    context={
+                        "action": "chat assistant",
+                        "spent": f"${total_spent:.2f}",
+                        "limit": f"${limit_api_key:.2f}",
+                    },
                 )
 
             # Keep only the guardrail types this chat should validate against
@@ -1809,7 +1817,11 @@ class ChatAssistantsController(CoreDependencies):
                 )
                 raise DataValidationError(
                     message="project_cost_limit_exceeded",
-                    context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
+                    context={
+                        "action": "chat assistant",
+                        "spent": f"${total_spent:.2f}",
+                        "limit": f"${limit_api_key:.2f}",
+                    },
                 )
 
             # Keep only the guardrail types this chat should validate against
@@ -2243,7 +2255,11 @@ class ChatAssistantsController(CoreDependencies):
                 )
                 raise DataValidationError(
                     message="project_cost_limit_exceeded",
-                    context={"spent": f"${total_spent:.2f}", "limit": f"${limit_api_key:.2f}"},
+                    context={
+                        "action": "chat assistant",
+                        "spent": f"${total_spent:.2f}",
+                        "limit": f"${limit_api_key:.2f}",
+                    },
                 )
 
             # Create the new session: same project, menu, feature and topic
