@@ -101,16 +101,17 @@ class ChatAssistantResponse(StructuredResponse):
             "CODE / PROMPT BLOCKS: any structured data, prompt, JSON, or code goes inside plain ``` fences with NO language tag (write ``` not ```json), "
             "with \\n\\n before the opening fence, \\n after the opening fence and \\n before the closing fence. Never output structured data outside a fence. "
             "GENERATION PROMPT: when has_generation_prompt is true, content MUST contain exactly ONE fenced block holding ONLY the final generation prompt "
-            "(no other text inside the fence), written in English, following the project skeleton one block per line "
-            "(SCENE, DEPTH LAYERS, COMPOSITION, LIGHTING, COLOR, OPTICS, ATMOSPHERE, ORIENTATION), built from the whole conversation context, "
+            "(no other text inside the fence), written in English, using the block labels, order and rules of the prompt guideline system messages, "
+            "built from the whole conversation context. "
             "Before the fence, list any assumptions you made. "
             "REFERENCES INSIDE THE PROMPT: when the user gave references, mention each one used right inside the fence, in the block it influences, "
             "with the exact tag <refer to {uid}> and its intent, e.g. 'COMPOSITION: low angle and diagonal pose taken from <refer to {uid}>' or 'COLOR: palette follows <refer to {uid}>'. "
-            "Do this in every block a reference shapes (SCENE, DEPTH LAYERS, COMPOSITION, LIGHTING, COLOR, OPTICS, ATMOSPHERE, ORIENTATION), so the user never has to search for which image a line comes from. "
+            "Do this in every block a reference shapes, so the user never has to search for which image a line comes from. "
             "Never mention a reference that is not used, never write URLs or a bare uid, and keep the text around the tag in English. "
             "When has_generation_prompt is false, do not write a generation prompt. "
-            "If the conversation already has enough context for a generation prompt (see will_generate_prompt), whether or not the user asked for one, and the last user message is not a confirmation to write it, do NOT write the prompt, even when the user asked for it outright: set will_generate_prompt true, has_generation_prompt false, and reply with one short sentence offering to write it now (no fenced block). If the context is still thin, keep will_generate_prompt false and ask for what is missing. "
-            "Only when the last user message confirms they want the prompt written now, write the prompt in THIS reply with has_generation_prompt true and will_generate_prompt false, and do not ask questions first. "
+            "Unless the last system or user turn confirms the prompt is to be written now, do NOT write a generation prompt, even when the user asks for it outright. "
+            "When the concept is ready, reply as the chat instructions describe and set will_generate_prompt true (see will_generate_prompt); while it is not ready, keep it false and ask for what is missing. "
+            "When the user confirmed, write the prompt in THIS reply with has_generation_prompt true and will_generate_prompt false, and do not ask questions first. "
             "Fill anything missing (surface, aspect ratio, reference intent, mood, resolution) with the project defaults or a sensible neutral choice, and list each one as an assumption before the fence so the user can correct it later. "
             "If a reference does not fit the request (e.g. a screenshot), say so in the assumptions and leave it out of the prompt. "
             "ATTACHMENTS: refer to an image / video / file only with the exact tag <refer to {uid}>, using the uid exactly as given. "
@@ -132,13 +133,12 @@ class ChatAssistantResponse(StructuredResponse):
     will_generate_prompt: bool = Field(
         ...,
         description=(
-            "Default false. Measures the chat so far: set true ONLY when the whole conversation (messages, attachments, stated preferences, "
-            "references) already gives enough context to write a good generation prompt for an image, video or other media: at least a clear subject or idea "
-            "plus enough direction (such as surface, mood, style or a usable reference) that the prompt would not be a blind guess. "
-            "Keep false while the context is still thin, and keep asking the user for what is missing instead. The user does not have to ask for a prompt; "
-            "once the context is enough, raise it. When true, the reply only offers, in one short sentence, to write the prompt now and contains NO generation prompt; "
-            "the app shows a yes / no pop-up from this flag. Always false when no generation is being discussed, when the last user message already confirms, "
-            "and whenever has_generation_prompt is true."
+            "Default false. Must agree with content. true = the concept is ready for the system to write the generation prompt; the app then "
+            "shows the button that starts it. Set true in EVERY reply that says the concept or prompt is ready, gives the final concept summary, "
+            "or tells the user to start generating, including when the user asks for the prompt again while the concept is still ready. "
+            "This field is the only readiness signal: never write a readiness word, tag or marker in content, even if other instructions ask for one. "
+            "Keep false while anything is missing or a question is still open, and in that case never say it is ready or tell the user to start generating. "
+            "Always false when has_generation_prompt is true."
         ),
     )
     has_generation_prompt: bool = Field(
@@ -148,7 +148,7 @@ class ChatAssistantResponse(StructuredResponse):
             "AND this reply contains the final generation prompt in a fenced block. "
             "The prompt must use the WHOLE conversation context: every earlier request, referenced attachment, stated preference, "
             "previous prompt draft and the user's corrections. When the user adjusts a previous prompt (e.g. 'make it warmer'), "
-            "ask again with will_generate_prompt true; once confirmed, write the full updated prompt and set true. Set false for everything else: greetings, questions, image analysis, "
+            "set will_generate_prompt true again once the change is clear; once confirmed, write the full updated prompt and set true. Set false for everything else: greetings, questions, image analysis, "
             "opinions, and replies that only ask the user for missing information."
         ),
     )

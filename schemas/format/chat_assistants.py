@@ -1,8 +1,22 @@
 from typing import Any, Optional
 from pydantic import BaseModel, Field
-from schemas.format.base import ActionMeta, TimezoneMeta
+from schemas.format.base import ActionMeta, TimezoneMeta, UserMeta
 from schemas.format.openrouter import Attachment, Message
-from utils.formatter import format_udin_url
+from utils.formatter import format_datetime, format_udin_url, format_user_employees
+
+MESSAGE_SUCCESS_STYLE = {"icon": "mdi-check-circle", "color": "green"}
+MESSAGE_FAILED_STYLE = {"icon": "mdi-alert-circle", "color": "red"}
+
+# Creator of the rows no user wrote (assistant and system)
+OPENROUTER_CREATOR = {
+    "user_id": None,
+    "nickname": "openrouter",
+    "image": "https://openrouter.ai/apple-touch-icon.png",
+}
+
+
+class MessageCreator(UserMeta):
+    user_id: Optional[int] = Field(default=None)  # type: ignore
 
 
 class MessageAction(BaseModel):
@@ -50,8 +64,11 @@ class ChatAttachment(BaseModel):
 class ChatMessage(BaseModel):
     uid: str = Field(...)
     content: str = Field(...)
-    sender: str = Field(...)
+    creator: MessageCreator = Field(...)
     status_code: int = Field(...)
+    sent_at: Optional[str] = Field(default=None)
+    icon: str = Field(...)
+    color: str = Field(...)
     has_generation_prompt: bool = Field(default=False)
     will_generate_prompt: bool = Field(default=False)
     chat_attachments: list[ChatAttachment] = Field(default_factory=list)
@@ -64,14 +81,17 @@ class ChatMessage(BaseModel):
         attachments = [ChatAttachment.format(ref["attachment"]) for ref in result.get("chat_references", [])]
 
         status_code = result.get("status_code") or 200
+        user = format_user_employees(result.get("created_by_user"))  # None unless a user wrote the row
         return cls(
             uid=result["uid"],
             content=result["content"],
-            sender=result["sender"],
+            creator=user or OPENROUTER_CREATOR,
             status_code=status_code,
+            sent_at=format_datetime(result.get("sent_at")),
+            **(MESSAGE_SUCCESS_STYLE if status_code == 200 else MESSAGE_FAILED_STYLE),
             action=MessageAction(
-                can_resend=status_code != 200 and result["sender"] != "openrouter",
-                can_generate_prompt=will_prompt and result["sender"] == "openrouter" and status_code == 200,
+                can_resend=status_code != 200 and user is not None,
+                can_generate_prompt=will_prompt and user is None and status_code == 200,
             ),
             has_generation_prompt=has_prompt,
             will_generate_prompt=will_prompt,

@@ -15,7 +15,7 @@ class DfEngineChatAssistantsFactory(SQLAlchemyModelFactory):
 
     id = None
     uid = LazyFunction(lambda: str(uuid4()))
-    created_at = LazyFunction(local_time)
+    sent_at = LazyFunction(local_time)
     session_id = None
     content = "hello"
     role = "user"
@@ -27,6 +27,6 @@ class DfEngineChatAssistantsFactory(SQLAlchemyModelFactory):
     exchange_rate = 0
     has_generation_prompt = False
     will_generate_prompt = False
-    sender = "tester"
+    created_by = None
     apikeyable_id = None
     apikeyable_type = None

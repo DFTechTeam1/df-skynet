@@ -508,7 +508,7 @@ Table df_engine_chat_references {
 Table df_engine_chat_assistants {
     id bigint [pk, increment]
     uid char(36) [not null, unique]
-    created_at timestamp [default: `now()`]
+    sent_at timestamp [default: `now()`]
     session_id bigint [not null]
     content longtext [not null]
     role varchar(255) [not null, note: "system, assistant, user"]
@@ -520,7 +520,7 @@ Table df_engine_chat_assistants {
     exchange_rate decimal(20, 8) [not null, default: 0]
     has_generation_prompt bool [not null, default: false]
     will_generate_prompt bool [not null, default: false, note: "FE pop-up trigger: asks the user whether to write the generation prompt"]
-    sender varchar(255) [not null, note: "<username> or openrouter"]
+    created_by bigint [default: null, note: "The user who wrote a user row. NULL for assistant/system rows"]
     apikeyable_id bigint [default: null, note: "NULL for system/user rows"]
     apikeyable_type varchar(255) [default: null, note: "Polymorph to df_engine_api_keys or df_engine_api_key_snapshots"]
 
@@ -770,4 +770,5 @@ Ref: df_engine_model_options.id < df_engine_chat_assistants.model_id
 Ref: df_engine_model_options.id < df_engine_guardrail_validations.model_id
 Ref: df_engine_attachments.id < df_engine_chat_references.attachment_id
 Ref: df_engine_chat_sessions.id < df_engine_chat_assistants.session_id
+Ref: users.id < df_engine_chat_assistants.created_by
 Ref: df_engine_menus.id< df_engine_chat_sessions.menu_id

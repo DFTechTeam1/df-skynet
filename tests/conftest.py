@@ -660,7 +660,7 @@ async def chat_ctx(db_session, user_id):
 
 @pytest_asyncio.fixture
 async def chat_features(db_session):
-    """Makes sure an active `initialize_session` and `enhance_prompt` feature (each with one template) exist, as the
+    """Makes sure an active `chat_assistant` and `enhance_prompt` feature (each with one template) exist, as the
     seeder leaves them. Only the ones this fixture had to create are removed afterwards."""
     from sqlalchemy import delete
     from schemas.payload.feature_management import FeatureTypes
@@ -668,7 +668,7 @@ async def chat_features(db_session):
     from services.mysql.model import DfEngineFeaturePromptMappings, DfEngineFeatures, DfEnginePromptTemplates
 
     created = []
-    for feature_type in (FeatureTypes.initialize_session, FeatureTypes.enhance_prompt):
+    for feature_type in (FeatureTypes.chat_assistant, FeatureTypes.enhance_prompt):
         found = (
             await db_session.execute(
                 select(DfEngineFeatures.id).where(  # type: ignore

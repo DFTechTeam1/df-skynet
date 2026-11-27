@@ -157,7 +157,7 @@ def make_chat_session(ctx, created_by, messages, archieved=False):
             session_id=session.id,
             role=role,
             content=content,
-            sender="openrouter" if role != "user" else "tester",
+            created_by=int(created_by) if role == "user" else None,
             **(extra[0] if extra else {}),
         )
         for role, content, *extra in messages

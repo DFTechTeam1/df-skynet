@@ -25,9 +25,9 @@ from utils import local_time
 
 FORMULAS = Path(__file__).resolve().parents[1] / "docs" / "formulas"
 SEED = [
-    (None, "initialize_session", "chat-session-init"),
+    (None, "chat_assistant", "chatbot"),
     ("Gen", "generate_image", "image-led-fullgen"),
-    ("Gen", "enhance_prompt", "image-led-fullgen"),
+    ("Gen", "enhance_prompt", "enhance-led-full"),
     ("Gen", "generate_video", "video-led-fullgen"),
     ("Storyboard", "generate_keyframe", "image-story-fullgen"),
     ("Storyboard", "generate_motion", "video-story-fullgen"),

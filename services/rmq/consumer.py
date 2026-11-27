@@ -151,7 +151,6 @@ def assistant_row(
         model_id=payload["model"]["id"],
         apikeyable_id=payload["api_key"]["id"],
         apikeyable_type=DfEngineApiKeys.__name__,
-        sender="openrouter",
         content=content,
         status_code=status_code,
         message_id=payload.get("message_id"),

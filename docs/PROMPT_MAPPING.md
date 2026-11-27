@@ -16,7 +16,7 @@ Applied everywhere in the app.
 
 | File | Used when |
 |---|---|
-| `chat-session-init.md` | System prompt of every new chat assistant session (feature `initialize_session`, not attached to a menu) |
+| `chatbot.md` | System prompt of every new chat assistant session (feature `chat_assistant`, not attached to a menu) |
 
 ## Element page
 
@@ -40,5 +40,6 @@ Applied everywhere in the app.
 |---|---|
 | `video-led-fullgen.md` | Full video generation (LED flow) |
 | `image-led-fullgen.md` | Full image generation (LED flow) |
+| `enhance-led-full.md` | Writing the final image / video prompt (feature `enhance_prompt`) |
 
 > Note: these files are referenced but not yet created in this repo.

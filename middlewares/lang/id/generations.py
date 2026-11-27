@@ -80,6 +80,8 @@ class GenerationsMessage:
             "chat_assistant_confirm_generate_prompt": "Konteks percakapan sudah cukup untuk saya menuliskan prompt. Apakah Anda ingin saya menuliskannya sekarang?",
             "chat_assistant_attachment_limit_reached": "Chat ini hanya dapat merujuk maksimal {max} file berbeda. Mulai chat baru untuk menambah file.",
             "chat_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk asisten chat. Silakan hubungi admin.",
+            "chat_assistant_feature_not_configured": "Asisten chat belum diatur. Silakan minta administrator untuk mengaktifkan fitur asisten chat.",
+            "enhance_prompt_feature_not_configured": "Pembuatan prompt belum diatur. Silakan minta administrator untuk mengaktifkan fitur enhance prompt.",
             "chat_assistant_failed": "Asisten chat belum bisa menjawab saat ini. Silakan coba lagi.",
             "chat_image_invalid": "Hanya gambar PNG, JPEG, atau WebP yang diizinkan.",
             "chat_images_exceeded": "Gambar yang dilampirkan terlalu banyak (maks {max}).",

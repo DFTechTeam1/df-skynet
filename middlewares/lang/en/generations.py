@@ -80,6 +80,8 @@ class GenerationsMessage:
             "chat_assistant_confirm_generate_prompt": "The conversation already gives me enough context to write the prompt. Do you want me to write it now?",
             "chat_assistant_attachment_limit_reached": "This chat can reference at most {max} different files. Start a new chat to add more.",
             "chat_model_not_configured": "No text model is configured for the chat assistant. Please contact an administrator.",
+            "chat_assistant_feature_not_configured": "The chat assistant hasn't been set up yet. Please ask an administrator to activate the chat assistant feature.",
+            "enhance_prompt_feature_not_configured": "Prompt generation hasn't been set up yet. Please ask an administrator to activate the enhance prompt feature.",
             "chat_assistant_failed": "The chat assistant couldn't answer right now. Please try again.",
             "chat_image_invalid": "Only PNG, JPEG or WebP images are allowed.",
             "chat_images_exceeded": "You've attached too many images (max {max}).",

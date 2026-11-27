@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class FeatureTypes(StrEnum):
     enhance_prompt = auto()
-    initialize_session = auto()
+    chat_assistant = auto()
     generate_image = auto()
     generate_video = auto()
     generate_keyframe = auto()
