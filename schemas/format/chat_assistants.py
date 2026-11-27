@@ -6,11 +6,9 @@ from utils.formatter import format_datetime, format_udin_url, format_user_employ
 
 MESSAGE_SUCCESS_STYLE = {"icon": "mdi-check-circle", "color": "green"}
 MESSAGE_FAILED_STYLE = {"icon": "mdi-alert-circle", "color": "red"}
-
-# Creator of the rows no user wrote (assistant and system)
 OPENROUTER_CREATOR = {
     "user_id": None,
-    "nickname": "openrouter",
+    "nickname": "Openrouter",
     "image": "https://openrouter.ai/apple-touch-icon.png",
 }
 
@@ -44,6 +42,19 @@ class ChatSession(TimezoneMeta):
         return session
 
 
+def format_chat_user(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """`format_user_employees` with the nickname's first letter uppercased."""
+    formatted = format_user_employees(user)
+    if formatted and formatted["nickname"]:
+        # only the first letter; .capitalize()/.title() would rewrite the rest of the name
+        formatted["nickname"] = formatted["nickname"][0].upper() + formatted["nickname"][1:]
+    return formatted
+
+
+class ProjectChatSession(ChatSession):
+    creator: MessageCreator = Field(...)
+
+
 class ChatAttachment(BaseModel):
     uid: str = Field(...)
     name: str = Field(...)
@@ -64,6 +75,7 @@ class ChatAttachment(BaseModel):
 class ChatMessage(BaseModel):
     uid: str = Field(...)
     content: str = Field(...)
+    sender: str = Field(...)
     creator: MessageCreator = Field(...)
     status_code: int = Field(...)
     sent_at: Optional[str] = Field(default=None)
@@ -81,11 +93,12 @@ class ChatMessage(BaseModel):
         attachments = [ChatAttachment.format(ref["attachment"]) for ref in result.get("chat_references", [])]
 
         status_code = result.get("status_code") or 200
-        user = format_user_employees(result.get("created_by_user"))  # None unless a user wrote the row
+        user = format_chat_user(result.get("created_by_user"))  # None unless a user wrote the row
         return cls(
             uid=result["uid"],
             content=result["content"],
-            creator=user or OPENROUTER_CREATOR,
+            sender=(user or {}).get("nickname") or ("User" if result.get("role") == "user" else "Openrouter"),
+            creator=user or OPENROUTER_CREATOR,  # type: ignore
             status_code=status_code,
             sent_at=format_datetime(result.get("sent_at")),
             **(MESSAGE_SUCCESS_STYLE if status_code == 200 else MESSAGE_FAILED_STYLE),

@@ -19,7 +19,14 @@ from services.pusher import send_chat_insertion
 from services.rmq.publisher import publish_message
 from services.openrouter import GENERATE_PROMPT_INSTRUCTION, GUARDRAIL_INSTRUCTION, CHAT_ASSISTANT_INSTRUCTION
 from schemas.response import PaginationResponse, Response
-from schemas.format.chat_assistants import ChatAttachment, ChatMessage, ChatSession, build_history
+from schemas.format.chat_assistants import (
+    ChatAttachment,
+    ChatMessage,
+    ChatSession,
+    ProjectChatSession,
+    build_history,
+    format_chat_user,
+)
 from schemas.format.openrouter import Attachment, Message
 from services.chat_transcript import build_transcript
 from utils import local_time
@@ -137,6 +144,95 @@ class ChatAssistantsController(CoreDependencies):
             response.data = PaginationResponse(
                 paginated=[ChatSession.format(session).model_dump() for session in sessions], totalData=total_data
             )
+        except BaseError:
+            raise
+        except Exception:
+            logging.error(traceback.format_exc())
+            raise ServiceError()
+        return response
+
+    @controller.get(
+        "/chat-assistant-sessions/{project_uid}",
+        summary="Get everyone chat sessions.",
+        description=(
+            "Only for users with the `root` role; anyone else gets 403. Returns every user's chat sessions in the "
+            "project, across all menus and archived ones included, newest first. Paginated via `page` and "
+            "`itemsPerPage`. Use `nickname` to search by the creator's employee nickname: "
+            "case-insensitive, matches anywhere. Omit or leave blank for all. An unknown project returns an empty "
+            "list. Open a session with the chat session detail endpoint."
+        ),
+        status_code=status.HTTP_200_OK,
+        tags=["Chat Assistants"],
+        response_model=Response,
+    )
+    async def chat_assistants_with_project_uid_to_get_list_all_user_sessions(
+        self,
+        project_uid: UUID = Path(...),
+        nickname: Optional[str] = Query(default=None, description="Search by the session creator's nickname."),
+        page: int = Query(default=1, ge=1, description="1-indexed page number to fetch."),
+        itemsPerPage: int = Query(default=20, ge=1, le=100, description="Number of records to return per page."),
+    ) -> Response:
+        response = Response()
+        try:
+            if "root" not in self.user["roles"]:
+                raise AuthorizationError()
+
+            filters = [
+                DfEngineChatSessions.project_id
+                == select(Projects.id).where(Projects.uid == str(project_uid)).scalar_subquery()  # type: ignore
+            ]
+            if nickname and nickname.strip():
+                keyword = nickname.strip()
+                filters.append(
+                    DfEngineChatSessions.created_by.in_(  # type: ignore
+                        select(Employees.user_id).where(  # type: ignore
+                            Employees.nickname.icontains(keyword, autoescape=True)  # type: ignore
+                        )
+                    )
+                )
+
+            total_data = (
+                await self.chat_session_repo.get_chat_session(
+                    columns=(func.count(DfEngineChatSessions.id),),  # type: ignore
+                    filters=tuple(filters),
+                )
+                or 0
+            )
+            sessions = await self.chat_session_repo.get_chat_session(
+                columns=(
+                    DfEngineChatSessions.uid,
+                    DfEngineChatSessions.topic,
+                    DfEngineChatSessions.created_at,
+                    DfEngineChatSessions.updated_at,
+                    DfEngineChatSessions.archieved_at,
+                    DfEngineChatSessions.created_by,
+                    Users.image,
+                    Employees.nickname,
+                ),
+                joins=(
+                    (Users, Users.id == DfEngineChatSessions.created_by),
+                    (Employees, Employees.user_id == Users.id, True),
+                ),
+                filters=tuple(filters),
+                order_by=(DfEngineChatSessions.created_at.desc(), DfEngineChatSessions.id.desc()),  # type: ignore
+                limit=itemsPerPage,
+                offset=(page - 1) * itemsPerPage,
+                fetch_one=False,
+                raise_if_null=False,
+            )
+
+            paginated = []
+            for row in sessions:
+                creator = format_chat_user(
+                    {"id": row["created_by"], "image": row["image"], "employees": {"nickname": row["nickname"]}}
+                )
+                session = ProjectChatSession.format({**row, "creator": creator})
+                is_owner = row["created_by"] == int(self.user["user_id"])
+                session.action.can_update = is_owner
+                session.action.can_set_archieve = session.action.can_set_archieve and is_owner
+                paginated.append(session.model_dump())
+
+            response.data = PaginationResponse(paginated=paginated, totalData=total_data)
         except BaseError:
             raise
         except Exception:
@@ -666,8 +762,8 @@ class ChatAssistantsController(CoreDependencies):
             "Returns a chat session together with its conversation: only messages whose role is `user` or "
             "`assistant` (system prompts are hidden), oldest first. Each message carries its `attachments` "
             "(uploaded files or generated results referenced by that message). Archived sessions can still be "
-            "read. Only the session's creator can access it: an unknown session returns not found, and another "
-            "user's session returns 403."
+            "read. Only the session's creator or a user with the `root` role can access it: an unknown session "
+            "returns not found, and anyone else gets 403."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Chat Assistants"],
@@ -687,6 +783,7 @@ class ChatAssistantsController(CoreDependencies):
                     ).options(
                         load_only(
                             DfEngineChatAssistants.uid,  # type: ignore
+                            DfEngineChatAssistants.role,  # type: ignore
                             DfEngineChatAssistants.created_by,  # type: ignore
                             DfEngineChatAssistants.content,  # type: ignore
                             DfEngineChatAssistants.has_generation_prompt,  # type: ignore
@@ -709,7 +806,7 @@ class ChatAssistantsController(CoreDependencies):
                 filters=(DfEngineChatSessions.uid == str(session_uid),),
                 context={"uid": str(session_uid)},
             )
-            if session["created_by"] != int(self.user["user_id"]):  # type: ignore
+            if session["created_by"] != int(self.user["user_id"]) and "root" not in self.user["roles"]:  # type: ignore
                 raise AuthorizationError(message="chat_assistant_not_owner")
 
             response.data = [ChatMessage.format(message).model_dump() for message in session["chat_assistants"]]
@@ -752,6 +849,7 @@ class ChatAssistantsController(CoreDependencies):
                 options=(
                     load_only(
                         DfEngineChatAssistants.uid,  # type: ignore
+                        DfEngineChatAssistants.role,  # type: ignore
                         DfEngineChatAssistants.created_by,  # type: ignore
                         DfEngineChatAssistants.content,  # type: ignore
                         DfEngineChatAssistants.has_generation_prompt,  # type: ignore

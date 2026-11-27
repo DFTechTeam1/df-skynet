@@ -1,7 +1,7 @@
 from datetime import datetime
 from schemas.format.chat_assistants import ChatMessage
 
-USER = {"id": 68, "image": "me.png", "employees": {"nickname": "Zed"}}
+USER = {"id": 68, "image": "me.png", "employees": {"nickname": "zed McKay"}}
 
 
 def _row(**extra):
@@ -52,8 +52,16 @@ def test_sent_at_icon_and_color_follow_the_status_code():
 
 def test_creator_is_the_user_or_openrouter():
     mine = ChatMessage.format(_row(created_by_user=USER)).model_dump()
-    assert "sender" not in mine and mine["creator"] == {"user_id": 68, "image": "me.png", "nickname": "Zed"}
-    bot = ChatMessage.format(_row()).model_dump()["creator"]
+    assert mine["sender"] == "Zed McKay" and mine["creator"] == {
+        "user_id": 68,
+        "image": "me.png",
+        "nickname": "Zed McKay",
+    }
+    nameless = _row(role="user", created_by_user={**USER, "employees": None})
+    assert ChatMessage.format(nameless).sender == "User"
+    reply = ChatMessage.format(_row(role="assistant"))
+    assert reply.sender == "Openrouter"
+    bot = reply.model_dump()["creator"]
     assert (
-        bot["user_id"] is None and bot["nickname"] == "openrouter" and bot["image"].startswith("https://openrouter.ai/")
+        bot["user_id"] is None and bot["nickname"] == "Openrouter" and bot["image"].startswith("https://openrouter.ai/")
     )
