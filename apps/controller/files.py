@@ -44,6 +44,7 @@ from services.mysql.model.df_engine_generation_uploads import UploadStatuses
 from services.mysql.model.df_engine_generations import GenerationStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.tasks.udin_uploader import udin_uploader
+from services.tasks.video_thumbnail import generate_video_thumbnail
 from error import AuthorizationError, DataNotFoundError, DataValidationError
 from services.dto.asynced.employees import get_employee, assigned_to_task
 from services.files import (
@@ -710,7 +711,11 @@ class FilesController(CoreDependencies):
             )
             await delete_pattern(self.redis, cache_key.generation_files_references_picker_pattern(user_id))
             await invalidate_project_files(self.redis, cache_key, project_task["project_id"])
+            # read before the commit below, which expires the rows
+            video_uids = [row.uid for row in rows if row.type == UploadFileTypes.video]
             await dispatch_search_sync(self.db, uploads=[row.uid for row in rows])
+            for uid in video_uids:  # queued after the commit: the worker reads through its own connection
+                generate_video_thumbnail.delay("upload", uid)  # type: ignore
 
             logging.info(
                 f"[upload-files] user={user_id} task_uid={task_uid} saved={len(uploaded)} rows, cache invalidated"
@@ -857,6 +862,7 @@ class FilesController(CoreDependencies):
                 name=file["name"],
                 path=file["path"],
                 url=file["url"],
+                thumbnail=file.get("thumbnail"),
                 kind=file["type"],
                 icon=file["icon"],
                 color=file["color"],

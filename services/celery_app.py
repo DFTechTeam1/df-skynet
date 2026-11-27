@@ -13,6 +13,7 @@ celery_app = Celery(
         "services.tasks.udin_sweep",
         "services.tasks.generation_reaper",
         "services.tasks.search_sync",
+        "services.tasks.video_thumbnail",
     ],
 )
 
@@ -31,6 +32,7 @@ celery_app.conf.update(
         "df_engine.video_generation": {"queue": "video_generation"},
         "df_engine.udin_uploader": {"queue": "udin_uploads"},
         "df_engine.udin_sweep": {"queue": "udin_uploads"},
+        "df_engine.video_thumbnail": {"queue": "udin_uploads"},
         "df_engine.generation_reaper": {"queue": "udin_uploads"},
         "df_engine.search_upsert": {"queue": "search_sync"},
         "df_engine.search_delete": {"queue": "search_sync"},

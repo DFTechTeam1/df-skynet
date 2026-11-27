@@ -60,7 +60,9 @@ class GenerationResultRepository(BaseRepository):
                     and_(
                         DfEngineGenerations.project_id == project_id,  # type: ignore
                         DfEngineGenerations.status == GenerationStatuses.success,  # type: ignore
-                        DfEngineGenerations.kind.in_([GenerationKinds.image, GenerationKinds.image_edit]),  # type: ignore
+                        DfEngineGenerations.kind.in_(  # type: ignore
+                            [GenerationKinds.image, GenerationKinds.image_edit, GenerationKinds.video]
+                        ),
                         *((DfEngineGenerations.created_by == viewer_id,) if only_viewer else ()),  # type: ignore
                     )
                 ),
@@ -71,6 +73,7 @@ class GenerationResultRepository(BaseRepository):
                     DfEngineGenerationResults.name,  # type: ignore
                     DfEngineGenerationResults.path,  # type: ignore
                     DfEngineGenerationResults.size,  # type: ignore
+                    DfEngineGenerationResults.thumbnail,  # type: ignore
                     DfEngineGenerationResults.created_at,  # type: ignore
                     DfEngineGenerationResults.updated_at,  # type: ignore
                     DfEngineGenerationResults.archieved_at,  # type: ignore

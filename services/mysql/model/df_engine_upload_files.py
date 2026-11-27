@@ -36,6 +36,7 @@ class DfEngineUploadFiles(SQLModel, table=True):
     path: str = Field(sa_column=Column(Text, nullable=False))
     md5: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     size: int = Field(sa_column=Column(BigInteger, nullable=False))
+    thumbnail: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     project_id: int = Field(sa_column=Column(BIGINT(unsigned=True), ForeignKey("projects.id"), nullable=False))
     task_id: Optional[int] = Field(
         default=None,

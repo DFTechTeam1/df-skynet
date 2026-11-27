@@ -58,8 +58,8 @@ def _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.ima
 
 @pytest.mark.asyncio
 async def test_returns_flat_sections_with_uploads_and_generations(authed_client, project_task, user_id, generation_fks):
-    """200 OK; only Image Uploads / Image Generations / Elements sections are returned; a live image upload and an
-    image generation result land in their own section, video uploads are not offered, and the generation file uses
+    """200 OK; image and video sections plus Elements are returned; a live image upload, video upload and image
+    generation result land in their own section, and the generation file uses
     the `GenerationResultRecord` shape without cost/prompt fields."""
     image_upload = _make_upload(project_task, user_id, UploadFileTypes.image)
     video_upload = _make_upload(project_task, user_id, UploadFileTypes.video)
@@ -69,7 +69,13 @@ async def test_returns_flat_sections_with_uploads_and_generations(authed_client,
     resp = await authed_client.call("GET", url, params=params)
     assert resp.status_code == 200
     body = resp.json()
-    assert [s["type"] for s in body["data"]] == ["Image Generations", "Image Uploads", "Elements"]
+    assert [s["type"] for s in body["data"]] == [
+        "Image Generations",
+        "Image Uploads",
+        "Video Generations",
+        "Video Uploads",
+        "Elements",
+    ]
 
     # Note: this project's uploads/generations accumulate across test runs on the
     # real shared staging DB, so section totals aren't exact — only membership is checked.
@@ -77,6 +83,9 @@ async def test_returns_flat_sections_with_uploads_and_generations(authed_client,
     assert image_section["total"] == len(image_section["files"]) >= 1
     assert image_upload.uid in [f["file_uid"] for f in image_section["files"]]
     assert video_upload.uid not in [f["file_uid"] for f in image_section["files"]]
+    video_file = next(f for f in _section(body, "Video Uploads")["files"] if f["file_uid"] == video_upload.uid)
+    assert video_file["thumbnail"] is None
+    assert video_file["action"]["can_use_as_reference"] is True
 
     generation_section = _section(body, "Image Generations")
     assert generation_section["total"] >= 1
@@ -89,7 +98,7 @@ async def test_returns_flat_sections_with_uploads_and_generations(authed_client,
 @pytest.mark.asyncio
 async def test_search_is_scoped_to_the_project_and_served_from_the_index(authed_client, project_task, monkeypatch):
     """200 OK; with `search` the picker reads the search index (not the DB): the requests are scoped to this project and
-    to image kinds, and the hits come back grouped as Image Uploads / Image Generations. Matching itself is the engine's
+    to image and video kinds, and the hits come back grouped as Image Uploads / Image Generations. Matching itself is the engine's
     job (covered in tests/unit/test_search_provider.py), so the engine is stubbed here."""
     seen = []
 
@@ -161,10 +170,10 @@ async def test_favourited_result_exposes_favourited_at(authed_client, project_ta
 
 
 @pytest.mark.asyncio
-async def test_element_generation_lands_in_elements_and_video_is_dropped(
+async def test_element_is_not_listed_and_video_lands_in_video_generations(
     authed_client, project_task, user_id, generation_fks
 ):
-    """200 OK; a video-kind result is not offered anywhere. The refactored picker no longer fills Elements (it is an
+    """200 OK; a video-kind result is listed under Video Generations only. The refactored picker no longer fills Elements (it is an
     empty placeholder), so an element-kind result is not listed under it either."""
     element = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.element)
     video = _make_result(project_task, user_id, generation_fks, kind=GenerationKinds.video)
@@ -174,7 +183,9 @@ async def test_element_generation_lands_in_elements_and_video_is_dropped(
     body = resp.json()
     assert _section(body, "Elements")["files"] == []
     all_uids = [f.get("file_uid") or f.get("uid") for s in body["data"] for f in s["files"]]
-    assert video.uid not in all_uids
+    assert element.uid not in all_uids
+    assert video.uid in [f["file_uid"] for f in _section(body, "Video Generations")["files"]]
+    assert video.uid not in [f["file_uid"] for f in _section(body, "Image Generations")["files"]]
 
 
 @pytest.mark.asyncio

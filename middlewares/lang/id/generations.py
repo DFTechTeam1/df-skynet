@@ -37,6 +37,8 @@ class GenerationsMessage:
             "parameter_required": "Pengaturan '{parameter}' wajib diisi untuk model ini.",
             "input_references_limit": "Model ini menerima maksimal {max} gambar, termasuk gambar yang diedit, tetapi {total} gambar dipilih.",
             "reference_check_failed": "Beberapa referensi tidak dapat digunakan. Silakan periksa lalu coba lagi.",
+            "video_references_not_allowed": "Video tidak dapat digunakan sebagai referensi saat membuat atau mengedit gambar. Hapus video tersebut atau pilih gambar.",
+            "reference_video_not_allowed": "File ini adalah video. Silakan pilih gambar.",
             "reference_upload_not_image": "File unggahan harus berupa gambar.",
             "reference_generated_not_image": "File hasil generate harus berupa gambar.",
             "reference_upload_not_found": "File unggahan tidak ditemukan.",

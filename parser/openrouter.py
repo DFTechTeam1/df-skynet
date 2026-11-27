@@ -1,5 +1,5 @@
 import random
-from typing import Any, Literal, Optional
+from typing import Any, Collection, Literal, Optional
 from log import logging
 
 
@@ -10,12 +10,14 @@ def parse_openrouter_payload(
     references: list[str],
     type: Literal["image", "video"],
     frame_images: Optional[list[dict[str, Any]]] = None,
+    video_urls: Collection[str] = (),
 ) -> dict[str, Any]:
     """Builds the OpenRouter generation request payload, applying each type's own
     OpenRouter-specific transforms before sending (image: seed/output_compression;
     video: frame_images reshaped into OpenRouter's {frame_type, type, image_url} form).
     `frame_images` is the already-resolved [{frame_type, image}] list (see
-    ImageVideoGenerationPayload.frame_images) — not read from `parameter`."""
+    ImageVideoGenerationPayload.frame_images) — not read from `parameter`.
+    The `references` listed in `video_urls` are sent as `video_url` entries, the rest as `image_url`."""
     parameter = dict(parameter)
 
     if type == "image":
@@ -32,7 +34,11 @@ def parse_openrouter_payload(
             for frame in frame_images
         ]
     if references:
-        payload["input_references"] = [{"type": "image_url", "image_url": {"url": url}} for url in references]
+        payload["input_references"] = [
+            {"type": kind, kind: {"url": url}}
+            for url in references
+            for kind in ("video_url" if url in video_urls else "image_url",)
+        ]
 
     logging.info(
         f"parsed openrouter payload type={type} model={model_id} references={len(references)} "

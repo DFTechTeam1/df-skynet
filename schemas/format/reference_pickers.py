@@ -2,13 +2,14 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, Field, model_validator
 from schemas.format.base import TimezoneMeta, CreatorUpdaterMeta, GenerationFileAction, UploadedFileAction
 from schemas.format.files import ICON_COLOR_MAP
-from utils.formatter import format_size, format_udin_url
+from utils.formatter import format_size, format_thumbnail_url, format_udin_url
 
 
 class GeneratedFile(TimezoneMeta, CreatorUpdaterMeta):
     size: Optional[str] = Field(default=None)
     path: Optional[str] = Field(default=None)
-    kind: Literal["image", "image_edit"] = Field(...)
+    thumbnail: Optional[str] = Field(default=None)
+    kind: Literal["image", "image_edit", "video"] = Field(...)
     icon: str = Field(...)
     color: str = Field(...)
     id: Optional[int] = Field(default=None)
@@ -35,6 +36,7 @@ class GeneratedFile(TimezoneMeta, CreatorUpdaterMeta):
                 "favourited_at": favourites[0]["favourited_at"] if favourites else None,
                 "size": format_size(result["size"]),
                 "path": format_udin_url(result["path"]),
+                "thumbnail": format_thumbnail_url(result.get("thumbnail")),
                 "kind": generation["kind"],
                 "file_uid": result["uid"],
                 "generation_uid": generation["uid"],
@@ -52,6 +54,7 @@ class UploadedFile(TimezoneMeta, CreatorUpdaterMeta):
     size: Optional[str] = Field(default=None)
     path: str = Field(...)
     url: str = Field(...)
+    thumbnail: Optional[str] = Field(default=None)
     kind: str = Field(...)
     icon: str = Field(...)
     color: str = Field(...)
@@ -78,6 +81,7 @@ class UploadedFile(TimezoneMeta, CreatorUpdaterMeta):
                 "type": "uploaded",
                 "size": format_size(result["size"]),
                 "url": format_udin_url(result["path"]),  # `path` stays the storage path
+                "thumbnail": format_thumbnail_url(result.get("thumbnail")),
                 "file_uid": result["uid"],
                 "task_uid": task.get("uid"),
                 "song_uid": song.get("uid"),
@@ -88,7 +92,7 @@ class UploadedFile(TimezoneMeta, CreatorUpdaterMeta):
 
 
 class ReferencePicker(BaseModel):
-    type: Literal["Image Generations", "Elements", "Image Uploads"] = Field(...)
+    type: Literal["Image Generations", "Image Uploads", "Video Generations", "Video Uploads", "Elements"] = Field(...)
     total: int = Field(default=0)
     files: Union[list[GeneratedFile], list[UploadedFile]] = Field(...)
 

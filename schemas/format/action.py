@@ -65,12 +65,11 @@ class GeneratedFileAction(BaseModel):
         allowed = is_owner or can_override
         archived = record.get("archieved_at") is not None
         favorited = bool(record.get("favourites")) or record.get("favourited_at") is not None  # the viewer's own
-        is_video = "/videos/" in record["path"]
+        is_video = "/videos/" in record["path"]  # usable in `references`, never as an edit source
         return cls(
             can_set_archieve=is_owner and not archived and not record["is_main"],
             can_set_main=allowed and not record["is_main"],
             can_set_favorite=not favorited,
-            can_use_as_reference=not is_video,
             can_use_as_edit=allowed and not is_video,
             can_rename=allowed,
             can_choose_to_move=allowed and not archived,

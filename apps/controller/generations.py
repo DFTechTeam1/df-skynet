@@ -100,6 +100,16 @@ from validations.model import (
 cache_key = CacheKeys()
 IMAGE_GUARDRAIL_TYPES = ("prompt_injection", "nfsw", "image_generation")
 IMAGE_KINDS = (GenerationKinds.image, GenerationKinds.image_edit)  # an upload's "image" type matches too
+# only a video generation's `references` also take videos (never its frames); an upload's "video" type matches too
+VIDEO_REFERENCE_KINDS = (*IMAGE_KINDS, GenerationKinds.video)
+
+
+def _references_error(errors: dict[str, list[str]]) -> DataValidationError:
+    """Says outright that videos are the problem when nothing else is wrong; mixed problems stay generic."""
+    only_videos = all(keys == ["reference_video_not_allowed"] for keys in errors.values())
+    return DataValidationError(
+        message="video_references_not_allowed" if only_videos else "reference_check_failed", error=errors
+    )
 
 
 class GenerationsController(CoreDependencies):
@@ -107,8 +117,9 @@ class GenerationsController(CoreDependencies):
         "/references-picker/{project_uid}",
         summary="Get reference pickers",
         description=(
-            "Shows your uploaded and generated files for one project, sorted into image uploads, image generations, "
-            "and elements, so you can pick one to reuse. You can search by file name."
+            "Shows your uploaded and generated files for one project, sorted into image generations, image uploads, "
+            "video generations, video uploads and elements, so you can pick one to reuse. Videos can only be used "
+            "in the `references` of a video generation. You can search by file name."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Generations"],
@@ -138,14 +149,14 @@ class GenerationsController(CoreDependencies):
                 uploaded_docs, generated_docs = await search_project_files(
                     str(project_uid),
                     search,
-                    ("image", "image_edit"),
+                    ("image", "image_edit", "video"),
                     user_id,
                     is_overrider,
                     my_task,
                 )
                 await overlay_favourites(ctx, generated_docs, user_id)
                 generated_files = [GeneratedFile(**doc) for doc in generated_docs]
-                uploaded_files = [UploadedFile(**doc) for doc in uploaded_docs if doc["kind"] == "image"]
+                uploaded_files = [UploadedFile(**doc) for doc in uploaded_docs if doc["kind"] in ("image", "video")]
             else:
                 generations = await self.generation_result_repo.get_picker_files(project_id, user_id, my_task)
                 uploads = await self.uploaded_file_repo.get_picker_files(project_id, user_id, my_task)
@@ -153,8 +164,10 @@ class GenerationsController(CoreDependencies):
                 uploaded_files = [UploadedFile.from_result(file, user_id, is_overrider) for file in uploads]
 
             response.data = [
-                ReferencePicker(type="Image Generations", files=generated_files),
-                ReferencePicker(type="Image Uploads", files=uploaded_files),
+                ReferencePicker(type="Image Generations", files=[f for f in generated_files if f.kind != "video"]),
+                ReferencePicker(type="Image Uploads", files=[f for f in uploaded_files if f.kind != "video"]),
+                ReferencePicker(type="Video Generations", files=[f for f in generated_files if f.kind == "video"]),
+                ReferencePicker(type="Video Uploads", files=[f for f in uploaded_files if f.kind == "video"]),
                 ReferencePicker(type="Elements", files=[]),
             ]
             logging.info(
@@ -578,10 +591,12 @@ class GenerationsController(CoreDependencies):
                 row = reference_rows[ref.type].get(str(ref.file_uid))
                 if row is None:
                     reference_errors[f"references.{ref.position}"] = [f"reference_{ref.type}_not_found"]
+                elif row["kind"] == GenerationKinds.video:
+                    reference_errors[f"references.{ref.position}"] = ["reference_video_not_allowed"]
                 elif row["kind"] not in IMAGE_KINDS:
                     reference_errors[f"references.{ref.position}"] = [f"reference_{ref.type}_not_image"]
             if reference_errors:
-                raise DataValidationError(message="reference_check_failed", error=reference_errors)
+                raise _references_error(reference_errors)
 
             logging.info(f"{log_prefix} parameters and references valid input_images={total_references}")
 
@@ -1304,7 +1319,8 @@ class GenerationsController(CoreDependencies):
                     raise_if_null=False,
                 )
 
-            # Every referenced file must exist and be an image. Report all bad ones by list index.
+            # Every referenced file must exist and be an image; a video generation's references may also be videos.
+            # Report all bad ones by list index.
             reference_rows = {
                 "upload": {item["uid"]: item for item in reference_uploads},
                 "generated": {item["uid"]: item for item in reference_results},
@@ -1316,10 +1332,17 @@ class GenerationsController(CoreDependencies):
                 row = reference_rows[ref.type].get(str(ref.file_uid))
                 if row is None:
                     reference_errors[error_key] = [f"reference_{ref.type}_not_found"]
-                elif row["kind"] not in IMAGE_KINDS:
-                    reference_errors[error_key] = [f"reference_{ref.type}_not_image"]
+                elif row["kind"] not in (
+                    VIDEO_REFERENCE_KINDS
+                    if schema.type == "video" and error_key.startswith("references.")
+                    else IMAGE_KINDS
+                ):
+                    video_in_image = schema.type == "image" and row["kind"] == GenerationKinds.video
+                    reference_errors[error_key] = [
+                        "reference_video_not_allowed" if video_in_image else f"reference_{ref.type}_not_image"
+                    ]
             if reference_errors:
-                raise DataValidationError(message="reference_check_failed", error=reference_errors)
+                raise _references_error(reference_errors)
 
             logging.info(f"{log_prefix} parameters, references and frames valid")
 
@@ -1595,11 +1618,15 @@ class GenerationsController(CoreDependencies):
             # Build the URLs the model reads. It has always received DiVA references first, then uploads,
             # then generations.
             image_urls = []
+            video_urls: set[str] = set()
             for ref in sorted(schema.references, key=lambda ref: ("diva", "upload", "generated").index(ref.type)):
                 if ref.type == "diva":
                     image_urls.append(str(ref.diva_url))
                 else:
-                    image_urls.append(format_udin_url(reference_rows[ref.type][str(ref.file_uid)]["path"]))
+                    row = reference_rows[ref.type][str(ref.file_uid)]
+                    image_urls.append(format_udin_url(row["path"]))
+                    if row["kind"] == GenerationKinds.video:
+                        video_urls.add(image_urls[-1])
 
             frame_images = []
             for frame in schema.frame_images:
@@ -1610,7 +1637,13 @@ class GenerationsController(CoreDependencies):
                 frame_images.append({"frame_type": frame.frame_type, "image": frame_url})
 
             payload = parse_openrouter_payload(
-                generation_model["model_id"], full_prompt, schema.parameter, image_urls, schema.type, frame_images
+                generation_model["model_id"],
+                full_prompt,
+                schema.parameter,
+                image_urls,
+                schema.type,
+                frame_images,
+                video_urls=video_urls,
             )
 
             # Draw the color image only now that the request is accepted, and add it as the other frame

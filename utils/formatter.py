@@ -2,12 +2,17 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, Any
 from urllib.parse import quote
-from apps.secret import UDIN_BASE_URL
+from apps.secret import BASE_URL, UDIN_BASE_URL
 
 
 def format_udin_url(path: str) -> str:
     """Build the udin-streamed URL for a stored path, percent-encoding spaces etc. (keeps `/` unescaped)."""
     return f"{UDIN_BASE_URL}/{quote(path, safe='/')}"
+
+
+def format_thumbnail_url(filename: Optional[str]) -> Optional[str]:
+    """Public url of a locally stored video thumbnail (the `thumbnail` column holds only its filename)."""
+    return f"{BASE_URL.rstrip('/')}/storages/thumbnail/{filename}" if filename else None
 
 
 def format_credit_amount(value: float) -> int | float:

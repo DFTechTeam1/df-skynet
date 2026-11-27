@@ -88,6 +88,7 @@ class GenerationReference(IconKind, GeneratedUrl, HumanizeFilesize, HumanizeTime
     type: Literal["generated", "uploaded"] = "generated"
     id: Optional[int] = None  # df_engine_generation_results.id, or df_engine_upload_files.id when type == "uploaded"
     file_uid: Optional[str] = None
+    thumbnail: Optional[str] = None
     name: Optional[str] = None
     version: Optional[int] = None
     task: Optional[str] = None
@@ -104,6 +105,7 @@ class GenerationVariant(IconKind, GeneratedUrl, HumanizeFilesize, HumanizeTimezo
 
     id: Optional[int] = None  # df_engine_generation_results.id
     file_uid: Optional[str] = None
+    thumbnail: Optional[str] = None
     generation_uid: Optional[str] = None
     parent_id: Optional[int] = None
     name: Optional[str] = None
@@ -135,6 +137,7 @@ class UserGeneratedFile(GenerationVariant):
 class UserUploadedFile(IconKind, FilesPathUrl, HumanizeFilesize, HumanizeTimezone):
     id: Optional[int] = None  # df_engine_upload_files.id
     file_uid: str
+    thumbnail: Optional[str] = None
     type: str = "uploaded"
     name: str
     task_uid: Optional[str] = None
@@ -158,6 +161,7 @@ class TreeFileRefactored(BaseModel):
     name: str
     path: str
     url: str
+    thumbnail: Optional[str] = None
     type: Literal["generated", "upload"] = "generated"
     kind: Optional[str] = None
     icon: Optional[str] = None

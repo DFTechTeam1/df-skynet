@@ -5,7 +5,7 @@ from schemas.format.files import UserGeneratedFile, UserUploadedFile
 from services.mysql.model import DfEngineGenerationResults, DfEngineGenerations, DfEngineUploadFiles, Employees, Users
 from services.mysql.model.df_engine_generations import GenerationKinds, GenerationStatuses
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
-from utils.formatter import format_idr, format_usd, format_user_employees
+from utils.formatter import format_idr, format_thumbnail_url, format_usd, format_user_employees
 from utils.serializer import serialize
 
 MAIN_GENERATIONS = "main_generations"
@@ -83,6 +83,7 @@ def build_generation_doc(result: DfEngineGenerationResults) -> dict[str, Any]:
         id=row["id"],
         kind=generation["kind"],
         file_uid=row["uid"],
+        thumbnail=format_thumbnail_url(row.get("thumbnail")),
         generation_uid=generation["uid"],
         parent_id=row["parent_id"],
         name=row["name"],
@@ -117,6 +118,7 @@ def build_upload_doc(file: DfEngineUploadFiles) -> dict[str, Any]:
     doc = UserUploadedFile(
         id=row["id"],
         file_uid=row["uid"],
+        thumbnail=format_thumbnail_url(row.get("thumbnail")),
         name=row["name"],
         path=row["path"],
         task_uid=task.get("uid"),

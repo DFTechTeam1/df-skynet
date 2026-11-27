@@ -8,6 +8,7 @@ from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from log import logging
 from services.api_caller import APICaller
 from services.celery_app import celery_app
+from services import video_thumbnail
 from services.frame_reference_color import cleanup_generation
 from services.slack_notifier import notify_udin_upload_failed
 from services.dto import SyncedConnectionContext
@@ -37,6 +38,7 @@ from services.redis import (
 from error import DataNotFoundError
 from utils import local_time
 from services.tasks.search_sync import search_upsert
+from services.tasks.video_thumbnail import generate_video_thumbnail
 from services.tasks.base import (
     GenerationStageError,
     GenerationTask,
@@ -275,6 +277,18 @@ def udin_uploader(
         _bump_sweep_attempts(generation_id, final=True, detail="no stored file for generation")
         raise GenerationStageError("no stored file returned for generation", source="udin", final=True)
 
+    # made before the generation turns `success`, so the client gets the video and its thumbnail together
+    thumbnails: dict[str, str] = {}
+    missing_thumbnails: list[str] = []
+    if generation.kind == GenerationKinds.video:
+        for result in saved:
+            if result.thumbnail:
+                continue
+            if filename := video_thumbnail.create(result.path, result.uid):
+                thumbnails[result.uid] = filename
+            else:
+                missing_thumbnails.append(result.uid)
+
     for attempt in range(1, LOCAL_COMMIT_ATTEMPTS + 1):
         try:
             with get_sync_db() as db:
@@ -305,6 +319,9 @@ def udin_uploader(
                     .order_by(DfEngineGenerationResults.version)  # type: ignore
                     .all()
                 )
+                for result in results:
+                    if result.uid in thumbnails:
+                        result.thumbnail = thumbnails[result.uid]
                 result_ids = [result.id for result in results]
                 result_uids = [result.uid for result in results]
 
@@ -339,6 +356,8 @@ def udin_uploader(
 
             for result_uid in result_uids:
                 search_upsert.delay("generation", result_uid)  # type: ignore
+            for result_uid in missing_thumbnails:
+                generate_video_thumbnail.delay("generation", result_uid)  # type: ignore  # retried on its own
 
             if task_uid is not None:
                 broadcast_generation_status(project_uid, task_uid, user_id, generation_uid, "success")
