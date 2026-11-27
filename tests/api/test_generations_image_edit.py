@@ -147,6 +147,7 @@ async def test_response_format_matches_the_plain_generate_endpoint(
         "name",
         "is_main",
         "path",
+        "thumbnail",
         "size",
         "created_at",
         "favourited_at",

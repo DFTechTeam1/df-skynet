@@ -10,6 +10,7 @@ from error import BaseError, DataNotFoundError, DataValidationError
 from log import logging
 from apps.secret import UDIN_API_KEY, UDIN_BASE_URL
 from config.variables import OVERRIDE_FILE_ROLES
+from services import video_thumbnail
 from services.api_caller import APICaller
 from services.dto import ConnectionContext
 from services.dto.asynced.admin_settings import get_admin_settings, get_folder_depth_limit
@@ -108,6 +109,7 @@ def format_file_tree(
                 name=file["name"],
                 path=file["path"],
                 url=file["url"],
+                thumbnail=file.get("thumbnail"),
                 type="upload",
                 kind=file["type"],
                 icon=file["icon"],
@@ -132,6 +134,7 @@ def format_file_tree(
                 name=file["name"],
                 path=path,
                 url=url,
+                thumbnail=file.get("thumbnail"),
                 type="generated",
                 kind=file.get("kind") or ("video" if "/videos/" in path else "image"),
                 icon=file["icon"],
@@ -206,6 +209,7 @@ def format_file_tree_refactored(
                 name=file["name"],
                 path=file["path"],
                 url=file["url"],
+                thumbnail=file.get("thumbnail"),
                 type="upload",
                 kind=file["kind"],
                 icon=file["icon"],
@@ -235,6 +239,7 @@ def format_file_tree_refactored(
                 name=file["name"],
                 path=path,
                 url=url,
+                thumbnail=file.get("thumbnail"),
                 type="generated",
                 kind=file["kind"],
                 icon=file["icon"],
@@ -394,7 +399,9 @@ async def call_udin_folder(
 
 async def delete_upload_file_row(db: AsyncSession, row: DfEngineUploadFiles) -> None:
     """Delete an upload file row together with the chat attachments that point at it (their chat links go with them
-    through the DB cascade): the physical file is deleted on Udin too, so nothing is left to show."""
+    through the DB cascade): the physical file is deleted on Udin too, so nothing is left to show. Its local
+    thumbnail goes with it."""
+    video_thumbnail.remove(row.thumbnail)
     await db.execute(
         delete(DfEngineAttachments).where(
             DfEngineAttachments.sourceable_type == DfEngineUploadFiles.__name__,  # type: ignore

@@ -31,6 +31,7 @@ class DfEngineGenerationResults(SQLModel, table=True):
     name: str = Field(sa_column=Column(String(255), nullable=False))
     path: str = Field(sa_column=Column(Text, nullable=False))
     size: int = Field(sa_column=Column(BigInteger, nullable=False))
+    thumbnail: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     is_main: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
     created_by: Optional[int] = Field(

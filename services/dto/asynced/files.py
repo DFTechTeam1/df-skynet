@@ -10,7 +10,7 @@ from services.dto.asynced.admin_settings import get_folder_depth_limit
 from services.mysql import query
 from services.mysql.model import DfEngineUploadFiles, Employees, ProjectSongLists, ProjectTasks, Users
 from services.mysql.model.df_engine_upload_files import UPLOAD_TYPE_ICON_COLOR
-from utils.formatter import format_datetime, format_size, format_udin_url, format_user_employees
+from utils.formatter import format_datetime, format_size, format_thumbnail_url, format_udin_url, format_user_employees
 from services.dto.format_response import TreeFile
 from schemas.format.action import FolderAction, UploadedFileAction
 from schemas.format.files import UserUploadedFile
@@ -116,6 +116,7 @@ async def get_user_uploaded_files_refactored(
         UserUploadedFile(
             id=record["id"],
             file_uid=record["uid"],
+            thumbnail=format_thumbnail_url(record.get("thumbnail")),
             name=record["name"],
             path=record["path"],
             task_uid=(record.get("task") or {}).get("uid"),
@@ -185,6 +186,7 @@ async def get_user_uploaded_files(
             "color": UPLOAD_TYPE_ICON_COLOR.get(record["type"], {}).get("color"),
             "path": record["path"],
             "url": format_udin_url(record["path"]),
+            "thumbnail": format_thumbnail_url(record.get("thumbnail")),
             "size": format_size(record["size"]),
             "created_at": format_datetime(record["created_at"]),
             "creator": format_user_employees(record["created_by_user"]),
@@ -207,6 +209,7 @@ def _format_upload_file(record: dict[str, Any]) -> dict[str, Any]:
         "color": UPLOAD_TYPE_ICON_COLOR.get(record["type"], {}).get("color"),
         "path": record["path"],
         "url": format_udin_url(record["path"]),
+        "thumbnail": format_thumbnail_url(record.get("thumbnail")),
         "size": format_size(record["size"]),
         "created_at": format_datetime(record["created_at"]),
         "creator": format_user_employees(record["created_by_user"]),

@@ -25,7 +25,7 @@ from error import DataNotFoundError, DataValidationError
 from services.mysql import query
 from config.variables import USD_TO_IDR_RATE
 from schemas.format.action import FailedUploadAction, GeneratedFileAction
-from utils.formatter import format_datetime, format_idr, format_usd, format_user_employees
+from utils.formatter import format_datetime, format_idr, format_thumbnail_url, format_usd, format_user_employees
 from utils.serializer import serialize
 from services.dto import ConnectionContext
 from schemas.format.files import GenerationReference, GenerationVariant, UserGeneratedFile
@@ -60,6 +60,7 @@ def _build_variant(
         id=variant["id"],
         kind=generation.get("kind") or fallback_kind,
         file_uid=variant["uid"],
+        thumbnail=format_thumbnail_url(variant.get("thumbnail")),
         generation_uid=generation.get("uid"),
         parent_id=variant["parent_id"],
         name=variant["name"],
@@ -376,6 +377,7 @@ async def get_generation_main_refactored(
                     id=source["id"],
                     kind=source_generation["kind"],
                     file_uid=source["uid"],
+                    thumbnail=format_thumbnail_url(source.get("thumbnail")),
                     task=(source_generation.get("task") or source_generation.get("song") or {}).get("name"),
                     name=source["name"],
                     path=source["path"],
@@ -397,6 +399,7 @@ async def get_generation_main_refactored(
                     kind=file["type"],
                     type="uploaded",
                     file_uid=file["uid"],
+                    thumbnail=format_thumbnail_url(file.get("thumbnail")),
                     task=(file.get("task") or file.get("song") or {}).get("name"),
                     name=file["name"],
                     path=file["path"],
@@ -417,6 +420,7 @@ async def get_generation_main_refactored(
                     id=result.get("id"),
                     kind=record["kind"],
                     file_uid=result.get("uid"),
+                    thumbnail=format_thumbnail_url(result.get("thumbnail")),
                     generation_uid=record["uid"],
                     parent_id=result.get("parent_id"),
                     name=result.get("name"),
@@ -779,6 +783,7 @@ async def get_archieved_files(
                 id=result["id"],
                 kind=record["kind"],
                 file_uid=result["uid"],
+                thumbnail=format_thumbnail_url(result.get("thumbnail")),
                 generation_uid=record["uid"],
                 parent_id=result.get("parent_id"),
                 name=result["name"],
@@ -1017,6 +1022,7 @@ async def get_favourited_files(
             id=row["id"],
             kind=generation["kind"],
             file_uid=row["uid"],
+            thumbnail=format_thumbnail_url(row.get("thumbnail")),
             generation_uid=generation["uid"],
             parent_id=row["parent_id"],
             name=row["name"],

@@ -1,8 +1,3 @@
-"""Solid-color frame reference images for video generations (`default_frame_reference_color`).
-
-Files are shared by (color, aspect_ratio): created once, reused by later requests, and deleted by the
-generation worker once no active generation still needs them. `cronjob/frame_reference_cleanup.py` is the backup."""
-
 import os
 from pathlib import Path
 from urllib.parse import quote

@@ -37,6 +37,8 @@ class GenerationsMessage:
             "parameter_required": "The '{parameter}' setting is required for this model. Please fill it in.",
             "input_references_limit": "This model accepts up to {max} images, including the one being edited, but {total} were selected.",
             "reference_check_failed": "Some references can't be used. Please check them and try again.",
+            "video_references_not_allowed": "Videos can't be used as references when creating or editing images. Remove the videos or choose images instead.",
+            "reference_video_not_allowed": "This is a video. Please choose an image.",
             "reference_upload_not_image": "Uploaded file must be an image.",
             "reference_generated_not_image": "Generated file must be an image.",
             "reference_upload_not_found": "Uploaded file not found.",

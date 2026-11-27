@@ -21,6 +21,7 @@ from error.register import register_exception_handlers
 from middlewares.language import LanguageMiddleware
 from apps.secret import CORS_ALLOWED_ORIGINS
 from services.frame_reference_color import FRAME_COLOR_DIR
+from services.video_thumbnail import THUMBNAIL_DIR
 
 app = FastAPI(title="DF-Skynet", version="1.0", docs_url=None, redoc_url=None)
 
@@ -35,8 +36,11 @@ app.add_middleware(
 )
 app.add_middleware(LanguageMiddleware)
 os.makedirs(FRAME_COLOR_DIR, exist_ok=True)
+os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 app.mount("/api/storages/frame_reference_colors", StaticFiles(directory=FRAME_COLOR_DIR), name="frame_reference_colors")
+app.mount("/api/storages/thumbnail", StaticFiles(directory=THUMBNAIL_DIR), name="thumbnail")
+
 register_exception_handlers(app)
 register_controllers_to_app(app, CoreDependencies)
 register_controllers_to_app(app, PlainDependencies)

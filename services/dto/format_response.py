@@ -3,7 +3,15 @@ from pydantic import BaseModel
 from services.mysql.model.df_engine_generations import GENERATION_KIND_ICON_COLOR
 from services.mysql.model.df_engine_upload_files import UPLOAD_TYPE_ICON_COLOR, UploadFileTypes
 from config.variables import USD_TO_IDR_RATE
-from utils.formatter import format_size, format_datetime, format_udin_url, format_user_employees, format_idr, format_usd
+from utils.formatter import (
+    format_size,
+    format_datetime,
+    format_udin_url,
+    format_user_employees,
+    format_idr,
+    format_usd,
+    format_thumbnail_url,
+)
 
 
 def _is_image(path: str) -> bool:
@@ -36,7 +44,7 @@ class GenerationAction(BaseModel):
             can_set_favorite=favourited_at_of(result) is None,
             can_download=True,
             can_fetch_detail=True,
-            can_use_as_reference=_is_image(result["path"]),
+            can_use_as_reference=True,
             can_use_as_edit=_is_image(result["path"]) and is_owner,
             can_rename=is_owner,
             can_choose_to_move=is_owner and result["archieved_at"] is None,
@@ -52,17 +60,13 @@ def grant_generation_override(record: dict[str, Any]) -> None:
         return
     action["can_rename"] = True
     action["can_choose_to_move"] = record.get("archieved_at") is None
-    action["can_use_as_edit"] = action["can_use_as_reference"]
+    action["can_use_as_edit"] = _is_image(record.get("path") or "")  # videos are references only
     action["can_set_main"] = record.get("is_main") is False
 
 
 class ReferenceAction(BaseModel):
     can_fetch_detail: bool = True
-    can_use_as_reference: bool
-
-    @classmethod
-    def from_result(cls, path: str) -> "ReferenceAction":
-        return cls(can_use_as_reference=_is_image(path))
+    can_use_as_reference: bool = True
 
 
 def prompt_fields(generation: dict[str, Any]) -> dict[str, Optional[str]]:
@@ -85,6 +89,7 @@ class GenerationResultRecord(BaseModel):
     type: str = "generated"
     is_main: Optional[bool] = None
     path: Optional[str] = None
+    thumbnail: Optional[str] = None
     size: Optional[str] = None
     version: Optional[int] = None
     created_at: Optional[str] = None
@@ -121,6 +126,7 @@ class GenerationResultRecord(BaseModel):
             name=result["name"],
             is_main=result["is_main"],
             path=format_udin_url(result["path"]),
+            thumbnail=format_thumbnail_url(result.get("thumbnail")),
             size=format_size(result["size"]),
             version=result["version"],
             created_at=format_datetime(result["created_at"]),
@@ -181,6 +187,7 @@ class GenerationReferenceRecord(BaseModel):
     created_at: Optional[str]
     name: str
     path: str
+    thumbnail: Optional[str] = None
     size: str
     version: int
     kind: Optional[str]
@@ -201,6 +208,7 @@ class GenerationReferenceRecord(BaseModel):
             created_at=format_datetime(result["created_at"]),
             name=result["name"],
             path=format_udin_url(result["path"]),
+            thumbnail=format_thumbnail_url(result.get("thumbnail")),
             size=format_size(result["size"]),
             version=result["version"],
             kind=kind,
@@ -209,7 +217,7 @@ class GenerationReferenceRecord(BaseModel):
             icon=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("icon"),  # type: ignore
             color=GENERATION_KIND_ICON_COLOR.get(kind, {}).get("color"),  # type: ignore
             creator=format_user_employees(result.get("created_by_user")),
-            action=ReferenceAction.from_result(result["path"]),
+            action=ReferenceAction(),
         )
 
 
@@ -219,6 +227,7 @@ class UploadedReferenceRecord(BaseModel):
     created_at: Optional[str]
     name: str
     path: str
+    thumbnail: Optional[str] = None
     size: str
     kind: Optional[str]
     icon: Optional[str]
@@ -233,12 +242,13 @@ class UploadedReferenceRecord(BaseModel):
             created_at=format_datetime(file["created_at"]),
             name=file["name"],
             path=format_udin_url(file["path"]),
+            thumbnail=format_thumbnail_url(file.get("thumbnail")),
             size=format_size(file["size"]),
             kind=file["type"],
             icon=UPLOAD_TYPE_ICON_COLOR.get(file["type"], {}).get("icon"),
             color=UPLOAD_TYPE_ICON_COLOR.get(file["type"], {}).get("color"),
             uploader=format_user_employees(file.get("created_by_user")),
-            action=ReferenceAction.from_result(file["path"]),
+            action=ReferenceAction(),
         )
 
 
@@ -250,6 +260,7 @@ class UploadedFileRecord(BaseModel):
     name: str
     kind: Optional[str]
     path: str
+    thumbnail: Optional[str] = None
     size: str
     icon: Optional[str]
     color: Optional[str]
@@ -266,6 +277,7 @@ class UploadedFileRecord(BaseModel):
             name=result["name"],
             kind=result["type"],
             path=format_udin_url(result["path"]),
+            thumbnail=format_thumbnail_url(result.get("thumbnail")),
             size=format_size(result["size"]),
             icon=UPLOAD_TYPE_ICON_COLOR.get(result["type"], {}).get("icon"),
             color=UPLOAD_TYPE_ICON_COLOR.get(result["type"], {}).get("color"),
@@ -390,6 +402,7 @@ class TreeFile(BaseModel):
     name: str
     path: str
     url: str
+    thumbnail: Optional[str] = None
     type: Literal["generated", "upload"] = "generated"
     kind: Optional[str] = None
     icon: Optional[str] = None

@@ -21,6 +21,7 @@ dependencies = [
     "html2text>=2025.4.15",
     "httpx>=0.28.1",
     "markdown>=3.10.3",
+    "opencv-python-headless>=5.1.0.95",
     "pillow>=13.0.0",
     "pre-commit>=4.6.2",
     "pusher>=3.3.4",

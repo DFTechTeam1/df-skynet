@@ -46,7 +46,7 @@ class UploadedFileRepository(BaseRepository):
             columns=(DfEngineUploadFiles,),
             filters=(
                 DfEngineUploadFiles.project_id == project_id,  # type: ignore
-                DfEngineUploadFiles.type == UploadFileTypes.image,  # type: ignore
+                DfEngineUploadFiles.type.in_([UploadFileTypes.image, UploadFileTypes.video]),  # type: ignore
                 *((DfEngineUploadFiles.created_by == viewer_id,) if only_viewer else ()),  # type: ignore
             ),
             options=(
@@ -56,6 +56,7 @@ class UploadedFileRepository(BaseRepository):
                     DfEngineUploadFiles.type,  # type: ignore
                     DfEngineUploadFiles.path,  # type: ignore
                     DfEngineUploadFiles.size,  # type: ignore
+                    DfEngineUploadFiles.thumbnail,  # type: ignore
                     DfEngineUploadFiles.created_at,  # type: ignore
                     DfEngineUploadFiles.updated_at,  # type: ignore
                     DfEngineUploadFiles.created_by,  # type: ignore

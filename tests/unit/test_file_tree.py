@@ -201,6 +201,9 @@ class TestOverride:
         pending = {"file_uid": None, "action": dict(action)}
         grant_generation_override(pending)
         assert pending["action"]["can_rename"] is False
+        video = {"file_uid": "u", "archieved_at": None, "path": "x/videos/a.mp4", "action": dict(action)}
+        grant_generation_override(video)
+        assert video["action"]["can_use_as_edit"] is False
 
 
 class TestFindFolder:
