@@ -16,7 +16,7 @@ class DfEngineChatAssistants(SQLModel, table=True):
 
     id: int = Field(default=None, sa_column=Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True))
     uid: str = Field(default_factory=lambda: str(uuid4()), sa_column=Column(CHAR(36), nullable=False, unique=True))
-    created_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
+    sent_at: datetime = Field(default_factory=local_time, sa_column=Column(DateTime, nullable=False))
     session_id: int = Field(
         sa_column=Column(BIGINT(unsigned=True), ForeignKey("df_engine_chat_sessions.id"), nullable=False)
     )
@@ -37,11 +37,14 @@ class DfEngineChatAssistants(SQLModel, table=True):
         default=False, sa_column=Column(Boolean, nullable=False, server_default=false())
     )
     will_generate_prompt: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
-    sender: str = Field(sa_column=Column(String(255), nullable=False))  # <username> or openrouter
+    created_by: Optional[int] = Field(  # the user who wrote a `user` row; NULL for assistant/system rows
+        default=None, sa_column=Column(BIGINT(unsigned=True), ForeignKey("users.id"), nullable=True)
+    )
     apikeyable_id: Optional[int] = Field(default=None, sa_column=Column(BIGINT(unsigned=True), nullable=True))
     apikeyable_type: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     message_id: Optional[str] = Field(default=None, sa_column=Column(CHAR(36), nullable=True, unique=True))
 
+    created_by_user: Optional["Users"] = Relationship()  # type: ignore
     chat_references: list["DfEngineChatReferences"] = Relationship()  # type: ignore
     model_option: Optional["DfEngineModelOptions"] = Relationship(back_populates="chat_assistants")  # type: ignore
     api_key: Optional["DfEngineApiKeys"] = Relationship(

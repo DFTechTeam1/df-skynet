@@ -1,4 +1,5 @@
 from sqlalchemy.orm import load_only
+from httpx import HTTPError
 import sys
 import json
 import asyncio
@@ -22,6 +23,12 @@ ENABLE = {
     ModelUsageTypes.image: ["google"],
     ModelUsageTypes.video: ["alibaba", "seedance"],
 }
+# Chat assistant model by exact name, best first; the first one that is available wins. All are enabled.
+ASSISTANT_MODELS = [
+    "Anthropic: Claude Sonnet 4.5",
+    "Anthropic: Claude Sonnet 5.5",
+    "Anthropic: Claude Haiku 5.5",
+]
 
 
 async def sync_models() -> bool:
@@ -49,7 +56,13 @@ async def sync_models() -> bool:
     return True
 
 
-async def seed(force_sync: bool = False) -> None:
+def pick_assistant_models(rows: list) -> list:
+    """The available ASSISTANT_MODELS rows, in preference order."""
+    by_name = {r.name: r for r in rows}
+    return [by_name[name] for name in ASSISTANT_MODELS if name in by_name]
+
+
+async def seed(force_sync: bool = False, reset_assistant: bool = False) -> None:
     async with make_session(DB_ASYNC_URL)() as db:
         has_models = (
             await query(
@@ -58,7 +71,14 @@ async def seed(force_sync: bool = False) -> None:
             is not None
         )
     if force_sync or not has_models:
-        synced = await sync_models()
+        try:
+            synced = await sync_models()
+        except HTTPError as exc:
+            # unreachable host or timeout: same fallback as a failed login / sync response
+            logging.warning(
+                f"seeder=model sync failed ({exc!r}), check LOGIN_URL / BASE_URL; using models already in DB"
+            )
+            synced = False
         if synced:
             async with make_session(DB_ASYNC_URL)() as db:
                 if (
@@ -73,6 +93,7 @@ async def seed(force_sync: bool = False) -> None:
     else:
         logging.info("seeder=model sync skipped, models already in DB (use --sync to force)")
     enabled = 0
+    assistant_name = None
     async with make_session(DB_ASYNC_URL)() as db:
         default_text = None
         for model_type, needles in ENABLE.items():
@@ -89,13 +110,16 @@ async def seed(force_sync: bool = False) -> None:
             matched = [r for r in rows if any(n in f"{r.name} {r.model_id}".lower() for n in needles)]
             if not matched:
                 logging.warning(f"seeder=model no {model_type.value} model matches {needles}, run model sync first")
-            for row in matched:
+            preferred = pick_assistant_models(rows) if model_type == ModelUsageTypes.text else []
+            for row in [*matched, *preferred]:
                 if not row.is_enabled:
                     row.is_enabled = True
                     enabled += 1
             if model_type == ModelUsageTypes.text:
                 # the assistant must be an enabled, available text model; prefer a seeded match
-                enabled_text = matched or [r for r in rows if r.is_enabled]
+                enabled_text = preferred or matched or [r for r in rows if r.is_enabled]
+                if not preferred:
+                    logging.warning(f"seeder=model none of {ASSISTANT_MODELS} is available, using another text model")
                 default_text = enabled_text[0] if enabled_text else None
 
         if default_text:
@@ -116,10 +140,22 @@ async def seed(force_sync: bool = False) -> None:
                 fetch_one=True,
             )
             if row is None:
-                db.add(DfEngineSettings(key="assistant_model", value=ref, code=SETTING_CODE))
-            elif not row.value or (current := json.loads(row.value)) is None or "model_id" not in current:
-                # empty, or seeded earlier in the short {uid, name} shape
+                row = DfEngineSettings(key="assistant_model", value=ref, code=SETTING_CODE)
+                db.add(row)
+            elif (
+                reset_assistant
+                or not row.value
+                or (current := json.loads(row.value)) is None
+                or "model_id" not in current
+            ):
+                # forced, empty, or seeded earlier in the short {uid, name} shape
                 row.value, row.updated_at = ref, local_time()
+            assistant_name = (json.loads(row.value) or {}).get("name")
+            if assistant_name != default_text.name:
+                logging.info(
+                    f"seeder=model keeping saved assistant_model={assistant_name}; "
+                    f"use --reset-assistant-model to switch to {default_text.name}"
+                )
         await db.commit()
 
     redis, keys = redis_client(), CacheKeys()
@@ -131,12 +167,12 @@ async def seed(force_sync: bool = False) -> None:
         keys.setting_pattern(),
     ):
         await delete_pattern(redis, pattern)
-    logging.info(f"seeder=model done, enabled={enabled} default_text={default_text.name if default_text else None}")
+    logging.info(f"seeder=model done, enabled={enabled} assistant_model={assistant_name}")
 
 
 async def main() -> None:
     try:
-        await seed(force_sync="--sync" in sys.argv)
+        await seed(force_sync="--sync" in sys.argv, reset_assistant="--reset-assistant-model" in sys.argv)
     except Exception:
         logging.error(traceback.format_exc())
         raise

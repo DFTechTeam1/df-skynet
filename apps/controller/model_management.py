@@ -101,14 +101,18 @@ class ModelManagementController(CoreDependencies):
             since = local_time() - timedelta(days=90)
             total_cost = 0.0
             total_calls = 0
-            for table, fetch in (
-                (DfEngineGenerations, self.generation_repo.get_generation),
-                (DfEngineChatAssistants, self.chat_assistant_repo.get_chat_assistant),
-                (DfEngineGuardrailValidations, self.guardrail_validation_repo.get_guardrail_validation),
+            for table, called_at, fetch in (
+                (DfEngineGenerations, DfEngineGenerations.created_at, self.generation_repo.get_generation),
+                (DfEngineChatAssistants, DfEngineChatAssistants.sent_at, self.chat_assistant_repo.get_chat_assistant),
+                (
+                    DfEngineGuardrailValidations,
+                    DfEngineGuardrailValidations.created_at,
+                    self.guardrail_validation_repo.get_guardrail_validation,
+                ),
             ):
                 usage = await fetch(
                     columns=(func.coalesce(func.sum(table.cost), 0).label("cost"), func.count().label("calls")),
-                    filters=(table.model_id == model_id, table.cost > 0, table.created_at >= since),  # type: ignore
+                    filters=(table.model_id == model_id, table.cost > 0, called_at >= since),  # type: ignore
                 )
                 total_cost += float(usage["cost"])
                 total_calls += usage["calls"]

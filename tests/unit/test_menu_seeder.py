@@ -76,22 +76,22 @@ def fake(monkeypatch):
     return db
 
 
-def test_every_seed_row_has_a_formula_file_and_only_initialize_session_has_no_menu():
+def test_every_seed_row_has_a_formula_file_and_only_chat_assistant_has_no_menu():
     assert all((seeder.FORMULAS / f"{tpl}.md").is_file() for _, _, tpl in seeder.SEED)
-    assert [ftype for menu, ftype, _ in seeder.SEED if menu is None] == ["initialize_session"]
+    assert [ftype for menu, ftype, _ in seeder.SEED if menu is None] == ["chat_assistant"]
     assert {menu for menu, _, _ in seeder.SEED if menu} <= set(seeder.MENU_ICONS)
 
 
 @pytest.mark.asyncio
-async def test_initialize_session_is_seeded_without_a_menu_and_a_second_run_changes_nothing(fake):
+async def test_chat_assistant_is_seeded_without_a_menu_and_a_second_run_changes_nothing(fake):
     await seeder.seed()
     features = {f.type: f for f in fake.rows(DfEngineFeatures)}
     assert set(features) == {ftype for _, ftype, _ in seeder.SEED}
     mapped = {m.feature_id for m in fake.rows(DfEngineMenuFeatureMappings)}
-    assert features["initialize_session"].id not in mapped and len(mapped) == len(seeder.SEED) - 1
+    assert features["chat_assistant"].id not in mapped and len(mapped) == len(seeder.SEED) - 1
     assert len(fake.rows(DfEngineFeaturePromptMappings)) == len(seeder.SEED)
     assert {m.name for m in fake.rows(DfEngineMenus)} == set(seeder.MENU_ICONS)
-    assert "chat-session-init" in {t.name for t in fake.rows(DfEnginePromptTemplates)}
+    assert "chatbot" in {t.name for t in fake.rows(DfEnginePromptTemplates)}
     assert "menus:features:*" in fake.patterns
 
     snapshot = {t: [dict(vars(r)) for r in rows] for t, rows in fake.store.items()}

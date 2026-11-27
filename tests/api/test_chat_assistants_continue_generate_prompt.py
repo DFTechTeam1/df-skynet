@@ -3,6 +3,7 @@ from sqlalchemy import select
 from services.mysql.model import DfEngineChatAssistants
 from services.openrouter import GENERATE_PROMPT_INSTRUCTION
 from tests.helpers import attach_upload, feature_prompts, make_chat_session
+from middlewares.lang import resolve_message
 from schemas.payload.feature_management import FeatureTypes
 
 
@@ -29,7 +30,7 @@ async def _post(authed_client, session, generate_prompt=True, content="Yes, writ
 async def test_yes_stores_guidelines_and_the_user_bubble_and_publishes(
     authed_client, db_session, chat_ctx, chat_settings, chat_features, user_id, chat_calls
 ):
-    """200; the yes is a normal user bubble, the enhance_prompt templates become system rows (sender openrouter), the
+    """200; the yes is a normal user bubble, the enhance_prompt templates become system rows (no creator), the
     user's yes closes the sent messages without being stored, and the worker is told it is a generate-prompt call."""
     await chat_settings()
     session, rows = _asked_chat(chat_ctx, user_id)
@@ -53,7 +54,7 @@ async def test_yes_stores_guidelines_and_the_user_bubble_and_publishes(
         .all()
     )
     system_rows = [r for r in stored if r.role == "system"]
-    assert [r.content for r in system_rows] == guidelines and {r.sender for r in system_rows} <= {"openrouter"}
+    assert [r.content for r in system_rows] == guidelines and {r.created_by for r in system_rows} <= {None}
     assert stored[-1].uid == yes_uid and stored[-1].role == "user" and stored[-1].content == "Yes, write it"
     assert not any(r.will_generate_prompt for r in stored)  # the question was answered: the state is refreshed
     assert GENERATE_PROMPT_INSTRUCTION.strip() not in [r.content for r in stored]
@@ -122,22 +123,6 @@ async def test_yes_without_a_waiting_question_is_422(
 
 
 @pytest.mark.asyncio
-async def test_yes_from_an_assistant_row_not_sent_by_openrouter_is_422(
-    authed_client, db_session, chat_ctx, chat_settings, user_id, chat_calls
-):
-    await chat_settings()
-    session, rows = _asked_chat(chat_ctx, user_id)
-    await db_session.execute(
-        DfEngineChatAssistants.__table__.update()  # type: ignore
-        .where(DfEngineChatAssistants.id == rows[1].id)  # type: ignore
-        .values(sender="tester")
-    )
-    await db_session.commit()
-    resp = await _post(authed_client, session)
-    assert resp.status_code == 422 and chat_calls.events == []
-
-
-@pytest.mark.asyncio
 async def test_yes_without_an_enhance_prompt_feature_is_404(
     authed_client, chat_ctx, chat_settings, user_id, chat_calls, monkeypatch
 ):
@@ -148,6 +133,7 @@ async def test_yes_without_an_enhance_prompt_feature_is_404(
     session, _ = _asked_chat(chat_ctx, user_id)
     resp = await _post(authed_client, session)
     assert resp.status_code == 404 and chat_calls.events == []
+    assert resp.json()["message"] == resolve_message("enhance_prompt_feature_not_configured", "en")
 
 
 # ---- the guards shared with continue / resend: each is forced by editing what the real repository call returned ----
