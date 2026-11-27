@@ -56,9 +56,8 @@ def test_a_message_without_attachments_is_not_changed():
     assert ContinueSessionPayload(content=f"{A} stays").content == f"{A} stays"
 
 
-def test_an_attached_file_the_text_never_names_is_refused():
-    import pytest
-    from error import DataValidationError
-
-    with pytest.raises(DataValidationError):
-        _payload(f"only {A} here")
+def test_an_attached_file_the_text_never_names_is_accepted():
+    out = _payload(f"only {A} here")
+    assert out.content == f"only <refer to {A}> here"
+    assert [str(a.file_uid) for a in out.attachments] == [A, B]
+    assert _payload("no uid at all").content == "no uid at all"

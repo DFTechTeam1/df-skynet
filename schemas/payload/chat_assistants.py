@@ -2,8 +2,6 @@ import re
 from pydantic import BaseModel, Field, field_validator, model_validator
 from schemas.payload.base import Attachment
 from uuid import UUID
-from error import DataValidationError
-from error import DataValidationError
 from typing import Any
 
 
@@ -18,18 +16,6 @@ class ChatMessagePayload(BaseModel):
         for a in self.attachments:
             by_type.setdefault(a.type, {}).setdefault(a.file_uid, a)
         self.attachments = [a for group in by_type.values() for a in group.values()]
-        return self
-
-    @model_validator(mode="after")
-    def check_attachments_mentioned(self):
-        content = self.content.lower()
-        errors = {
-            f"attachments.{idx}": ["reference_not_in_prompt"]
-            for idx, a in enumerate(self.attachments)
-            if str(a.file_uid) not in content
-        }
-        if errors:
-            raise DataValidationError(message="reference_not_in_prompt", error=errors)
         return self
 
     @model_validator(mode="after")
