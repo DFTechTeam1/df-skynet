@@ -206,7 +206,7 @@ class GenerationsController(CoreDependencies):
 
         The source is an uploaded file or an earlier generation, chosen by `schema.source`. Every free check
         runs before the prompt guardrail, which is the first paid call. A Celery task creates the image later.
-        If the guardrail refuses the prompt or fails, the request stops there with an error and no generation.
+        If the guardrail refuses the prompt or fails, the generation is saved as failed and an error is raised.
 
         Raises:
             AuthorizationError: The user may not edit this file.
@@ -684,14 +684,7 @@ class GenerationsController(CoreDependencies):
                 ),
                 filters=(DfEngineGenerations.project_id == target_file["project_id"],),
             )
-            refused_guardrail_spent = await self.guardrail_validation_repo.get_guardrail_validation(
-                columns=(func.coalesce(func.sum(DfEngineGuardrailValidations.cost), 0),),
-                filters=(
-                    DfEngineGuardrailValidations.sourceable_type == Projects.__name__,  # type: ignore
-                    DfEngineGuardrailValidations.sourceable_id == target_file["project_id"],  # type: ignore
-                ),
-            )
-            guardrail_spent += generation_guardrail_spent + refused_guardrail_spent
+            guardrail_spent += generation_guardrail_spent
 
             total_spent = chat_spent + generation_spent + guardrail_spent
             logging.info(
@@ -703,6 +696,25 @@ class GenerationsController(CoreDependencies):
                     message="project_cost_limit_exceeded",
                     context={"action": "image edit", "spent": f"${total_spent:.2f}", "limit": f"${cost_limit:.2f}"},
                 )
+
+            # The fields of this edit's generation, saved as failed or queued depending on the guardrail
+            project_id = target_file["project_id"]
+            task_id = target_file["task_id"]
+            song_id = target_file["song_id"] if task_id is None else None
+            generation_fields = dict(
+                kind=GenerationKinds.image if schema.source == "upload" else GenerationKinds.image_edit,
+                model_id=generation_model["id"],
+                menu_id=menu["id"],
+                feature_id=menu["df_engine_menu_feature_mappings"][0]["feature_id"],
+                sourceable_id=project_api_key["id"],
+                sourceable_type=DfEngineApiKeys.__name__,
+                project_id=project_id,
+                task_id=task_id,
+                song_id=song_id,
+                raw_prompt=schema.prompt,
+                parameter=schema.parameter,
+                created_by=user_id,
+            )
 
             # Check the prompt against the active guardrail rules for image generation
             validation_fields = None  # the guardrail call to record, when one was made
@@ -787,6 +799,7 @@ class GenerationsController(CoreDependencies):
                 )
 
                 validation_fields.update(
+                    sourceable_type=DfEngineGenerations.__name__,
                     apikeyable_id=project_api_key["id"],
                     apikeyable_type=DfEngineApiKeys.__name__,
                     model_id=assistant_model["id"],
@@ -796,17 +809,27 @@ class GenerationsController(CoreDependencies):
                 )
 
                 if rejection:
-                    # Stop here without creating a generation. The paid call is still recorded, linked to the
-                    # project because there's no generation, so it counts toward the cost limit
+                    # Save the generation as failed with the paid call linked to it, then stop: nothing is queued
                     validation_fields["message"] = resolve_message(rejection.message, current_lang.get())
-                    self.db.add(
-                        DfEngineGuardrailValidations(
-                            sourceable_id=target_file["project_id"],
-                            sourceable_type=Projects.__name__,
-                            **validation_fields,
-                        )
+                    failed_generation = DfEngineGenerations(
+                        **generation_fields,
+                        status=GenerationStatuses.failed,
+                        status_code=validation_fields["status_code"] if isinstance(rejection, ServiceError) else 400,
+                        response=json.dumps(
+                            {"error": {"message": validation_fields["message"], "source": "guardrail"}}
+                        ),
                     )
+                    self.db.add(failed_generation)
+                    await self.db.flush()
+                    self.db.add(DfEngineGuardrailValidations(sourceable_id=failed_generation.id, **validation_fields))
                     await self.db.commit()
+
+                    # The failed generation must show up in the file lists
+                    await delete_pattern(self.redis, cache_key.generation_files_main_list_pattern(task_id or song_id))
+                    await invalidate_project_files(self.redis, cache_key, project_id)
+                    await delete_pattern(self.redis, cache_key.generation_file_detail_pattern(user_id))
+                    for pattern in cache_key.generation_files_user_lists_patterns(user_id):
+                        await delete_pattern(self.redis, pattern)
                     raise rejection
 
             # Build the image URLs for the model: the source first, then the references in order
@@ -832,25 +855,7 @@ class GenerationsController(CoreDependencies):
                 )
 
             # Save the new generation
-            project_id = target_file["project_id"]
-            task_id = target_file["task_id"]
-            song_id = target_file["song_id"] if task_id is None else None
-            generation = DfEngineGenerations(
-                kind=GenerationKinds.image if schema.source == "upload" else GenerationKinds.image_edit,
-                model_id=generation_model["id"],
-                menu_id=menu["id"],
-                feature_id=menu["df_engine_menu_feature_mappings"][0]["feature_id"],
-                sourceable_id=project_api_key["id"],
-                sourceable_type=DfEngineApiKeys.__name__,
-                project_id=project_id,
-                task_id=task_id,
-                song_id=song_id,
-                raw_prompt=schema.prompt,
-                full_prompt=full_prompt,
-                finalized_prompt=full_prompt,
-                parameter=schema.parameter,
-                created_by=user_id,
-            )
+            generation = DfEngineGenerations(**generation_fields, full_prompt=full_prompt, finalized_prompt=full_prompt)
             self.db.add(generation)
             try:
                 await self.db.flush()
@@ -877,13 +882,7 @@ class GenerationsController(CoreDependencies):
 
             # Record the passed guardrail call, linked to its generation (that's how it reaches the project)
             if validation_fields:
-                self.db.add(
-                    DfEngineGuardrailValidations(
-                        sourceable_id=generation.id,
-                        sourceable_type=DfEngineGenerations.__name__,
-                        **validation_fields,
-                    )
-                )
+                self.db.add(DfEngineGuardrailValidations(sourceable_id=generation.id, **validation_fields))
 
             logging.info(
                 f"{log_prefix} generation prepared generation_id={generation.id} generation_uid={generation.uid} "
