@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
 from services.redis import CacheKeys
 
-SETTING_CACHE_PATTERN = "setting:*"
+SETTING_CACHE_PATTERNS = ("setting:*", "settings:*")
 from services.mysql.model import (
     DfEngineExternalApiCalls,
     DfEngineModelOptions,
@@ -67,7 +67,8 @@ async def clear_setting_state(db_session: AsyncSession) -> None:
     await db_session.execute(delete(DfEngineSettingLogs))
     await db_session.execute(delete(DfEngineProjectSettings))
     await db_session.commit()
-    await delete_pattern(redis_client(), SETTING_CACHE_PATTERN)
+    for pattern in SETTING_CACHE_PATTERNS:
+        await delete_pattern(redis_client(), pattern)
 
 
 async def clear_external_api_call_logs(db_session: AsyncSession) -> None:

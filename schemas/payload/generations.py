@@ -1,7 +1,9 @@
-from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
-from pydantic_extra_types.color import Color
 from typing import Any, Literal, Optional
 from uuid import UUID
+
+from pydantic import BaseModel, Field, HttpUrl, PrivateAttr, field_validator, model_validator
+from pydantic_extra_types.color import Color
+
 from error import DataValidationError
 
 
@@ -9,6 +11,12 @@ class GenerationReferences(BaseModel):
     file_uid: Optional[UUID] = Field(default=None, description="File UID either from generated or uploaded by user.")
     diva_url: Optional[HttpUrl] = Field(default=None, description="Streamed file from DiVA.")
     type: Literal["diva", "upload", "generated"]
+    # Index in the list the client sent, so errors still point at it after duplicates are removed
+    _position: int = PrivateAttr(default=0)
+
+    @property
+    def position(self) -> int:
+        return self._position
 
 
 class FrameImageReferences(GenerationReferences):
@@ -20,8 +28,7 @@ class EditImageGenerationPayload(BaseModel):
         default="generated",
         description="Where `file_uid` comes from: `generated` (a generation result, chained as a new version) or `upload` (an uploaded image, starts a new generation).",
     )
-    prompt: str = Field(min_length=1, description="User prompts.")
-    enhance_uid: Optional[UUID] = Field(None, description="Enhancer UID.")
+    prompt: str = Field(description="User prompts.")
     model_uid: UUID = Field(default=UUID("e440a822-5ada-4ea5-99d9-92f0d38edf96"), description="Model UID.")
     menu_uid: UUID = Field(default=UUID("1977607c-400f-4356-9692-46fbcfa889f0"), description="Menu UID.")
     feature_uid: UUID = Field(
@@ -35,25 +42,33 @@ class EditImageGenerationPayload(BaseModel):
     y_min: Optional[float] = Field(default=None, ge=0, le=1, description="Focus area top bound (0-1).")
     y_max: Optional[float] = Field(default=None, ge=0, le=1, description="Focus area bottom bound (0-1).")
 
+    @field_validator("prompt")
+    @classmethod
+    def check_prompt_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise DataValidationError(message="prompt_blank")
+        return value
+
     @model_validator(mode="after")
     def dedupe_references(self):
         deduped: dict[tuple[str, str], GenerationReferences] = {}
-        for ref in self.references:
+        for position, ref in enumerate(self.references):
+            ref._position = position
             uid = str(ref.diva_url) if ref.type == "diva" else str(ref.file_uid)
-            deduped[(ref.type, uid)] = ref
+            deduped.setdefault((ref.type, uid), ref)
         self.references = list(deduped.values())
         return self
 
     @model_validator(mode="after")
     def check_references(self):
         errors: dict[str, list[str]] = {}
-        for idx, ref in enumerate(self.references):
+        for ref in self.references:
             if ref.type == "diva" and ref.diva_url is None:
-                errors[f"references.{idx}"] = ["reference_diva_url_required"]
+                errors[f"references.{ref.position}"] = ["reference_diva_url_required"]
             elif ref.type in ("upload", "generated") and ref.file_uid is None:
-                errors[f"references.{idx}"] = ["reference_file_uid_required"]
+                errors[f"references.{ref.position}"] = ["reference_file_uid_required"]
         if errors:
-            raise DataValidationError(message="references_invalid", error=errors)
+            raise DataValidationError(message="reference_check_failed", error=errors)
         return self
 
     @model_validator(mode="after")
@@ -64,14 +79,12 @@ class EditImageGenerationPayload(BaseModel):
             return self
 
         if len(filled) != len(area):
-            errors = {key: ["generation_area_incomplete"] for key in area if area[key] is None}
-            raise DataValidationError(message="generation_area_incomplete", error=errors)
+            raise DataValidationError(message="generation_area_incomplete")
         return self
 
 
 class ImageVideoGenerationPayload(BaseModel):
-    prompt: str = Field(min_length=1, description="User prompts.")
-    enhance_uid: Optional[UUID] = Field(None, description="Enhancer UID.")
+    prompt: str = Field(description="User prompts.")
     model_uid: UUID = Field(default=UUID("e440a822-5ada-4ea5-99d9-92f0d38edf96"), description="Model UID.")
     menu_uid: UUID = Field(default=UUID("1977607c-400f-4356-9692-46fbcfa889f0"), description="Menu UID.")
     feature_uid: UUID = Field(
@@ -103,59 +116,55 @@ class ImageVideoGenerationPayload(BaseModel):
         except (ValueError, TypeError):
             raise ValueError("default_frame_reference_color_invalid_format")
 
+    @field_validator("prompt")
+    @classmethod
+    def check_prompt_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise DataValidationError(message="prompt_blank")
+        return value
+
     @model_validator(mode="after")
     def dedupe_references(self):
         deduped: dict[tuple[str, str], GenerationReferences] = {}
-        for ref in self.references:
+        for position, ref in enumerate(self.references):
+            ref._position = position
             uid = str(ref.diva_url) if ref.type == "diva" else str(ref.file_uid)
-            deduped[(ref.type, uid)] = ref
+            deduped.setdefault((ref.type, uid), ref)  # keep the first occurrence and its position
         self.references = list(deduped.values())
         return self
 
     @model_validator(mode="after")
     def check_references(self):
         errors: dict[str, list[str]] = {}
-        for idx, ref in enumerate(self.references):
+        for ref in self.references:
             if ref.type == "diva" and ref.diva_url is None:
-                errors[f"references.{idx}"] = ["reference_diva_url_required"]
+                errors[f"references.{ref.position}"] = ["reference_diva_url_required"]
             elif ref.type in ("upload", "generated") and ref.file_uid is None:
-                errors[f"references.{idx}"] = ["reference_file_uid_required"]
+                errors[f"references.{ref.position}"] = ["reference_file_uid_required"]
         if errors:
-            raise DataValidationError(message="references_invalid", error=errors)
+            raise DataValidationError(message="reference_check_failed", error=errors)
         return self
 
     @model_validator(mode="after")
     def check_frame_images(self):
         if self.default_frame_reference_color is not None:
             if self.type != "video":
-                raise DataValidationError(
-                    message="default_frame_reference_color_invalid",
-                    error={"default_frame_reference_color": ["default_frame_reference_color_requires_video_type"]},
-                )
+                raise DataValidationError(message="default_frame_reference_color_requires_video_type")
             if not isinstance(self.parameter.get("aspect_ratio"), str):
-                raise DataValidationError(
-                    message="default_frame_reference_color_invalid",
-                    error={"parameter.aspect_ratio": ["generation_parameter_required"]},
-                )
+                raise DataValidationError(message="parameter_required", context={"parameter": "aspect_ratio"})
             if len(self.frame_images) != 1:
                 key = "frame_reference_color_requires_one_frame" if not self.frame_images else "no_free_frame_slot"
-                raise DataValidationError(message=key, error={"default_frame_reference_color": [key]})
+                raise DataValidationError(message=key)
 
         if self.frame_images and self.type != "video":
-            raise DataValidationError(
-                message="frame_images_invalid",
-                error={"frame_images": ["frame_images_requires_video_type"]},
-            )
+            raise DataValidationError(message="frame_images_requires_video_type")
 
         if self.frame_images:
             self.references = []
 
         types = [ref.frame_type for ref in self.frame_images]
         if len(types) != len(set(types)):
-            raise DataValidationError(
-                message="frame_images_duplicate_type",
-                error={"frame_images": ["frame_images_duplicate_type"]},
-            )
+            raise DataValidationError(message="frame_images_duplicate_type")
 
         errors: dict[str, list[str]] = {}
         for idx, ref in enumerate(self.frame_images):
@@ -164,7 +173,7 @@ class ImageVideoGenerationPayload(BaseModel):
             elif ref.type in ("upload", "generated") and ref.file_uid is None:
                 errors[f"frame_images.{idx}"] = ["reference_file_uid_required"]
         if errors:
-            raise DataValidationError(message="references_invalid", error=errors)
+            raise DataValidationError(message="reference_check_failed", error=errors)
         return self
 
 

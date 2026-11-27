@@ -39,7 +39,7 @@ def test_color_without_exactly_one_frame_is_rejected(frames, key):
 
     with pytest.raises(DataValidationError) as e:
         P(**BASE, default_frame_reference_color="#4cfb2b", frame_images=[_frame(t) for t in frames])
-    assert e.value.error == {"default_frame_reference_color": [key]}
+    assert e.value.message == key and e.value.error is None
 
 
 def test_no_color_allows_any_frames():
@@ -51,3 +51,22 @@ def test_no_color_allows_any_frames():
 def test_frame_images_override_references(frames, kept):
     ref = {"type": "diva", "diva_url": "https://example.com/a.jpg"}
     assert len(P(**BASE, references=[ref], frame_images=[_frame(t) for t in frames]).references) == kept
+
+
+@pytest.mark.parametrize("prompt", ["", "   ", "\t", "\n \t "])
+def test_blank_prompt_is_rejected_with_a_message_only(prompt):
+    from error import DataValidationError
+
+    with pytest.raises(DataValidationError) as e:
+        P(**{**BASE, "prompt": prompt})
+    assert e.value.message == "prompt_blank" and e.value.error is None
+
+
+def test_reference_errors_keep_the_index_the_client_sent():
+    from error import DataValidationError
+
+    diva = {"type": "diva", "diva_url": "https://example.com/a.jpg"}
+    with pytest.raises(DataValidationError) as e:
+        P(**BASE, references=[diva, diva, {"type": "upload"}])
+    assert e.value.message == "reference_check_failed"
+    assert e.value.error == {"references.2": ["reference_file_uid_required"]}

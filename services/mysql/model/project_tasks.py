@@ -6,6 +6,10 @@ from sqlalchemy import CHAR, DateTime, Date, Enum, ForeignKey, Integer, SmallInt
 from sqlalchemy.dialects.mysql import BIGINT
 
 
+TASK_STATUS_ONGOING = 1
+TASK_STATUS_COMPLETED = 4
+
+
 class ProjectTaskTypes(StrEnum):
     asset3d = auto()
     compositing = auto()
@@ -42,6 +46,9 @@ class ProjectTasks(SQLModel, table=True):
 
     project: Optional["Projects"] = Relationship(  # type: ignore
         back_populates="project_tasks", sa_relationship_kwargs={"foreign_keys": "[ProjectTasks.project_id]"}
+    )
+    project_task_pics: list["ProjectTaskPics"] = Relationship(  # type: ignore
+        sa_relationship_kwargs={"viewonly": True}
     )
     generations: list["DfEngineGenerations"] = Relationship(  # type: ignore
         sa_relationship_kwargs={"foreign_keys": "[DfEngineGenerations.task_id]", "viewonly": True}

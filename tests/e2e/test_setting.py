@@ -35,29 +35,25 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
         "top_provider": model.top_provider,
     }
     first_save = await authed_client.call(
-        "POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}, "enhancer_model": model.uid}
+        "POST", SETTING_URL, json={"folder_depth_limit": 5, "assistant_model": model.uid}
     )
     assert first_save.status_code == 200
-    assert first_save.json()["data"]["enhancer_model"] == model_ref
+    assert first_save.json()["data"]["assistant_model"] == model_ref
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 0
 
     # 3. no-op save — same values, no log
-    await authed_client.call(
-        "POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}, "enhancer_model": model.uid}
-    )
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 5, "assistant_model": model.uid})
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 0
 
-    # 4. real change — admin_view flipped; one log records the diff (model as {"id", "uid", "model_id", "name", "top_provider"})
-    await authed_client.call(
-        "POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}, "enhancer_model": model.uid}
-    )
+    # 4. real change — folder_depth_limit changed; one log records the diff (model as {"id", "uid", "model_id", "name", "top_provider"})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 6, "assistant_model": model.uid})
     logs = (await authed_client.call("GET", LOGS_URL)).json()["data"]
     assert logs["totalData"] == 1
     newest = logs["paginated"][0]
-    assert newest["incoming_data"]["admin_view"] == {"see_all_asset": False}
-    assert newest["previous_data"]["admin_view"] == {"see_all_asset": True}
-    assert newest["incoming_data"]["enhancer_model"] == model_ref
-    assert newest["changed_fields"] == ["admin_view"]
+    assert newest["incoming_data"]["folder_depth_limit"] == 6
+    assert newest["previous_data"]["folder_depth_limit"] == 5
+    assert newest["incoming_data"]["assistant_model"] == model_ref
+    assert newest["changed_fields"] == ["folder_depth_limit"]
 
     # 5. a per-project override — GET /setting/{uid} now serves it instead of the class fallback
     await authed_client.call(
@@ -77,7 +73,7 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 1
 
     # 6. sync drops the model from OpenRouter — it's a main model still referenced
-    #    by the enhancer setting, so sync flags it unavailable AND nulls the setting.
+    #    by the assistant setting, so sync flags it unavailable AND nulls the setting.
     rows = await available_model_rows(db_session, "text")
     mock_model_sync.set(
         "/models?output_modalities=text",
@@ -86,9 +82,11 @@ async def test_setting_lifecycle_journey(authed_client, db_session, mock_model_s
     assert (await authed_client.call("POST", MODELS_URL)).status_code == 200
 
     after_sync = await authed_client.call("GET", SETTING_URL)
-    assert after_sync.json()["data"]["enhancer_model"] is None
+    assert after_sync.json()["data"]["assistant_model"] is None
     assert (await authed_client.call("GET", LOGS_URL)).json()["data"]["totalData"] == 2
 
     # 7. the now-unavailable model can no longer be picked again
-    rejected = await authed_client.call("POST", SETTING_URL, json={"enhancer_model": model.uid}, raise_for_status=False)
+    rejected = await authed_client.call(
+        "POST", SETTING_URL, json={"assistant_model": model.uid}, raise_for_status=False
+    )
     assert rejected.status_code == 422

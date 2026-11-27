@@ -25,13 +25,13 @@ async def test_fetch_returns_saved_values(authed_client, db_session, project_cla
         "POST",
         URL,
         json={
-            "admin_view": {"see_all_asset": False},
+            "folder_depth_limit": 6,
             "project_class_limitations": [{"id": project_class_id, "compose_input_max_chars": 25}],
         },
     )
 
     body = (await authed_client.call("GET", URL)).json()["data"]
-    assert body["admin_view"] == {"see_all_asset": False}
+    assert body["folder_depth_limit"] == 6
     saved = next(row for row in body["project_class_limitations"] if row["id"] == project_class_id)
     assert saved["compose_input_max_chars"] == 25
 
@@ -61,25 +61,15 @@ async def test_fetch_lists_every_project_class(authed_client, db_session, projec
 
 
 @pytest.mark.asyncio
-async def test_fetch_returns_enhancer_and_assistant_model_ref(authed_client, db_session):
-    """200 OK; enhancer_model/assistant_model come back as {"id", "uid", "model_id", "name", "top_provider"}, not a bare UID or name."""
+async def test_fetch_returns_assistant_model_ref(authed_client, db_session):
+    """200 OK; assistant_model comes back as {"id", "uid", "model_id", "name", "top_provider"}, not a bare UID or name."""
     await clear_setting_state(db_session)
-    enhancer = DfEngineModelOptionsFactory.create(
-        name="Enhancer-A", type="text", is_available=True, is_enabled=True, is_main=False
-    )
     assistant = DfEngineModelOptionsFactory.create(
         name="Assistant-A", type="text", is_available=True, is_enabled=True, is_main=False
     )
-    await authed_client.call("POST", URL, json={"enhancer_model": enhancer.uid, "assistant_model": assistant.uid})
+    await authed_client.call("POST", URL, json={"assistant_model": assistant.uid})
 
     body = (await authed_client.call("GET", URL)).json()["data"]
-    assert body["enhancer_model"] == {
-        "id": enhancer.id,
-        "uid": enhancer.uid,
-        "model_id": enhancer.model_id,
-        "name": enhancer.name,
-        "top_provider": None,
-    }
     assert body["assistant_model"] == {
         "id": assistant.id,
         "uid": assistant.uid,
@@ -94,13 +84,13 @@ async def test_fetch_response_is_cached_with_a_ttl(authed_client, db_session):
     """200 OK; a GET populates the global settings cache in Redis with an expiry."""
     await clear_setting_state(db_session)
     redis = redis_client()
-    await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": True}})
-    await redis.delete(cache_key.setting_global())
+    await authed_client.call("POST", URL, json={"folder_depth_limit": 5})
+    await redis.delete(cache_key.setting_global_refactored())
 
     resp = await authed_client.call("GET", URL)
     assert resp.status_code == 200
-    assert await redis.exists(cache_key.setting_global())
-    assert await redis.ttl(cache_key.setting_global()) > 0
+    assert await redis.exists(cache_key.setting_global_refactored())
+    assert await redis.ttl(cache_key.setting_global_refactored()) > 0
 
 
 @pytest.mark.asyncio
@@ -109,15 +99,15 @@ async def test_update_invalidates_the_cache(authed_client, db_session):
     await clear_setting_state(db_session)
     redis = redis_client()
 
-    await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": True}})
+    await authed_client.call("POST", URL, json={"folder_depth_limit": 5})
     await authed_client.call("GET", URL)
-    assert await redis.exists(cache_key.setting_global())
+    assert await redis.exists(cache_key.setting_global_refactored())
 
-    await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": False}})
-    assert not await redis.exists(cache_key.setting_global())
+    await authed_client.call("POST", URL, json={"folder_depth_limit": 6})
+    assert not await redis.exists(cache_key.setting_global_refactored())
 
     body = (await authed_client.call("GET", URL)).json()["data"]
-    assert body["admin_view"] == {"see_all_asset": False}
+    assert body["folder_depth_limit"] == 6
 
 
 @pytest.mark.asyncio

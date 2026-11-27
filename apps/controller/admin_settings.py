@@ -8,12 +8,16 @@ from sqlalchemy import func
 from sqlalchemy.orm import selectinload, load_only
 from apps.controller.core import CoreDependencies
 from schemas.response import PaginationResponse, Response
-from schemas.payload.setting import AdminGlobalSettingPayload, ProjectClassLimitations, ProjectSettingPayload
+from schemas.format.admin_setting_logs import SettingLogRecord
+from schemas.payload.admin_settings import (
+    AdminGlobalSettingPayload,
+    ProjectClassLimitations,
+    ProjectSettingPayload,
+    PromptValidationType,
+)
 from log import logging
 from error import ServiceError, BaseError, DataNotFoundError, DataValidationError
 from utils import local_time
-from utils.formatter import format_datetime, format_user_employees
-from utils.serializer import serialize
 from services.mysql import query
 from services.mysql.model import (
     DfEngineSettings,
@@ -26,9 +30,7 @@ from services.mysql.model import (
     DfEngineProjectSettings,
 )
 from services.mysql.model.df_engine_model_options import ModelUsageTypes
-from services.redis import get_json, set_json, delete_pattern, CacheKeys
-from services.dto import ConnectionContext
-from services.dto.asynced.admin_settings import get_admin_settings, get_project_setting
+from services.redis import get_json, set_json, delete_pattern
 
 
 SETTING_CODE = "admin_setting"
@@ -37,7 +39,7 @@ SETTING_CODE = "admin_setting"
 class SettingController(CoreDependencies):
     @controller.get(
         "/setting/logs",
-        summary="View the history of changes made to the DF Engine settings.",
+        summary="Get settings logs.",
         description=(
             "Returns the settings change history, newest first: who saved each change, "
             "the settings before and after, and which sections actually moved. Only "
@@ -45,20 +47,19 @@ class SettingController(CoreDependencies):
             "an entry. Paginated, and searchable by the saver's name."
         ),
         status_code=status.HTTP_200_OK,
-        tags=["Setting"],
+        tags=["Admin Settings"],
         response_model=Response,
     )
-    async def df_engine_fetch_global_setting_logs(
+    async def admin_settings_to_fetch_settings_logs(
         self,
-        search: Optional[str] = Query(None, description="Filter by the saver's name (prefix match)."),
+        search: Optional[str] = Query(None, description="Filter by the saver's name."),
         page: int = Query(default=1, ge=1, description="1-indexed page number to fetch."),
         itemsPerPage: int = Query(default=50, ge=1, le=200, description="Number of records to return per page."),
     ) -> Response:
         response = Response()
-        cache_key = CacheKeys()
         try:
-            logs_cache_key = cache_key.setting_logs_pagination(page, itemsPerPage, search)
-            cached = await get_json(self.redis, logs_cache_key)
+            key = self.cache_key.setting_log_refactored(page, itemsPerPage, search)
+            cached = await get_json(self.redis, key)
             if cached is not None:
                 logging.info(
                     f"user={self.user['user_id']} listed setting logs page={page} size={itemsPerPage} source=cache"
@@ -68,20 +69,13 @@ class SettingController(CoreDependencies):
 
             filters = (DfEngineSettingLogs.user_name.ilike(f"%{search}%"),) if search else None  # type: ignore
 
-            total_data = (
-                await query(
-                    db=self.db,
-                    table=DfEngineSettingLogs,
-                    columns=(func.count(DfEngineSettingLogs.id),),  # type: ignore
-                    filters=filters,
-                    fetch_one=True,
-                )
-                or 0
+            total_data = await self.admin_repo.get_setting_log(
+                columns=(func.count(DfEngineSettingLogs.id),),  # type: ignore
+                filters=filters,
+                raise_if_null=False,
             )
 
-            records = await query(
-                db=self.db,
-                table=DfEngineSettingLogs,
+            records = await self.admin_repo.get_setting_log(
                 options=(
                     selectinload(DfEngineSettingLogs.created_by_user)  # type: ignore
                     .load_only(Users.image)  # type: ignore
@@ -92,24 +86,13 @@ class SettingController(CoreDependencies):
                 order_by=(DfEngineSettingLogs.created_at.desc(), DfEngineSettingLogs.id.desc()),  # type: ignore
                 limit=itemsPerPage,
                 offset=(page - 1) * itemsPerPage,
+                fetch_one=False,
+                raise_if_null=False,
             )
 
-            logs = []
-            for record in serialize(records):
-                record["created_at"] = format_datetime(record["created_at"])
-                record["creator"] = format_user_employees(record.pop("created_by_user", None))
-                record.pop("id", None)
-                record.pop("created_by", None)
-                previous_data = record.get("previous_data") or {}
-                incoming_data = record.get("incoming_data") or {}
-                record["changed_fields"] = sorted(
-                    key
-                    for key in (previous_data.keys() | incoming_data.keys())
-                    if previous_data.get(key) != incoming_data.get(key)
-                )
-                logs.append(record)
+            logs = [SettingLogRecord.format(record).model_dump() for record in records]
 
-            await set_json(self.redis, logs_cache_key, {"logs": logs, "total_data": total_data})
+            await set_json(self.redis, key, {"logs": logs, "total_data": total_data})
             logging.info(
                 f"user={self.user['user_id']} listed setting logs page={page} size={itemsPerPage} "
                 f"count={len(logs)} total={total_data} source=database"
@@ -129,25 +112,36 @@ class SettingController(CoreDependencies):
 
     @controller.get(
         "/setting",
-        summary="Get global setting.",
+        summary="Get settings.",
         description=(
-            "Shows the current DF Engine settings for the whole workspace: whether the "
-            "Library shows everyone's assets, the generate and enhance limits, the "
-            "storyboard and prompt limits, how much of the earlier chat the assistant "
-            "remembers, the limits for each project class, and which models run the "
-            "enhancer and the assistant. These start from sensible defaults, so the "
+            "Shows the current DF Engine settings for the whole workspace: the generate "
+            "and enhance limits, the storyboard and prompt limits, how much of the earlier "
+            "chat the assistant remembers, the limits for each project class, and which "
+            "model runs the assistant. These start from sensible defaults, so the "
             "settings page always has something to show."
         ),
         status_code=status.HTTP_200_OK,
-        tags=["Setting"],
+        tags=["Admin Settings"],
         response_model=Response,
     )
-    async def df_engine_to_fetch_global_setting(self) -> Response:
+    async def admin_settings_to_fetch_global_settings(self) -> Response:
         response = Response()
         try:
-            ctx = ConnectionContext(self.db, self.redis, CacheKeys())
-            settings = await get_admin_settings(ctx)
-            logging.info(f"user={self.user['user_id']} fetched admin global setting count={len(settings)}")
+            key = self.cache_key.setting_global_refactored()
+            settings = await get_json(self.redis, key)
+            source = "cache"
+            if settings is None:
+                records = await self.admin_repo.get_setting(
+                    filters=(DfEngineSettings.code == SETTING_CODE,),  # type: ignore
+                    fetch_one=False,
+                    raise_if_null=False,
+                )
+                settings = {record["key"]: record["value"] for record in records}
+                await set_json(self.redis, key, settings)
+                source = "database"
+            logging.info(
+                f"user={self.user['user_id']} fetched admin global setting count={len(settings)} source={source}"
+            )
             response.data = settings
         except BaseError as e:
             logging.warning(
@@ -163,70 +157,53 @@ class SettingController(CoreDependencies):
 
     @controller.post(
         "/setting",
-        summary="Update global setting.",
+        summary="Update settings.",
         description=(
-            "Saves the workspace-wide settings: Library visibility, usage limits per "
-            "project class, and which models power the prompt enhancer and the "
-            "assistant. Send the whole settings document each time — this replaces "
+            "Saves the workspace-wide settings: the folder depth limit, chat assistant "
+            "limits, usage limits per project class, prompt guardrails, and which model "
+            "powers the assistant. Send the whole settings document each time — this replaces "
             "what's saved, it isn't a partial update. Any real change is recorded in "
             "the history together with who made it."
         ),
         status_code=status.HTTP_200_OK,
-        tags=["Setting"],
+        tags=["Admin Settings"],
         response_model=Response,
     )
-    async def df_engine_to_update_global_setting(
+    async def admin_settings_to_update_global_settings(
         self,
         schema: AdminGlobalSettingPayload,
         request: Request,
     ) -> Response:
         response = Response()
-        cache_key = CacheKeys()
         try:
-            resolved_model: dict[str, Optional[dict[str, Any]]] = {"enhancer_model": None, "assistant_model": None}
-            for field in ("enhancer_model", "assistant_model"):
-                model_uid = getattr(schema, field)
-                if model_uid is None:
-                    continue
-                model = await query(
-                    db=self.db,
-                    table=DfEngineModelOptions,
-                    options=(
-                        load_only(
-                            DfEngineModelOptions.id,
-                            DfEngineModelOptions.uid,
-                            DfEngineModelOptions.model_id,
-                            DfEngineModelOptions.name,
-                            DfEngineModelOptions.type,
-                            DfEngineModelOptions.is_enabled,
-                            DfEngineModelOptions.is_available,
-                            DfEngineModelOptions.top_provider,
-                        ),
+            assistant_model = None
+            if schema.assistant_model is not None:
+                model = await self.model_option_repo.get_model(
+                    columns=(
+                        DfEngineModelOptions.id,
+                        DfEngineModelOptions.uid,
+                        DfEngineModelOptions.model_id,
+                        DfEngineModelOptions.name,
+                        DfEngineModelOptions.type,
+                        DfEngineModelOptions.is_enabled,
+                        DfEngineModelOptions.is_available,
+                        DfEngineModelOptions.top_provider,
                     ),
-                    filters=(DfEngineModelOptions.uid == str(model_uid),),  # type: ignore
-                    fetch_one=True,
+                    filters=(DfEngineModelOptions.uid == str(schema.assistant_model),),  # type: ignore
                 )
-                if model is None:
-                    raise DataNotFoundError(message="model_option_not_found")
-                if model.type != ModelUsageTypes.text:
+                if model["type"] != ModelUsageTypes.text:
                     raise DataValidationError(message="setting_engine_model_must_be_text")
-                if not model.is_enabled:
+                if not model["is_enabled"]:
                     raise DataValidationError(message="setting_engine_model_must_be_enabled")
-                if not model.is_available:
+                if not model["is_available"]:
                     raise DataValidationError(message="setting_engine_model_must_be_available")
-                resolved_model[field] = {
-                    "id": model.id,
-                    "uid": model.uid,
-                    "model_id": model.model_id,
-                    "name": model.name,
-                    "top_provider": model.top_provider,
-                }
+                assistant_model = {k: model[k] for k in ("id", "uid", "model_id", "name", "top_provider")}
 
             project_classes = await query(
                 db=self.db,
                 table=ProjectClasses,
-                options=(load_only(ProjectClasses.id, ProjectClasses.name, ProjectClasses.color),),
-            )  # type: ignore
+                options=(load_only(ProjectClasses.id, ProjectClasses.name, ProjectClasses.color),),  # type: ignore
+            )
             class_by_id = {pc.id: pc for pc in project_classes}
             unknown_class_fields = {
                 f"project_class_limitations.{index}.id": ["project_class_not_found"]
@@ -236,26 +213,28 @@ class SettingController(CoreDependencies):
             if unknown_class_fields:
                 raise DataNotFoundError(message="project_class_not_found", error=unknown_class_fields)
 
-            records = await query(
-                db=self.db,
-                table=DfEngineSettings,
-                filters=(DfEngineSettings.code == SETTING_CODE,),  # type: ignore
+            setting_filters = (DfEngineSettings.code == SETTING_CODE,)
+            records = await self.admin_repo.get_setting(
+                filters=setting_filters,  # type: ignore
+                fetch_one=False,
+                raise_if_null=False,
             )
-            rows_by_key = {row.key: row for row in records}
+            saved = {record["key"]: record["value"] for record in records}
 
-            saved_row = rows_by_key.get("project_class_limitations")
             saved_limits = {
                 item["id"]: item
-                for item in (json.loads(saved_row.value) if saved_row and saved_row.value else [])
+                for item in saved.get("project_class_limitations") or []
                 if isinstance(item, dict) and "id" in item
             }
             requested_limits = {pcl.id: pcl.model_dump(mode="json") for pcl in schema.project_class_limitations}
 
-            saved_guardrails = rows_by_key.get("prompt_guardrails")
             if "prompt_guardrails" not in schema.model_fields_set:
-                prompt_guardrails = (
-                    json.loads(saved_guardrails.value) if saved_guardrails and saved_guardrails.value else None
-                )
+                kept = [
+                    rule
+                    for rule in saved.get("prompt_guardrails") or []
+                    if rule.get("type") in PromptValidationType.__args__
+                ]
+                prompt_guardrails = kept or None
             else:
                 prompt_guardrails = (
                     [v.model_dump(mode="json") for v in schema.prompt_guardrails]
@@ -264,11 +243,9 @@ class SettingController(CoreDependencies):
                 )
 
             incoming = {
-                "admin_view": schema.admin_view.model_dump(mode="json"),
                 "folder_depth_limit": schema.folder_depth_limit,
                 "chat_assistant_settings": schema.chat_assistant_settings.model_dump(mode="json"),
-                "enhancer_model": resolved_model["enhancer_model"],
-                "assistant_model": resolved_model["assistant_model"],
+                "assistant_model": assistant_model,
                 "prompt_guardrails": prompt_guardrails,
                 "project_class_limitations": [
                     {
@@ -282,57 +259,52 @@ class SettingController(CoreDependencies):
                     for pc in project_classes
                 ],
             }
+            stale_keys = [key for key in saved if key not in incoming]
+            if stale_keys:
+                await self.admin_repo.delete(
+                    filters=(*setting_filters, DfEngineSettings.key.in_(stale_keys)),  # type: ignore
+                )
 
-            # token_limit_threshold is per-class now — drop any stale top-level row.
-            stale_threshold_row = rows_by_key.pop("token_limit_threshold", None)
-            if stale_threshold_row is not None:
-                await self.db.delete(stale_threshold_row)
-
-            previous = {
-                key: (json.loads(row.value) if row.value else None)
-                for key, row in rows_by_key.items()
-                if key in incoming
-            }
-
+            previous = {key: value for key, value in saved.items() if key in incoming}
             now = local_time()
             for key, value in incoming.items():
-                serialized = json.dumps(value)
-                row = rows_by_key.get(key)
-                if row is None:
-                    self.db.add(DfEngineSettings(code=SETTING_CODE, key=key, value=serialized, created_at=now))
-                elif row.value != serialized:
-                    row.value = serialized
-                    row.updated_at = now
-                    self.db.add(row)
+                if key in previous and previous[key] != value:
+                    await self.admin_repo.update(
+                        filters=(*setting_filters, DfEngineSettings.key == key),  # type: ignore
+                        values={"value": json.dumps(value), "updated_at": now},
+                    )
+            await self.admin_repo.create(
+                [
+                    {"code": SETTING_CODE, "key": key, "value": json.dumps(value), "created_at": now}
+                    for key, value in incoming.items()
+                    if key not in previous
+                ]
+            )
 
-            changed = bool(rows_by_key) and previous != incoming
+            changed = bool(previous) and previous != incoming
             if changed:
-                user_row = await query(
-                    db=self.db,
-                    table=Users,
-                    options=(load_only(Users.email, Users.username),),
+                user_row = await self.user_repo.get_user(
+                    columns=(Users.email, Users.username),
                     filters=(Users.id == int(self.user["user_id"]),),  # type: ignore
-                    fetch_one=True,
+                    raise_if_null=False,
                 )
-                self.db.add(
-                    DfEngineSettingLogs(
-                        created_by=int(self.user["user_id"]),
-                        user_email=user_row.email if user_row else None,
-                        user_name=user_row.username if user_row else None,
-                        previous_data=previous or None,
-                        incoming_data=incoming,
-                        ip_address=(
+                await self.admin_repo.create_setting_log(
+                    {
+                        "created_by": int(self.user["user_id"]),
+                        "user_email": user_row["email"] if user_row else None,
+                        "user_name": user_row["username"] if user_row else None,
+                        "previous_data": previous,
+                        "incoming_data": incoming,
+                        "ip_address": (
                             request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
                             or (request.client.host if request.client else None)
                         ),
-                        user_agent=request.headers.get("User-Agent"),
-                    )
+                        "user_agent": request.headers.get("User-Agent"),
+                    }
                 )
-                await delete_pattern(self.redis, cache_key.setting_logs_pattern())
-                await delete_pattern(self.redis, cache_key.setting_project_pattern())
 
             await self.db.flush()
-            await delete_pattern(self.redis, cache_key.setting_global())
+            await delete_pattern(self.redis, self.cache_key.setting_pattern())
             logging.info(f"user={self.user['user_id']} saved admin global setting changed={changed}")
 
             response.data = incoming
@@ -358,17 +330,60 @@ class SettingController(CoreDependencies):
             "the project to be assigned to a class."
         ),
         status_code=status.HTTP_200_OK,
-        tags=["Setting"],
+        tags=["Admin Settings"],
         response_model=Response,
     )
     async def df_engine_with_uid_to_fetch_project_setting(
         self, uid: UUID = Path(..., description="Project UID.")
     ) -> Response:
         response = Response()
+        PROJECT_SETTING_LIMIT_FIELDS = (
+            "token_usage_limit",
+            "compose_input_max_chars",
+            "storyboard_prompt_chars",
+            "max_scene_per_storyboard",
+            "max_shot_per_scene",
+            "token_limit_threshold",
+        )
         try:
-            ctx = ConnectionContext(self.db, self.redis, CacheKeys())
-            data = await get_project_setting(ctx, project_uid=uid)
-            logging.info(f"user={self.user['user_id']} fetched project setting uid={uid}")
+            key = self.cache_key.setting_project_refactored(uid)
+            data = await get_json(self.redis, key)
+            source = "cache"
+            if data is None:
+                project = await self.project_repo.get_project(
+                    columns=(Projects.id, Projects.name, Projects.classification, Projects.project_class_id),
+                    filters=(Projects.uid == str(uid),),  # type: ignore
+                )
+
+                limits = await self.project_setting_repo.get_project_setting(
+                    columns=tuple(getattr(DfEngineProjectSettings, field) for field in PROJECT_SETTING_LIMIT_FIELDS),
+                    filters=(DfEngineProjectSettings.project_id == project["id"],),  # type: ignore
+                    raise_if_null=False,
+                )
+                if limits is None:
+                    if project["project_class_id"] is None:
+                        raise DataValidationError(message="project_class_not_assigned")
+                    class_limits = await self.admin_repo.get_setting(
+                        filters=(
+                            DfEngineSettings.code == SETTING_CODE,  # type: ignore
+                            DfEngineSettings.key == "project_class_limitations",  # type: ignore
+                        ),
+                        raise_if_null=False,
+                    )
+                    if class_limits is None or class_limits["value"] is None:
+                        raise DataValidationError(message="global_setting_not_configured")
+                    class_limit = next(
+                        (item for item in class_limits["value"] if item.get("id") == project["project_class_id"]),
+                        None,
+                    )
+                    if class_limit is None:
+                        raise DataNotFoundError(message="project_class_limitation_not_found")
+                    limits = {field: class_limit.get(field) for field in PROJECT_SETTING_LIMIT_FIELDS}
+
+                data = {"project": project["name"], "classification": project["classification"], **limits}
+                await set_json(self.redis, key, data)
+                source = "database"
+            logging.info(f"user={self.user['user_id']} fetched project setting uid={uid} source={source}")
             response.data = data
         except BaseError as e:
             logging.warning(
@@ -384,7 +399,7 @@ class SettingController(CoreDependencies):
 
     @controller.post(
         "/setting/{uid}",
-        summary="Save project setting.",
+        summary="Upsert project setting.",
         description=(
             "Saves a per-project override of the generation limits (spend cap, content "
             "length limits, and the warning threshold), replacing whatever this project "
@@ -393,7 +408,7 @@ class SettingController(CoreDependencies):
             "standard default."
         ),
         status_code=status.HTTP_200_OK,
-        tags=["Setting"],
+        tags=["Admin Settings"],
         response_model=Response,
     )
     async def df_engine_with_uid_to_save_project_setting(
@@ -402,42 +417,30 @@ class SettingController(CoreDependencies):
         uid: UUID = Path(..., description="Project UID."),
     ) -> Response:
         response = Response()
-        cache_key = CacheKeys()
         try:
-            project = await query(
-                db=self.db,
-                table=Projects,
-                options=(load_only(Projects.id, Projects.name, Projects.classification),),
+            project = await self.project_repo.get_project(
+                columns=(Projects.id, Projects.name, Projects.classification),
                 filters=(Projects.uid == str(uid),),  # type: ignore
-                fetch_one=True,
             )
-            if not project:
-                raise DataNotFoundError(message="project_not_found")
 
             user_id = int(self.user["user_id"])
             values = schema.model_dump()
 
-            row = await query(
-                db=self.db,
-                table=DfEngineProjectSettings,
-                filters=(DfEngineProjectSettings.project_id == project.id,),  # type: ignore
-                fetch_one=True,
+            now = local_time()
+            await self.project_setting_repo.upsert(
+                {
+                    **values,
+                    "project_id": project["id"],
+                    "created_at": now,
+                    "created_by": user_id,
+                    "updated_at": now,
+                    "updated_by": user_id,
+                }
             )
-            if row is None:
-                row = DfEngineProjectSettings(project_id=project.id, created_by=user_id, **values)
-            else:
-                for field, value in values.items():
-                    setattr(row, field, value)
-                row.updated_by = user_id
-            self.db.add(row)
-            await self.db.flush()
-
-            data = {"project": project.name, "classification": project.classification, **values}
-            await self.redis.delete(
-                cache_key.setting_project(project_uid=uid), cache_key.setting_project(project_id=project.id)
-            )
+            await self.db.commit()
+            data = {"project": project["name"], "classification": project["classification"], **values}
+            await set_json(self.redis, self.cache_key.setting_project_refactored(uid), data)
             logging.info(f"user={self.user['user_id']} saved project setting uid={uid}")
-
             response.data = data
         except BaseError as e:
             logging.warning(

@@ -511,3 +511,15 @@ class CacheKeys:
         is_deleted: Optional[bool] = None,
     ) -> str:
         return f"models:pagination:page={page}:itemsPerPage={itemsPerPage}:search={search}:type={type}:is_enabled={is_enabled}:is_deleted={is_deleted}"
+
+    def setting_pattern(self) -> str:
+        return "settings:*"
+
+    def setting_log_refactored(self, page: int, itemsPerPage: int, search: Optional[str] = None) -> str:
+        return f"settings:log:page={page}:itemsPerPage={itemsPerPage}:search={search}"
+
+    def setting_global_refactored(self) -> str:
+        return "settings:global"
+
+    def setting_project_refactored(self, project_uid: UUID) -> str:
+        return f"settings:projects:uid={project_uid}"

@@ -192,6 +192,8 @@ class ModelManagementController(CoreDependencies):
 
             if type:
                 filters += (DfEngineModelOptions.type == type,)  # type: ignore
+            if type == "image":
+                filters += (func.json_length(DfEngineModelOptions.supported_parameters) >= 1,)
             if search:
                 filters += (DfEngineModelOptions.name.ilike(f"%{search}%"),)  # type: ignore
             if is_enabled:
@@ -546,7 +548,7 @@ class ModelManagementController(CoreDependencies):
                     if dangling:
                         for pattern in (
                             self.cache_key.setting_global(),
-                            self.cache_key.setting_logs_pattern(),
+                            self.cache_key.setting_pattern(),
                             self.cache_key.setting_project_pattern(),
                         ):
                             await delete_pattern(self.redis, pattern)

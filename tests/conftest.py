@@ -74,26 +74,6 @@ def _reset_rate_limiter():
     yield
 
 
-@pytest.fixture
-def fake_enhance(monkeypatch):
-    """Generate/edit flows call `enhance_prompt` when no enhance_uid is given; return "ENHANCED" instead of
-    hitting OpenRouter. `calls` records each input prompt; set `error` to make the enhancer fail."""
-
-    class Fake:
-        calls: list[str] = []
-        error = None
-
-    async def fake(prompt, model_id, api_key, user_id, image_urls=None):
-        Fake.calls.append(prompt)
-        if Fake.error:
-            raise Fake.error
-        return {"text": "ENHANCED", "status_code": 200, "usage": {}}
-
-    Fake.calls, Fake.error = [], None
-    monkeypatch.setattr("apps.controller.generations.enhance_prompt", fake)
-    return Fake
-
-
 @pytest_asyncio.fixture(autouse=True)
 async def _clear_all_redis_caches():
     """Every controller now caches its GET responses in Redis. Tests build
@@ -343,7 +323,7 @@ async def project_task(db_session) -> ProjectTasks:
             await db_session.execute(
                 select(ProjectTasks)
                 .join(Projects, Projects.id == ProjectTasks.project_id)  # type: ignore
-                .where(Projects.status == 1, ProjectTasks.status != 4)  # ongoing project, task not completed
+                .where(Projects.status == 1, ProjectTasks.status == 1)  # ongoing project, ongoing task
                 .options(selectinload(ProjectTasks.project))  # type: ignore
                 .limit(1)
             )
@@ -622,9 +602,11 @@ def mock_model_sync(monkeypatch):
 def as_roles(app, user_id):
     """`as_roles([...])` makes the authenticated user carry exactly those JWT roles for the rest of the test."""
     from apps.dependency.auth import get_user
+    from utils import is_overrider
 
     def _set(roles: list[str]) -> None:
-        app.dependency_overrides[get_user] = lambda: {"user_id": user_id, "roles": roles, "permissions": []}
+        user = {"user_id": int(user_id), "roles": roles, "permissions": [], "is_overrider": is_overrider(roles)}
+        app.dependency_overrides[get_user] = lambda: user
 
     yield _set
     app.dependency_overrides.pop(get_user, None)
@@ -742,11 +724,16 @@ def chat_calls(monkeypatch):
 
 @pytest.fixture
 def fail_chat_insert(monkeypatch):
-    """Makes every `AsyncSession.add_all` fail, which is what saving the chat rows of a message uses first."""
+    """Makes `AsyncSession.add_all` fail for chat rows only, which is what saving a message uses first."""
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    add_all = AsyncSession.add_all
+
     def boom(self, instances):
-        raise RuntimeError("insert failed")
+        instances = list(instances)
+        if any(type(row).__name__.startswith("DfEngineChat") for row in instances):
+            raise RuntimeError("insert failed")
+        return add_all(self, instances)
 
     monkeypatch.setattr(AsyncSession, "add_all", boom)
 
@@ -760,7 +747,7 @@ async def chat_settings(authed_client, db_session, chat_ctx):
     from services.mysql.factory.df_engine_model_options import DfEngineModelOptionsFactory
     from services.mysql.model import DfEngineProjectSettings, DfEngineSettingLogs, DfEngineSettings
     from services.redis import client as redis_client, delete_pattern
-    from tests.helpers import SETTING_CACHE_PATTERN, clear_setting_state
+    from tests.helpers import SETTING_CACHE_PATTERNS, clear_setting_state
 
     models = (DfEngineSettings, DfEngineProjectSettings, DfEngineSettingLogs)
     snapshot = {}
@@ -777,7 +764,6 @@ async def chat_settings(authed_client, db_session, chat_ctx):
         model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True)
         payload = {
             "assistant_model": model.uid,
-            "enhancer_model": model.uid,
             "project_class_limitations": [{"id": chat_ctx.class_id, "token_usage_limit": 1_000_000}],
             "chat_assistant_settings": {"max_chat_messages": max_chat_messages, "max_unique_attachments": 50},
         }
@@ -792,4 +778,5 @@ async def chat_settings(authed_client, db_session, chat_ctx):
         if snapshot[model]:
             await db_session.execute(insert(model.__table__), snapshot[model])
     await db_session.commit()
-    await delete_pattern(redis_client(), SETTING_CACHE_PATTERN)
+    for pattern in SETTING_CACHE_PATTERNS:
+        await delete_pattern(redis_client(), pattern)
