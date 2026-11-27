@@ -22,10 +22,19 @@ async def test_detail_hides_system_rows_and_has_no_generation_prompt(authed_clie
 
 
 @pytest.mark.asyncio
-async def test_detail_of_another_users_session_is_403(authed_client, chat_ctx, other_user_id):
+async def test_detail_of_another_users_session_is_403(authed_client, chat_ctx, other_user_id, as_roles):
     session, _ = make_chat_session(chat_ctx, other_user_id, [("user", "hi")])
+    as_roles([])  # the real test login may carry `root`, which is allowed in
     resp = await authed_client.call("GET", f"/api/chat-assistants/{session.uid}", raise_for_status=False)
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_root_can_read_another_users_session(authed_client, chat_ctx, other_user_id, as_roles):
+    session, _ = make_chat_session(chat_ctx, other_user_id, [("user", "hi")])
+    as_roles(["root"])
+    resp = await authed_client.call("GET", f"/api/chat-assistants/{session.uid}")
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
