@@ -1,7 +1,5 @@
 import json
 import pytest
-from sqlalchemy import select
-from services.mysql.model import Projects
 from uuid import uuid4
 from middlewares.lang import resolve_message
 from services.redis import client as redis_client, CacheKeys
@@ -116,14 +114,9 @@ async def test_save_invalidates_the_fetch_cache(authed_client, db_session, proje
     await authed_client.call("GET", _url(uid))  # warm cache with the fallback
     assert await redis_client().exists(cache_key.setting_project_refactored(uid))
 
-    # the api key limitation check caches the same setting under the project id
-    project_id = (await db_session.execute(select(Projects.id).where(Projects.uid == uid))).scalar_one()
-    await redis_client().set(cache_key.setting_project(project_id=project_id), "{}")
-
     await authed_client.call("POST", _url(uid), json={"compose_input_max_chars": 40})
     cached = json.loads(await redis_client().get(cache_key.setting_project_refactored(uid)))
     assert cached["compose_input_max_chars"] == 40
-    assert not await redis_client().exists(cache_key.setting_project(project_id=project_id))
 
     body = (await authed_client.call("GET", _url(uid))).json()["data"]
     assert body["compose_input_max_chars"] == 40
@@ -131,18 +124,14 @@ async def test_save_invalidates_the_fetch_cache(authed_client, db_session, proje
 
 @pytest.mark.asyncio
 async def test_global_save_invalidates_project_fallback_cache(authed_client, db_session, project_with_class):
-    """200 OK; a project without an override picks up a changed class limit — both cache keys are cleared."""
+    """200 OK; a project without an override picks up a changed class limit — its cached setting is cleared."""
     uid, class_id, _ = project_with_class
     await clear_setting_state(db_session)
     await _configure_global(authed_client, class_id, compose_input_max_chars=2)
 
     await authed_client.call("GET", _url(uid))  # warm uid key with the class fallback
-    project_id = (await db_session.execute(select(Projects.id).where(Projects.uid == uid))).scalar_one()
-    await redis_client().set(cache_key.setting_project(project_id=project_id), "{}")
-
     await _configure_global(authed_client, class_id, compose_input_max_chars=55)
     assert not await redis_client().exists(cache_key.setting_project_refactored(uid))
-    assert not await redis_client().exists(cache_key.setting_project(project_id=project_id))
 
     body = (await authed_client.call("GET", _url(uid))).json()["data"]
     assert body["compose_input_max_chars"] == 55

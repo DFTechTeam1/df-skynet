@@ -12,36 +12,36 @@ async def test_update_creates_settings_on_first_save(authed_client, db_session):
     """200 OK; POST inserts the settings rows when none exist yet."""
     await clear_setting_state(db_session)
 
-    resp = await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": False}})
+    resp = await authed_client.call("POST", URL, json={"folder_depth_limit": 6})
     assert resp.status_code == 200
-    assert resp.json()["data"]["admin_view"] == {"see_all_asset": False}
+    assert resp.json()["data"]["folder_depth_limit"] == 6
 
 
 @pytest.mark.asyncio
 async def test_update_overwrites_instead_of_duplicating(authed_client, db_session):
     """200 OK; a second POST overwrites the same rows rather than creating a new set."""
     await clear_setting_state(db_session)
-    await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": True}})
+    await authed_client.call("POST", URL, json={"folder_depth_limit": 5})
 
-    resp = await authed_client.call("POST", URL, json={"admin_view": {"see_all_asset": False}})
+    resp = await authed_client.call("POST", URL, json={"folder_depth_limit": 6})
     assert resp.status_code == 200
 
     fetch = await authed_client.call("GET", URL)
-    assert fetch.json()["data"]["admin_view"] == {"see_all_asset": False}
+    assert fetch.json()["data"]["folder_depth_limit"] == 6
 
 
 @pytest.mark.asyncio
 async def test_update_accepts_enabled_available_text_model(authed_client, db_session):
-    """200 OK; a type=text, enabled, available model can be saved as enhancer_model.
+    """200 OK; a type=text, enabled, available model can be saved as assistant_model.
 
     The client sends the model UID; it is stored and returned as {"id", "uid", "model_id", "name", "top_provider"}.
     """
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=True, is_enabled=True, is_main=False)
 
-    resp = await authed_client.call("POST", URL, json={"enhancer_model": model.uid})
+    resp = await authed_client.call("POST", URL, json={"assistant_model": model.uid})
     assert resp.status_code == 200
-    assert resp.json()["data"]["enhancer_model"] == {
+    assert resp.json()["data"]["assistant_model"] == {
         "id": model.id,
         "uid": model.uid,
         "model_id": model.model_id,
@@ -67,22 +67,21 @@ async def test_update_saves_the_models_context_window(authed_client, db_session)
 
 
 @pytest.mark.asyncio
-async def test_update_accepts_null_enhancer_and_assistant_model(authed_client, db_session):
-    """200 OK; leaving the models blank falls back to null (engine default)."""
+async def test_update_accepts_null_assistant_model(authed_client, db_session):
+    """200 OK; leaving the model blank falls back to null (engine default)."""
     await clear_setting_state(db_session)
 
-    resp = await authed_client.call("POST", URL, json={"enhancer_model": None, "assistant_model": None})
+    resp = await authed_client.call("POST", URL, json={"assistant_model": None})
     assert resp.status_code == 200
-    assert resp.json()["data"]["enhancer_model"] is None
     assert resp.json()["data"]["assistant_model"] is None
 
 
 @pytest.mark.asyncio
 async def test_update_rejects_unknown_model_uid(authed_client, db_session):
-    """404 model_option_not_found when enhancer_model references no row."""
+    """404 model_option_not_found when assistant_model references no row."""
     await clear_setting_state(db_session)
 
-    resp = await authed_client.call("POST", URL, json={"enhancer_model": str(uuid4())}, raise_for_status=False)
+    resp = await authed_client.call("POST", URL, json={"assistant_model": str(uuid4())}, raise_for_status=False)
     assert resp.status_code == 404
     assert resp.json()["message"] == resolve_message("model_option_not_found", "en")
 
@@ -93,7 +92,7 @@ async def test_update_rejects_non_text_model(authed_client, db_session):
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="image", is_available=True, is_enabled=True, is_main=False)
 
-    resp = await authed_client.call("POST", URL, json={"enhancer_model": model.uid}, raise_for_status=False)
+    resp = await authed_client.call("POST", URL, json={"assistant_model": model.uid}, raise_for_status=False)
     assert resp.status_code == 422
     assert resp.json()["message"] == resolve_message("setting_engine_model_must_be_text", "en")
 
@@ -115,19 +114,19 @@ async def test_update_rejects_unavailable_model(authed_client, db_session):
     await clear_setting_state(db_session)
     model = DfEngineModelOptionsFactory.create(type="text", is_available=False, is_enabled=True, is_main=False)
 
-    resp = await authed_client.call("POST", URL, json={"enhancer_model": model.uid}, raise_for_status=False)
+    resp = await authed_client.call("POST", URL, json={"assistant_model": model.uid}, raise_for_status=False)
     assert resp.status_code == 422
     assert resp.json()["message"] == resolve_message("setting_engine_model_must_be_available", "en")
 
 
 @pytest.mark.asyncio
-async def test_update_omitted_admin_view_falls_back_to_its_default(authed_client, db_session):
-    """200 OK; admin_view has a schema default, so omitting it saves {see_all_asset: True}."""
+async def test_update_omitted_folder_depth_limit_falls_back_to_its_default(authed_client, db_session):
+    """200 OK; folder_depth_limit has a schema default, so omitting it saves 4."""
     await clear_setting_state(db_session)
 
     resp = await authed_client.call("POST", URL, json={}, raise_for_status=False)
     assert resp.status_code == 200
-    assert resp.json()["data"]["admin_view"] == {"see_all_asset": True}
+    assert resp.json()["data"]["folder_depth_limit"] == 4
 
 
 @pytest.mark.asyncio

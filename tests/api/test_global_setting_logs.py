@@ -17,7 +17,7 @@ async def test_logs_first_save_is_not_logged(authed_client, db_session):
     """200 OK; the first save just inserts the rows — no prior state, so no history entry."""
     await clear_setting_state(db_session)
 
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 6})
 
     resp = await authed_client.call("GET", LOGS_URL)
     assert resp.json()["data"]["totalData"] == 0
@@ -28,7 +28,7 @@ async def test_logs_first_save_is_not_logged(authed_client, db_session):
 async def test_logs_unchanged_save_is_not_logged(authed_client, db_session):
     """200 OK; re-saving identical values adds no log entry."""
     await clear_setting_state(db_session)
-    payload = {"admin_view": {"see_all_asset": True}}
+    payload = {"folder_depth_limit": 5}
     await authed_client.call("POST", SETTING_URL, json=payload)
 
     resp = await authed_client.call("POST", SETTING_URL, json=payload)
@@ -42,16 +42,16 @@ async def test_logs_unchanged_save_is_not_logged(authed_client, db_session):
 async def test_logs_changed_save_records_the_diff(authed_client, db_session):
     """200 OK; once settings exist, a save with different values records a before/after entry."""
     await clear_setting_state(db_session)
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}})
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 5})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 6})
 
     body = (await authed_client.call("GET", LOGS_URL)).json()["data"]
     assert body["totalData"] == 1
     entry = body["paginated"][0]
-    assert entry["incoming_data"]["admin_view"] == {"see_all_asset": False}
-    assert entry["previous_data"]["admin_view"] == {"see_all_asset": True}
+    assert entry["incoming_data"]["folder_depth_limit"] == 6
+    assert entry["previous_data"]["folder_depth_limit"] == 5
     assert entry["creator"] is not None
-    assert entry["changed_fields"] == ["admin_view"]
+    assert entry["changed_fields"] == ["folder_depth_limit"]
 
 
 @pytest.mark.asyncio
@@ -74,8 +74,8 @@ async def test_logs_pagination(authed_client, db_session, project_class_id):
 async def test_logs_search_filters_by_user_name_prefix(authed_client, db_session):
     """200 OK; `search` matches the log row's stored user_name, case-insensitive."""
     await clear_setting_state(db_session)
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}})
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 5})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 6})
 
     all_logs = await authed_client.call("GET", LOGS_URL)
     user_name = all_logs.json()["data"]["paginated"][0]["user_name"]
@@ -93,8 +93,8 @@ async def test_logs_search_filters_by_user_name_prefix(authed_client, db_session
 async def test_logs_response_is_cached(authed_client, db_session):
     """200 OK; the first GET populates the per-page cache key, a second GET is served from it."""
     await clear_setting_state(db_session)
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}})
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 5})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 6})
 
     key = cache_key.setting_log_refactored(page=1, itemsPerPage=50)
     assert not await redis_client().exists(key)
@@ -110,12 +110,12 @@ async def test_logs_response_is_cached(authed_client, db_session):
 async def test_logs_changed_save_invalidates_the_cache(authed_client, db_session):
     """200 OK; a save that writes a history entry clears the cached pages."""
     await clear_setting_state(db_session)
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": True}})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 5})
 
     warm = await authed_client.call("GET", LOGS_URL)
     assert warm.json()["data"]["totalData"] == 0
 
-    await authed_client.call("POST", SETTING_URL, json={"admin_view": {"see_all_asset": False}})
+    await authed_client.call("POST", SETTING_URL, json={"folder_depth_limit": 6})
 
     resp = await authed_client.call("GET", LOGS_URL)
     assert resp.json()["data"]["totalData"] == 1

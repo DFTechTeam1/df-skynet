@@ -1,7 +1,8 @@
+import re
 import asyncio
 from typing import Any, Optional
-from services.api_caller import APICaller
 from error import DataValidationError
+from services.api_caller import APICaller
 
 
 def validate_total_image_references(
@@ -128,78 +129,67 @@ def validate_image_model_parameter(parameter: dict[str, Any], model: dict[str, A
         raise DataValidationError(message="generation_parameters_invalid", error=errors)
 
 
-def validate_video_model_parameter(
-    parameter: dict[str, Any], model: dict[str, Any], color: Optional[str] = None
-) -> Optional[str]:
-    """Validates a video generation `parameter` dict against the model's declared video
-    capabilities (supported_resolutions/aspect_ratios/durations/frame_images, generate_audio),
-    before the request is sent to OpenRouter. Mirrors `validate_image_model_parameter` in
-    shape and error style.
+# Keys the engine fills in itself. `parameter` is merged into the provider payload, so these are never accepted,
+# even when a model lists them as passthrough.
+RESERVED_VIDEO_PARAMETERS = {"model", "prompt", "frame_images", "input_references"}
+VIDEO_PARAMETERS = {"resolution", "aspect_ratio", "duration", "generate_audio"}
+FRAME_COLOR_ASPECT_RATIO = re.compile(r"[1-9]\d*:[1-9]\d*")
 
-    When `color` is set, the model must support BOTH first_frame and last_frame. The color fills the
-    slot the user did not supply and that slot is returned. Raises if the model lacks either frame,
-    the user supplied no frame (nothing to pair the color with), or the user supplied both."""
-    errors: dict[str, list[str]] = {}
+
+def validate_video_generation_parameter(
+    parameter: dict[str, Any], model: dict[str, Any], frame_types: list[str], color: Optional[str] = None
+) -> Optional[str]:
+    """Video generation rules, checked against the model's capabilities before anything is paid for.
+
+    `frame_types` are the types of the frame references the user sent, in their order. With a `color`, the
+    model must support both first and last frames and the user must send exactly one of them; the other
+    one's type is returned, for the color to fill. Raises on the first problem. Only unsupported frames
+    use `error`, one entry per frame index.
+    """
+    supported_frames = model.get("supported_frame_images") or []
+
     color_frame_type: Optional[str] = None
     if color is not None:
-        supported = model.get("supported_frame_images") or []
-        supplied = {f.get("frame_type") for f in (parameter.get("frame_images") or []) if isinstance(f, dict)}
-        if not {"first_frame", "last_frame"} <= set(supported):
-            errors.setdefault("default_frame_reference_color", []).append("frame_reference_color_requires_two_frames")
-        elif not supplied:  # the color only fills the *other* slot, so the user must pick one frame first
-            errors.setdefault("default_frame_reference_color", []).append("frame_reference_color_requires_one_frame")
-        else:
-            color_frame_type = next((t for t in supported if t not in supplied), None)
-            if color_frame_type is None:  # user already supplied both frames
-                errors.setdefault("default_frame_reference_color", []).append("no_free_frame_slot")
+        if not {"first_frame", "last_frame"} <= set(supported_frames):
+            raise DataValidationError(message="frame_reference_color_requires_two_frames")
+        if not frame_types:  # the color only fills the *other* slot, so the user must pick one frame first
+            raise DataValidationError(message="frame_reference_color_requires_one_frame")
+        color_frame_type = next((t for t in supported_frames if t not in frame_types), None)
+        if color_frame_type is None:  # user already supplied both frames
+            raise DataValidationError(message="no_free_frame_slot")
 
-    resolution = parameter.get("resolution")
-    if resolution is None:
-        errors.setdefault("resolution", []).append("generation_parameter_required")
-    elif resolution not in (model.get("supported_resolutions") or []):
-        errors.setdefault("resolution", []).append("generation_parameter_not_in_enum")
+    unsupported_frames = {
+        f"frame_images.{index}": ["frame_type_not_supported"]
+        for index, frame_type in enumerate(frame_types)
+        if frame_type not in supported_frames
+    }
+    if unsupported_frames:
+        raise DataValidationError(message="reference_check_failed", error=unsupported_frames)
 
-    aspect_ratio = parameter.get("aspect_ratio")
-    if aspect_ratio is None:
-        errors.setdefault("aspect_ratio", []).append("generation_parameter_required")
-    elif aspect_ratio not in (model.get("supported_aspect_ratios") or []):
-        errors.setdefault("aspect_ratio", []).append("generation_parameter_not_in_enum")
+    allowed = (VIDEO_PARAMETERS | set(model.get("allowed_passthrough_parameters") or [])) - RESERVED_VIDEO_PARAMETERS
+    for name in parameter:
+        if name not in allowed:
+            raise DataValidationError(message="parameter_unsupported", context={"parameter": name})
 
-    duration = parameter.get("duration")
-    if duration is None:
-        errors.setdefault("duration", []).append("generation_parameter_required")
-    elif not isinstance(duration, int) or isinstance(duration, bool):
-        errors.setdefault("duration", []).append("generation_parameter_must_be_number")
-    elif duration not in (model.get("supported_durations") or []):
-        errors.setdefault("duration", []).append("generation_parameter_not_in_enum")
+    for name, supported_column in (
+        ("resolution", "supported_resolutions"),
+        ("aspect_ratio", "supported_aspect_ratios"),
+        ("duration", "supported_durations"),
+    ):
+        value = parameter.get(name)
+        if value is None:
+            raise DataValidationError(message="parameter_required", context={"parameter": name})
+        wrong_type = name == "duration" and type(value) is not int
+        if wrong_type or value not in (model.get(supported_column) or []):
+            raise DataValidationError(message="parameter_invalid", context={"parameter": name})
 
-    frame_images = parameter.get("frame_images")
-    if frame_images is not None:
-        supported_frame_images = model.get("supported_frame_images") or []
-        if not isinstance(frame_images, list):
-            errors.setdefault("frame_images", []).append("generation_parameter_must_be_list")
-        else:
-            for idx, frame in enumerate(frame_images):
-                if not isinstance(frame, dict):
-                    errors.setdefault(f"frame_images.{idx}", []).append("generation_parameter_invalid")
-                    continue
-                if frame.get("frame_type") not in supported_frame_images:
-                    errors.setdefault(f"frame_images.{idx}.frame_type", []).append("generation_parameter_not_in_enum")
-                if not frame.get("image"):
-                    errors.setdefault(f"frame_images.{idx}.image", []).append("frame_image_required")
+    if "generate_audio" in parameter:
+        audio = parameter["generate_audio"]
+        if not isinstance(audio, bool) or (audio and not model.get("generate_audio")):
+            raise DataValidationError(message="parameter_invalid", context={"parameter": "generate_audio"})
 
-    generate_audio = parameter.get("generate_audio")
-    if generate_audio is not None:
-        if not isinstance(generate_audio, bool):
-            errors.setdefault("generate_audio", []).append("generation_parameter_must_be_boolean")
-        elif generate_audio and not model.get("generate_audio"):
-            errors.setdefault("generate_audio", []).append("generation_parameter_not_supported")
+    # The color image is drawn from the aspect ratio after the paid checks, so it must be readable as W:H
+    if color is not None and not FRAME_COLOR_ASPECT_RATIO.fullmatch(str(parameter["aspect_ratio"])):
+        raise DataValidationError(message="parameter_invalid", context={"parameter": "aspect_ratio"})
 
-    allowed_passthrough = set(model.get("allowed_passthrough_parameters") or [])
-    known_keys = {"resolution", "aspect_ratio", "duration", "frame_images", "generate_audio"}
-    for key in parameter.keys() - known_keys - allowed_passthrough:
-        errors.setdefault(key, []).append("unsupported_generation_parameter")
-
-    if errors:
-        raise DataValidationError(message="generation_parameters_invalid", error=errors)
     return color_frame_type
