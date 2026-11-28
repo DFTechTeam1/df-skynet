@@ -110,7 +110,7 @@ async def test_create_sets_pic_from_employee_uid(authed_client, db_session, acti
         json={"name": name, "employee_uid": active_employee_uid},
     )
     item = find_by_name(resp.json()["data"], name)
-    assert item["pic"]["nickname"] == employee.nickname
+    assert item["pic"]["nickname"] == employee.nickname.title()
 
 
 @pytest.mark.asyncio

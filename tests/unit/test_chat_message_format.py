@@ -52,10 +52,10 @@ def test_sent_at_icon_and_color_follow_the_status_code():
 
 def test_creator_is_the_user_or_openrouter():
     mine = ChatMessage.format(_row(created_by_user=USER)).model_dump()
-    assert mine["sender"] == "Zed McKay" and mine["creator"] == {
+    assert mine["sender"] == "Zed Mckay" and mine["creator"] == {
         "user_id": 68,
         "image": "me.png",
-        "nickname": "Zed McKay",
+        "nickname": "Zed Mckay",
     }
     nameless = _row(role="user", created_by_user={**USER, "employees": None})
     assert ChatMessage.format(nameless).sender == "User"

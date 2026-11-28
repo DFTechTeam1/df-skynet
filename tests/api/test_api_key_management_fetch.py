@@ -83,7 +83,7 @@ async def test_list_item_shape_has_pic_creator_action(authed_client, db_session,
     assert "employee_id" not in item
     assert item["is_expired"] is False
     assert set(item["pic"].keys()) == {"user_id", "image", "nickname"}
-    assert item["pic"]["nickname"] == employee.nickname
+    assert item["pic"]["nickname"] == employee.nickname.title()
     assert set(item["action"].keys()) == {"can_delete", "can_update", "can_copy", "can_set_to_main"}
 
 

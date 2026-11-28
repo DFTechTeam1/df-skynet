@@ -1,7 +1,8 @@
 import json
 import re
-from typing import Any, Optional
 import traceback
+from pprint import pprint
+from typing import Any, Optional
 from uuid import UUID, uuid4
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import load_only, selectinload
@@ -25,14 +26,14 @@ from schemas.format.chat_assistants import (
     ChatSession,
     ProjectChatSession,
     build_history,
-    format_chat_user,
 )
 from schemas.format.openrouter import Attachment, Message
 from services.chat_transcript import build_transcript
 from utils import local_time
-from utils.formatter import format_udin_url
+from utils.formatter import format_udin_url, format_user_employees
 from services.mysql import query
 from services.mysql.model.df_engine_generations import GenerationKinds
+from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.mysql.model import (
     PROJECT_STATUS_ONGOING,
     Projects,
@@ -223,7 +224,7 @@ class ChatAssistantsController(CoreDependencies):
 
             paginated = []
             for row in sessions:
-                creator = format_chat_user(
+                creator = format_user_employees(
                     {"id": row["created_by"], "image": row["image"], "employees": {"nickname": row["nickname"]}}
                 )
                 session = ProjectChatSession.format({**row, "creator": creator})
@@ -244,7 +245,7 @@ class ChatAssistantsController(CoreDependencies):
         "/projects/{project_uid}/chat-assistants/new",
         summary="Create a new chat session.",
         description=(
-            "Starts a chat session from the first user message, for a menu of the project. The system prompt comes from the `chat_assistant` feature. The project must be ongoing with a lead PIC and an available API key, and still within its cost limit. Optional image attachments (uploaded or generated) are linked to the message, and the message is queued for prompt guardrail checks. Returns the new session `uid`. Rate limited per user and IP; beyond the limit it answers 429."
+            "Starts a chat session from the first user message, for a menu of the project. The system prompt comes from the `chat_assistant` feature. The project must be ongoing with a lead PIC and an available API key, and still within its cost limit. Optional image or video attachments (uploaded or generated) are linked to the message, and the message is queued for prompt guardrail checks. Returns the new session `uid`. Rate limited per user and IP; beyond the limit it answers 429."
         ),
         status_code=status.HTTP_200_OK,
         tags=["Chat Assistants"],
@@ -585,7 +586,7 @@ class ChatAssistantsController(CoreDependencies):
                 uploaded_files = await self.uploaded_file_repo.get_uploaded_file(
                     filters=(
                         DfEngineUploadFiles.uid.in_(uploaded_files),  # type: ignore
-                        DfEngineUploadFiles.type.in_(["image"]),  # type: ignore
+                        DfEngineUploadFiles.type.in_([UploadFileTypes.image, UploadFileTypes.video]),  # type: ignore
                     ),
                     raise_if_null=False,
                     fetch_one=False,
@@ -597,7 +598,9 @@ class ChatAssistantsController(CoreDependencies):
                     joins=(DfEngineGenerationResults.generation,),  # type: ignore
                     filters=(
                         DfEngineGenerationResults.uid.in_(generated_results),  # type: ignore
-                        DfEngineGenerations.kind.in_([GenerationKinds.image, GenerationKinds.image_edit]),  # type: ignore
+                        DfEngineGenerations.kind.in_(  # type: ignore
+                            [GenerationKinds.image, GenerationKinds.image_edit, GenerationKinds.video]
+                        ),
                     ),
                     raise_if_null=False,
                     fetch_one=False,
@@ -1298,7 +1301,7 @@ class ChatAssistantsController(CoreDependencies):
                 uploaded_files = await self.uploaded_file_repo.get_uploaded_file(
                     filters=(
                         DfEngineUploadFiles.uid.in_(uploaded_files),  # type: ignore
-                        DfEngineUploadFiles.type.in_(["image"]),  # type: ignore
+                        DfEngineUploadFiles.type.in_([UploadFileTypes.image, UploadFileTypes.video]),  # type: ignore
                     ),
                     raise_if_null=False,
                     fetch_one=False,
@@ -1310,7 +1313,9 @@ class ChatAssistantsController(CoreDependencies):
                     joins=(DfEngineGenerationResults.generation,),  # type: ignore
                     filters=(
                         DfEngineGenerationResults.uid.in_(generated_results),  # type: ignore
-                        DfEngineGenerations.kind.in_([GenerationKinds.image, GenerationKinds.image_edit]),  # type: ignore
+                        DfEngineGenerations.kind.in_(  # type: ignore
+                            [GenerationKinds.image, GenerationKinds.image_edit, GenerationKinds.video]
+                        ),
                     ),
                     raise_if_null=False,
                     fetch_one=False,

@@ -37,7 +37,7 @@ def format_user_employees(user: Optional[dict[str, Any]]) -> Optional[dict[str, 
     return {
         "user_id": user.get("id"),
         "image": user.get("image"),
-        "nickname": employees.get("nickname"),
+        "nickname": employees.get("nickname") and employees["nickname"].title(),
     }
 
 
@@ -48,7 +48,7 @@ def format_employee_users(employee: Optional[dict[str, Any]]) -> Optional[dict[s
     return {
         "user_id": employee.get("user_id"),
         "image": users.get("image"),
-        "nickname": employee.get("nickname"),
+        "nickname": employee.get("nickname") and employee["nickname"].title(),
     }
 
 

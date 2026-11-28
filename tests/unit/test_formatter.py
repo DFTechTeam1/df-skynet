@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime
 from decimal import Decimal
-from utils.formatter import format_user_employees, format_datetime, format_idr
+from utils.formatter import format_employee_users, format_user_employees, format_datetime, format_idr
 
 
 class TestFormatCreator:
@@ -57,3 +57,10 @@ class TestFormatIdr:
     def test_accepts_float_inputs(self):
         """Plain floats work the same as Decimal inputs."""
         assert format_idr(0.001, 16000.0) == "Rp 16"
+
+
+def test_both_user_formatters_title_case_the_nickname():
+    user = {"id": 1, "employees": {"nickname": "zed McKay"}}
+    employee = {"user_id": 1, "nickname": "zed McKay", "users": {}}
+    assert format_user_employees(user)["nickname"] == "Zed Mckay"
+    assert format_employee_users(employee)["nickname"] == "Zed Mckay"

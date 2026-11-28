@@ -1,11 +1,12 @@
+import mimetypes
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class Attachment(BaseModel):
     """
-    source.upload: data comes from df_engine_upload_files with type of image
-    source.generated: data comes from df_engine_generation_results with generaion type in image or image_edit
+    source.upload: data comes from df_engine_upload_files with type of image or video
+    source.generated: data comes from df_engine_generation_results with generaion type in image, image_edit or video
     source.element: for future use, this will mapped from elements table
     """
 
@@ -18,7 +19,7 @@ class Attachment(BaseModel):
         ...,
         description=(
             "Copy from the source= value in the attachment marker. "
-            "upload = user-uploaded image, generated = image-generation output, element = project element."
+            "upload = user-uploaded image or video, generated = image or video generation output, element = project element."
         ),
     )
     url: str = Field(
@@ -34,13 +35,13 @@ class Attachment(BaseModel):
 
 
 class Content(BaseModel):
-    type: Literal["text", "image_url"] = "text"
+    type: Literal["text", "image_url", "video_url"] = "text"
     text: Optional[str] = None
     url: Optional[str] = None
 
     def to_payload(self) -> dict[str, Any]:
-        if self.type == "image_url":
-            return {"type": "image_url", "image_url": {"url": self.url}}
+        if self.type != "text":
+            return {"type": self.type, self.type: {"url": self.url}}
         return {"type": "text", "text": self.text}
 
 
@@ -54,7 +55,8 @@ class Message(BaseModel):
     ) -> "Message":
         contents = [Content(text=text)]
         for a in attachments or []:
-            contents += [Content(text=a.marker()), Content(type="image_url", url=a.url)]
+            is_video = (mimetypes.guess_type(a.url)[0] or "").startswith("video/")
+            contents += [Content(text=a.marker()), Content(type="video_url" if is_video else "image_url", url=a.url)]
         return cls(role=role, contents=contents)
 
     def to_payload(self) -> dict[str, Any]:
