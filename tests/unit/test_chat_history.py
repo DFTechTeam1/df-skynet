@@ -24,12 +24,13 @@ def test_system_first_then_turns_in_order():
     assert out[3]["content"] == [{"type": "text", "text": "reply 1"}]
 
 
-def test_user_images_are_sent_again_with_marker():
-    out = build_history([_row("user", "look A", refs=["A"])])
-    parts = out[0]["content"]
-    assert parts[0]["text"] == "look A"
-    assert parts[1]["text"].startswith("[uid=A url=") and parts[1]["text"].endswith("source=upload]")
-    assert parts[2]["type"] == "image_url"
+def test_history_files_go_as_markers_only():
+    rows = [_row("user", "look A", refs=["A"]), _row("assistant", "see", refs=["A", "B.mp4"])]
+    out = build_history(rows)
+    for message in out:
+        assert all(p["type"] == "text" for p in message["content"])
+        assert message["content"][1]["text"].startswith("[uid=A url=")
+        assert message["content"][1]["text"].endswith("source=upload]")
 
 
 def test_failed_reply_and_blocked_message_are_skipped():

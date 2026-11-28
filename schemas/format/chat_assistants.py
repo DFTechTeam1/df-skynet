@@ -1,6 +1,7 @@
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 from schemas.format.base import ActionMeta, TimezoneMeta, UserMeta
+from schemas.payload.admin_settings import ChatAssistantSettings
 from schemas.format.openrouter import Attachment, Message
 from utils.formatter import format_datetime, format_udin_url, format_user_employees
 
@@ -23,6 +24,9 @@ class MessageAction(BaseModel):
 
 
 class ChatSessionAction(ActionMeta):
+    can_transfer_knowledge: bool = Field(default=False)
+    can_send_attachment: bool = Field(default=True)
+
     # Excluded actions
     can_delete: bool = Field(default=True, exclude=True)
 
@@ -36,8 +40,13 @@ class ChatSession(TimezoneMeta):
     favourited_at: Optional[str] = Field(default=None, exclude=True)
 
     @classmethod
-    def format(cls, result: dict[str, Any]):
+    def format(cls, result: dict[str, Any], settings: ChatAssistantSettings = ChatAssistantSettings()):
         session = super().format(result)
+        attachments_full = result.get("total_unique_attachments", 0) >= settings.max_unique_attachments
+        session.action.can_send_attachment = not attachments_full
+        session.action.can_transfer_knowledge = (
+            attachments_full or result.get("total_messages", 0) >= settings.max_chat_messages
+        )
         session.action.can_set_archieve = result.get("archieved_at") is None
         return session
 
@@ -113,5 +122,6 @@ def build_history(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             Attachment(uid=a.uid, url=a.path, source=a.type)  # type: ignore
             for a in (ChatAttachment.format(ref["attachment"]) for ref in r.get("chat_references", []))
         ]
-        turns.append(Message.build(r["role"], r["content"], attachments).to_payload())  # type: ignore
+        # Earlier files go as markers only: media is sent just for the message being sent now
+        turns.append(Message.build(r["role"], r["content"], attachments, media=False).to_payload())  # type: ignore
     return system + turns

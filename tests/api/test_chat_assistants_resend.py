@@ -1,5 +1,5 @@
 import pytest
-from tests.helpers import make_chat_session
+from tests.helpers import attach_upload, make_chat_session
 
 
 def _failed_chat(ctx, user_id):
@@ -31,3 +31,16 @@ async def test_resend_pushes_insertion_failed_and_errors_when_the_row_cannot_be_
     )
     assert resp.status_code == 500
     assert chat_calls.insertions == [("failed", str(session.uid), None)] and chat_calls.events == ["insertion"]
+
+
+@pytest.mark.asyncio
+async def test_resend_sends_the_failed_message_files_as_media(
+    authed_client, chat_ctx, chat_settings, user_id, chat_calls
+):
+    """200; the resent message is the current one, so its image is sent."""
+    await chat_settings()
+    session, rows = _failed_chat(chat_ctx, user_id)
+    attach_upload(rows[0], user_id, chat_ctx.project_id)
+    await authed_client.call("PATCH", f"/api/chat-assistants/{session.uid}/resend/{rows[0].uid}")
+    parts = chat_calls.published[0]["content"][-1]["content"]
+    assert len([p for p in parts if p["type"] != "text"]) == 1

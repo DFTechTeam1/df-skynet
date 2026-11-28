@@ -34,6 +34,10 @@ class Attachment(BaseModel):
         return f"[uid={self.uid} url={self.url} source={self.source}]"
 
 
+def is_video(url: str) -> bool:
+    return (mimetypes.guess_type(url)[0] or "").startswith("video/")
+
+
 class Content(BaseModel):
     type: Literal["text", "image_url", "video_url"] = "text"
     text: Optional[str] = None
@@ -51,12 +55,18 @@ class Message(BaseModel):
 
     @classmethod
     def build(
-        cls, role: Literal["system", "assistant", "user"], text: str, attachments: Optional[list[Attachment]] = None
+        cls,
+        role: Literal["system", "assistant", "user"],
+        text: str,
+        attachments: Optional[list[Attachment]] = None,
+        media: bool = True,
     ) -> "Message":
+        """`media=False` sends only each file's text marker, so the provider downloads nothing."""
         contents = [Content(text=text)]
         for a in attachments or []:
-            is_video = (mimetypes.guess_type(a.url)[0] or "").startswith("video/")
-            contents += [Content(text=a.marker()), Content(type="video_url" if is_video else "image_url", url=a.url)]
+            contents.append(Content(text=a.marker()))
+            if media:
+                contents.append(Content(type="video_url" if is_video(a.url) else "image_url", url=a.url))
         return cls(role=role, contents=contents)
 
     def to_payload(self) -> dict[str, Any]:
