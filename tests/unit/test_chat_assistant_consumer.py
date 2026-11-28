@@ -205,3 +205,46 @@ async def test_the_error_reply_names_the_failed_messages_files_too(run):
 async def test_a_reply_without_files_is_left_alone(run):
     out = await run(_reply(content="plain"))
     assert out.reply.content == "plain"
+
+
+@pytest.mark.asyncio
+async def test_a_provider_error_is_shown_as_openrouter_wrote_it(run):
+    body = {
+        "error": {"message": "Provider returned error", "metadata": {"raw": "video is not supported"}},
+        "user_id": "x",
+    }
+    out = await run(consumer.ServiceError(context={"upstream_body": json.dumps(body)}))
+    assert out.reply.content == "Provider returned error"
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ({"error": {"message": "No credits"}}, "No credits"),
+        ({"choices": [{"error": {"message": "Upstream died"}}]}, "Upstream died"),
+        ('{"error": {"message": "From text"}}', "From text"),
+        ("<html>Bad gateway</html>", None),
+        ({"error": {"message": None}}, None),
+        ({"error": {"message": "   "}}, None),
+        ({"error": {"message": ""}}, None),
+        ({"error": {"code": 400}}, None),
+        ("", None),
+        ({"choices": []}, None),
+        (None, None),
+    ],
+)
+def test_openrouter_error_reads_only_the_provider_text(body, expected):
+    assert consumer.openrouter_error(body) == expected
+
+
+@pytest.mark.asyncio
+async def test_an_error_without_a_provider_body_keeps_the_generic_text(run):
+    out = await run(consumer.ServiceError())
+    assert out.reply.content == consumer.resolve_message("chat_assistant_failed", "en")
+
+
+@pytest.mark.asyncio
+async def test_a_200_with_an_error_body_stores_its_message(run, monkeypatch):
+    monkeypatch.setattr(FakeResult, "json", lambda self: {"error": {"message": "Model overloaded"}})
+    out = await run("unused")
+    assert out.reply.content == "Model overloaded" and out.reply.status_code == 502

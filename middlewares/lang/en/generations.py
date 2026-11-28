@@ -82,7 +82,7 @@ class GenerationsMessage:
             "chat_model_not_configured": "No text model is configured for the chat assistant. Please contact an administrator.",
             "chat_assistant_feature_not_configured": "The chat assistant hasn't been set up yet. Please ask an administrator to activate the chat assistant feature.",
             "enhance_prompt_feature_not_configured": "Prompt generation hasn't been set up yet. Please ask an administrator to activate the enhance prompt feature.",
-            "chat_assistant_failed": "The chat assistant couldn't answer right now. Please try again.",
+            "chat_assistant_failed": "Sorry, the assistant couldn't reply to this message. Please try sending it again. If this keeps happening, start a new chat or contact your admin.",
             "chat_image_invalid": "Only PNG, JPEG or WebP images are allowed.",
             "chat_images_exceeded": "You've attached too many images (max {max}).",
             "chat_image_too_large": "Each image must be {max_mb} MB or smaller.",

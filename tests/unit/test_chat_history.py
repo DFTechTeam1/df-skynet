@@ -1,3 +1,4 @@
+from schemas.format.openrouter import Attachment, Message
 from schemas.format.chat_assistants import build_history
 
 
@@ -45,3 +46,11 @@ def test_failed_reply_and_blocked_message_are_skipped():
 
 def test_null_status_code_counts_as_ok():
     assert len(build_history([_row("user", "x", status_code=None)])) == 1
+
+
+def test_videos_are_sent_as_video_url_and_images_as_image_url():
+    files = [Attachment(uid=n, url=f"https://x/videos/{n}", source="upload") for n in ("a%20b.mp4", "c.MOV", "d.png")]
+    parts = Message.build("user", "hi", files).to_payload()["content"]
+    media = [p for p in parts if p["type"] != "text"]
+    assert [p["type"] for p in media] == ["video_url", "video_url", "image_url"]
+    assert media[0]["video_url"] == {"url": "https://x/videos/a%20b.mp4"}

@@ -82,7 +82,7 @@ class GenerationsMessage:
             "chat_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk asisten chat. Silakan hubungi admin.",
             "chat_assistant_feature_not_configured": "Asisten chat belum diatur. Silakan minta administrator untuk mengaktifkan fitur asisten chat.",
             "enhance_prompt_feature_not_configured": "Pembuatan prompt belum diatur. Silakan minta administrator untuk mengaktifkan fitur enhance prompt.",
-            "chat_assistant_failed": "Asisten chat belum bisa menjawab saat ini. Silakan coba lagi.",
+            "chat_assistant_failed": "Maaf, asisten belum bisa membalas pesan ini. Silakan coba kirim ulang. Jika masih gagal, mulai chat baru atau hubungi admin.",
             "chat_image_invalid": "Hanya gambar PNG, JPEG, atau WebP yang diizinkan.",
             "chat_images_exceeded": "Gambar yang dilampirkan terlalu banyak (maks {max}).",
             "chat_image_too_large": "Setiap gambar harus berukuran {max_mb} MB atau lebih kecil.",

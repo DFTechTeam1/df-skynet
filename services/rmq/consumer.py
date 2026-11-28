@@ -339,6 +339,20 @@ async def handle_guardrail_validation(payload: dict[str, Any]) -> None:
     await handle_chat_assistant(payload)
 
 
+def openrouter_error(body: Any) -> str | None:
+    """`error.message` of an OpenRouter response body (dict or raw JSON text), or None when it is missing or blank."""
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            return None
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error") or ((body.get("choices") or [{}])[0] or {}).get("error")
+    message = error.get("message") if isinstance(error, dict) else None
+    return (message.strip() or None) if isinstance(message, str) else None
+
+
 async def handle_chat_assistant(payload: dict[str, Any]) -> None:
     if await replay_if_done(payload):
         return
@@ -348,6 +362,7 @@ async def handle_chat_assistant(payload: dict[str, Any]) -> None:
     content = ""
     usage: dict[str, Any] = {}
     reply: ChatAssistantResponse | None = None
+    body: Any = {}
 
     try:
         result = await call_chat_assistant(
@@ -364,7 +379,8 @@ async def handle_chat_assistant(payload: dict[str, Any]) -> None:
     except (ServiceError, ValueError, LookupError) as exc:
         logging.error("chat assistant failed for chat_id=%s: %r", payload["chat_id"], exc)
         ok = False
-        content = resolve_message("chat_assistant_failed", payload["lang"])
+        source = (exc.context or {}).get("upstream_body") if isinstance(exc, ServiceError) else body
+        content = openrouter_error(source) or resolve_message("chat_assistant_failed", payload["lang"])
         status_code = (
             (exc.error or {}).get("upstream_status", exc.status_code) if isinstance(exc, ServiceError) else 502
         )

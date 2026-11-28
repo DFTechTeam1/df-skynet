@@ -194,7 +194,7 @@ async def call_chat_assistant(
             status_code=status.HTTP_502_BAD_GATEWAY,
             message="chat_assistant_provider_error",
             error={"upstream_status": exc.response.status_code},
-            context={"model": model, "payload": payload, "upstream_body": exc.response.text[:2000]},
+            context={"model": model, "payload": payload, "upstream_body": exc.response.text},
         ) from exc
     except HTTPError as exc:
         logging.error("chat assistant unreachable: %r", exc)

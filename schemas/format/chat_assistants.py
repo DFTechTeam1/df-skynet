@@ -42,15 +42,6 @@ class ChatSession(TimezoneMeta):
         return session
 
 
-def format_chat_user(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """`format_user_employees` with the nickname's first letter uppercased."""
-    formatted = format_user_employees(user)
-    if formatted and formatted["nickname"]:
-        # only the first letter; .capitalize()/.title() would rewrite the rest of the name
-        formatted["nickname"] = formatted["nickname"][0].upper() + formatted["nickname"][1:]
-    return formatted
-
-
 class ProjectChatSession(ChatSession):
     creator: MessageCreator = Field(...)
 
@@ -93,7 +84,7 @@ class ChatMessage(BaseModel):
         attachments = [ChatAttachment.format(ref["attachment"]) for ref in result.get("chat_references", [])]
 
         status_code = result.get("status_code") or 200
-        user = format_chat_user(result.get("created_by_user"))  # None unless a user wrote the row
+        user = format_user_employees(result.get("created_by_user"))  # None unless a user wrote the row
         return cls(
             uid=result["uid"],
             content=result["content"],
