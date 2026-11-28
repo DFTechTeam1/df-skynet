@@ -79,6 +79,7 @@ class GenerationsMessage:
             "chat_assistant_not_generatable": "Prompt belum bisa dibuat karena tidak ada pertanyaan dari asisten yang menunggu jawaban. Lanjutkan chat seperti biasa, atau tunggu asisten menanyakan apakah prompt mau ditulis.",
             "chat_assistant_confirm_generate_prompt": "Konteks percakapan sudah cukup untuk saya menuliskan prompt. Apakah Anda ingin saya menuliskannya sekarang?",
             "chat_assistant_attachment_limit_reached": "Chat ini hanya dapat merujuk maksimal {max} file berbeda. Mulai chat baru untuk menambah file.",
+            "chat_assistant_video_not_supported": "Model asisten tidak dapat membaca video. Hapus videonya, atau minta admin memilih model yang mendukung input video.",
             "chat_model_not_configured": "Belum ada model teks yang dikonfigurasi untuk asisten chat. Silakan hubungi admin.",
             "chat_assistant_feature_not_configured": "Asisten chat belum diatur. Silakan minta administrator untuk mengaktifkan fitur asisten chat.",
             "enhance_prompt_feature_not_configured": "Pembuatan prompt belum diatur. Silakan minta administrator untuk mengaktifkan fitur enhance prompt.",

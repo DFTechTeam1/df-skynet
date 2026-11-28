@@ -1,7 +1,9 @@
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from utils import epoch_to_wib
 from utils.formatter import format_datetime
+
+VIDEO_REFERENCE_SKU = "video_tokens_with_video_input"
 
 
 class ModelAction(BaseModel):
@@ -54,6 +56,11 @@ class ModelRecord(BaseModel):
     deleted_at: Optional[str] = Field(None)
     deleted_by: Optional[int] = Field(None)
     action: ModelAction = Field(...)
+
+    @computed_field
+    @property
+    def is_supported_video_reference(self) -> bool:
+        return self.type == "video" and VIDEO_REFERENCE_SKU in (self.pricing_skus or {})
 
     @classmethod
     def format(cls, result: dict[str, Any]) -> "ModelRecord":

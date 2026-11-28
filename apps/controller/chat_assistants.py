@@ -27,7 +27,8 @@ from schemas.format.chat_assistants import (
     ProjectChatSession,
     build_history,
 )
-from schemas.format.openrouter import Attachment, Message
+from schemas.format.openrouter import Attachment, Message, is_video
+from schemas.payload.admin_settings import ChatAssistantSettings
 from services.chat_transcript import build_transcript
 from utils import local_time
 from utils.formatter import format_udin_url, format_user_employees
@@ -35,6 +36,7 @@ from services.mysql import query
 from services.mysql.model.df_engine_generations import GenerationKinds
 from services.mysql.model.df_engine_upload_files import UploadFileTypes
 from services.mysql.model import (
+    DfEngineModelOptions,
     PROJECT_STATUS_ONGOING,
     Projects,
     DfEngineMenus,
@@ -129,6 +131,7 @@ class ChatAssistantsController(CoreDependencies):
 
             sessions = await self.chat_session_repo.get_chat_session(
                 columns=(
+                    DfEngineChatSessions.id,
                     DfEngineChatSessions.uid,
                     DfEngineChatSessions.topic,
                     DfEngineChatSessions.created_at,
@@ -142,8 +145,18 @@ class ChatAssistantsController(CoreDependencies):
                 fetch_one=False,
                 raise_if_null=False,
             )
+            setting = await self.admin_repo.get_setting(
+                filters=(DfEngineSettings.key == "chat_assistant_settings",),  # type: ignore
+                raise_if_null=False,
+            )
+            chat_assistant_settings = ChatAssistantSettings(**((setting or {}).get("value") or {}))
+            stats = await self.chat_assistant_repo.get_session_stats([row["id"] for row in sessions])
             response.data = PaginationResponse(
-                paginated=[ChatSession.format(session).model_dump() for session in sessions], totalData=total_data
+                paginated=[
+                    ChatSession.format({**row, **stats.get(row["id"], {})}, chat_assistant_settings).model_dump()
+                    for row in sessions
+                ],
+                totalData=total_data,
             )
         except BaseError:
             raise
@@ -201,6 +214,7 @@ class ChatAssistantsController(CoreDependencies):
             )
             sessions = await self.chat_session_repo.get_chat_session(
                 columns=(
+                    DfEngineChatSessions.id,
                     DfEngineChatSessions.uid,
                     DfEngineChatSessions.topic,
                     DfEngineChatSessions.created_at,
@@ -222,15 +236,26 @@ class ChatAssistantsController(CoreDependencies):
                 raise_if_null=False,
             )
 
+            setting = await self.admin_repo.get_setting(
+                filters=(DfEngineSettings.key == "chat_assistant_settings",),  # type: ignore
+                raise_if_null=False,
+            )
+            chat_assistant_settings = ChatAssistantSettings(**((setting or {}).get("value") or {}))
+            stats = await self.chat_assistant_repo.get_session_stats([row["id"] for row in sessions])
+
             paginated = []
             for row in sessions:
                 creator = format_user_employees(
                     {"id": row["created_by"], "image": row["image"], "employees": {"nickname": row["nickname"]}}
                 )
-                session = ProjectChatSession.format({**row, "creator": creator})
+                session = ProjectChatSession.format(
+                    {**row, **stats.get(row["id"], {}), "creator": creator}, chat_assistant_settings
+                )
                 is_owner = row["created_by"] == int(self.user["user_id"])
                 session.action.can_update = is_owner
                 session.action.can_set_archieve = session.action.can_set_archieve and is_owner
+                session.action.can_transfer_knowledge = session.action.can_transfer_knowledge and is_owner
+                session.action.can_send_attachment = session.action.can_send_attachment and is_owner
                 paginated.append(session.model_dump())
 
             response.data = PaginationResponse(paginated=paginated, totalData=total_data)
@@ -629,6 +654,18 @@ class ChatAssistantsController(CoreDependencies):
                 for f in files or []
             ]
 
+            # A video needs a model that reads video; a model that doesn't list its modalities is let through
+            if any(is_video(a["path"]) for a in user_attachments):
+                model_option = await self.model_option_repo.get_model(
+                    columns=(DfEngineModelOptions.id, DfEngineModelOptions.architecture),
+                    filters=(DfEngineModelOptions.id == assistant_model["id"],),  # type: ignore
+                    raise_if_null=False,
+                )
+                modalities = ((model_option or {}).get("architecture") or {}).get("input_modalities")
+                if modalities and "video" not in modalities:
+                    logging.warning(f"{log_prefix} assistant model can't read video: modalities={modalities}")
+                    raise DataValidationError(message="chat_assistant_video_not_supported")
+
             # Insert New Session
             # The title is plain text: file tags are left out of it (unless nothing else is written)
             content = " ".join(re.sub(r"<refer to [^>]*>", "", schema.content).split()) or " ".join(
@@ -923,8 +960,15 @@ class ChatAssistantsController(CoreDependencies):
                 .values(topic=schema.topic, updated_at=updated_at)
             )
             await self.db.flush()
+            setting = await self.admin_repo.get_setting(
+                filters=(DfEngineSettings.key == "chat_assistant_settings",),  # type: ignore
+                raise_if_null=False,
+            )
+            chat_assistant_settings = ChatAssistantSettings(**((setting or {}).get("value") or {}))
+            stats = await self.chat_assistant_repo.get_session_stats([session["id"]])
             response.data = ChatSession.format(
-                {**session, "topic": schema.topic, "updated_at": updated_at}
+                {**session, **stats.get(session["id"], {}), "topic": schema.topic, "updated_at": updated_at},
+                chat_assistant_settings,
             ).model_dump()
         except BaseError:
             raise
@@ -1344,6 +1388,18 @@ class ChatAssistantsController(CoreDependencies):
                 for f in files or []
             ]
 
+            # A video needs a model that reads video; a model that doesn't list its modalities is let through
+            if any(is_video(a["path"]) for a in user_attachments):
+                model_option = await self.model_option_repo.get_model(
+                    columns=(DfEngineModelOptions.id, DfEngineModelOptions.architecture),
+                    filters=(DfEngineModelOptions.id == assistant_model["id"],),  # type: ignore
+                    raise_if_null=False,
+                )
+                modalities = ((model_option or {}).get("architecture") or {}).get("input_modalities")
+                if modalities and "video" not in modalities:
+                    logging.warning(f"{log_prefix} assistant model can't read video: modalities={modalities}")
+                    raise DataValidationError(message="chat_assistant_video_not_supported")
+
             # A chat may reference a limited number of distinct files; a file used before does not count twice
             sourceable_types = {"upload": DfEngineUploadFiles.__name__, "generated": DfEngineGenerationResults.__name__}
             chat_files = {
@@ -1572,7 +1628,15 @@ class ChatAssistantsController(CoreDependencies):
                 .values(archieved_at=new_archieved_at)
             )
             await self.db.flush()
-            response.data = ChatSession.format({**session, "archieved_at": new_archieved_at}).model_dump()
+            setting = await self.admin_repo.get_setting(
+                filters=(DfEngineSettings.key == "chat_assistant_settings",),  # type: ignore
+                raise_if_null=False,
+            )
+            chat_assistant_settings = ChatAssistantSettings(**((setting or {}).get("value") or {}))
+            stats = await self.chat_assistant_repo.get_session_stats([session["id"]])
+            response.data = ChatSession.format(
+                {**session, **stats.get(session["id"], {}), "archieved_at": new_archieved_at}, chat_assistant_settings
+            ).model_dump()
         except BaseError:
             raise
         except Exception:
@@ -1942,6 +2006,18 @@ class ChatAssistantsController(CoreDependencies):
             rows_before = [row for row in history_rows if row["id"] < target["id"]]
             history = build_history(rows_before)
             target_files = [ChatAttachment.format(ref["attachment"]) for ref in target["chat_references"]]
+
+            # A video needs a model that reads video; a model that doesn't list its modalities is let through
+            if any(is_video(file.path) for file in target_files):
+                model_option = await self.model_option_repo.get_model(
+                    columns=(DfEngineModelOptions.id, DfEngineModelOptions.architecture),
+                    filters=(DfEngineModelOptions.id == assistant_model["id"],),  # type: ignore
+                    raise_if_null=False,
+                )
+                modalities = ((model_option or {}).get("architecture") or {}).get("input_modalities")
+                if modalities and "video" not in modalities:
+                    logging.warning(f"{log_prefix} assistant model can't read video: modalities={modalities}")
+                    raise DataValidationError(message="chat_assistant_video_not_supported")
 
             # A new copy of the message goes at the end of the chat; the failed one and its error reply stay as they are
             user_chat = DfEngineChatAssistants(

@@ -79,6 +79,7 @@ class GenerationsMessage:
             "chat_assistant_not_generatable": "The prompt can't be written yet because the assistant has no question waiting for your answer. Keep chatting as usual, or wait until the assistant asks whether to write the prompt.",
             "chat_assistant_confirm_generate_prompt": "The conversation already gives me enough context to write the prompt. Do you want me to write it now?",
             "chat_assistant_attachment_limit_reached": "This chat can reference at most {max} different files. Start a new chat to add more.",
+            "chat_assistant_video_not_supported": "The assistant model can't read video. Remove the video, or ask an administrator to choose a model that supports video input.",
             "chat_model_not_configured": "No text model is configured for the chat assistant. Please contact an administrator.",
             "chat_assistant_feature_not_configured": "The chat assistant hasn't been set up yet. Please ask an administrator to activate the chat assistant feature.",
             "enhance_prompt_feature_not_configured": "Prompt generation hasn't been set up yet. Please ask an administrator to activate the enhance prompt feature.",
