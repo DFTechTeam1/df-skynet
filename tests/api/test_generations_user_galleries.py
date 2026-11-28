@@ -217,21 +217,20 @@ async def test_results_are_paginated(authed_client, project_task, user_id, gener
 
 
 @pytest.mark.asyncio
-async def test_default_type_is_video_and_image_type_includes_image_edit(
-    authed_client, project_task, user_id, generation_fks
-):
-    """200 OK; no `type` means video; `type=image` covers image and image_edit but never video."""
+async def test_type_filters_kinds_and_omitting_it_returns_all(authed_client, project_task, user_id, generation_fks):
+    """200 OK; no `type` returns all three kinds; `image` covers image and image_edit; `video` only video."""
     kinds = {
         k: _make_result(_make_generation(project_task, user_id, generation_fks, kind=k), user_id, is_main=True)
         for k in ("image", "image_edit", "video")
     }
 
-    default = (await authed_client.call("GET", _url(project_task.uid))).json()["data"]["paginated"]
+    everything = (await authed_client.call("GET", _url(project_task.uid))).json()["data"]["paginated"]
     images = (await _get(authed_client, project_task.uid)).json()["data"]["paginated"]
-    default_uids, image_uids = {e["file_uid"] for e in default}, {e["file_uid"] for e in images}
-    assert str(kinds["video"].uid) in default_uids and not default_uids & image_uids
-    assert {str(kinds["image"].uid), str(kinds["image_edit"].uid)} <= image_uids
-    assert {e["kind"] for e in default} == {"video"} and "video" not in {e["kind"] for e in images}
+    videos = (await _get(authed_client, project_task.uid, type="video")).json()["data"]["paginated"]
+    uids = {k: str(result.uid) for k, result in kinds.items()}
+    assert set(uids.values()) <= {e["file_uid"] for e in everything}
+    assert {e["kind"] for e in images} == {"image", "image_edit"}
+    assert {e["kind"] for e in videos} == {"video"} and uids["video"] in {e["file_uid"] for e in videos}
 
 
 @pytest.mark.asyncio
@@ -266,7 +265,7 @@ async def test_search_filters_by_type_and_paginates(authed_client, project_task,
     resp = await authed_client.call("GET", _url(project_task.uid), params={"search": "x", "itemsPerPage": 2, "page": 2})
     data = resp.json()["data"]
     assert [e["file_uid"] for e in data["paginated"]] == ["g2"] and data["totalData"] == 3
-    assert "video" in repr(seen[0].filter) and "image" not in repr(seen[0].filter)
+    assert all(f"'{kind}'" in repr(seen[0].filter) for kind in ("image", "image_edit", "video"))
 
 
 @pytest.mark.asyncio
